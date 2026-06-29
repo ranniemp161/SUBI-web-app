@@ -37,6 +37,10 @@ export const projects = pgTable("projects", {
   fileName: text("file_name").notNull(),
   durationMs: integer("duration_ms"),
   transcript: jsonb("transcript"),
+  /** "idle" | "processing" | "ready" | "failed" */
+  transcriptStatus: text("transcript_status").notNull().default("idle"),
+  /** Random per-request secret checked on the Deepgram callback — Deepgram callbacks aren't signed. */
+  transcriptCallbackToken: text("transcript_callback_token"),
   edl: jsonb("edl"),
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()

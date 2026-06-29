@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { clerkClient } from "@clerk/nextjs/server";
 import { db } from "@/db";
 import { users } from "@/db/schema";
+import { hasValidAccessCode } from "@/lib/access-code";
 
 /**
  * POST /api/webhooks/clerk
@@ -60,14 +61,7 @@ export async function POST(request: Request) {
     const unsafeMetadata = event.data.unsafe_metadata as
       | Record<string, unknown>
       | undefined;
-    const providedCode = unsafeMetadata?.accessCode;
-    const validCode = process.env.ACCESS_CODE;
-
-    if (
-      !validCode ||
-      typeof providedCode !== "string" ||
-      providedCode.trim() !== validCode.trim()
-    ) {
+    if (!hasValidAccessCode(unsafeMetadata)) {
       const client = await clerkClient();
       await client.users.deleteUser(userId);
       console.warn(`Deleted user ${userId}: invalid or missing access code.`);

@@ -9,8 +9,55 @@ interface Project {
   id: string;
   fileName: string;
   durationMs: number | null;
+  transcriptStatus: "idle" | "processing" | "ready" | "failed";
   createdAt: string;
   updatedAt: string;
+}
+
+const TRANSCRIPT_STATUS_LABEL: Record<Project["transcriptStatus"], string> = {
+  idle: "",
+  processing: "Transcribing...",
+  ready: "Transcript ready",
+  failed: "Transcription failed",
+};
+
+/**
+ * Kick off transcription for a project: ask our server for a short-lived
+ * Deepgram key + callback URL, then upload the video straight to Deepgram
+ * from the browser. The file never touches our own server — Deepgram
+ * extracts the audio itself, since it accepts common video containers
+ * directly.
+ */
+async function startTranscription(projectId: string, file: File) {
+  const initResponse = await fetch("/api/transcribe/init", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ projectId }),
+  });
+
+  if (!initResponse.ok) {
+    throw new Error("Failed to initialize transcription");
+  }
+
+  const { temporaryApiKey, callbackUrl } = await initResponse.json();
+
+  const deepgramUrl = new URL("https://api.deepgram.com/v1/listen");
+  deepgramUrl.searchParams.set("callback", callbackUrl);
+  deepgramUrl.searchParams.set("model", "nova-3");
+  deepgramUrl.searchParams.set("smart_format", "true");
+
+  const uploadResponse = await fetch(deepgramUrl.toString(), {
+    method: "POST",
+    headers: {
+      Authorization: `Token ${temporaryApiKey}`,
+      "Content-Type": file.type || "application/octet-stream",
+    },
+    body: file,
+  });
+
+  if (!uploadResponse.ok) {
+    throw new Error(`Deepgram upload failed: ${await uploadResponse.text()}`);
+  }
 }
 
 /**
@@ -44,9 +91,9 @@ export default function DashboardPage() {
     fetchProjects();
   }, []);
 
-  /** Handle file selection — create a new project. */
+  /** Handle file selection — create a new project, then kick off transcription. */
   const handleFileSelected = useCallback(
-    async (_file: File, metadata: VideoMetadata) => {
+    async (file: File, metadata: VideoMetadata) => {
       setIsCreating(true);
 
       try {
@@ -68,6 +115,11 @@ export default function DashboardPage() {
         router.push(`/dashboard`);
         // Add new project to the list immediately for instant feedback
         setProjects((prev) => [project, ...prev]);
+
+        // Fire-and-forget — status updates arrive via polling below.
+        startTranscription(project.id, file).catch((error) => {
+          console.error("Failed to start transcription:", error);
+        });
       } catch (error) {
         console.error("Failed to create project:", error);
       } finally {
@@ -76,6 +128,37 @@ export default function DashboardPage() {
     },
     [router]
   );
+
+  /** Poll any project still transcribing until it's ready or failed. */
+  useEffect(() => {
+    const processingIds = projects
+      .filter((p) => p.transcriptStatus === "processing")
+      .map((p) => p.id);
+
+    if (processingIds.length === 0) return;
+
+    const interval = setInterval(async () => {
+      for (const id of processingIds) {
+        try {
+          const response = await fetch(`/api/projects/${id}`);
+          if (!response.ok) continue;
+
+          const updated = await response.json();
+          setProjects((prev) =>
+            prev.map((p) =>
+              p.id === id
+                ? { ...p, transcriptStatus: updated.transcriptStatus }
+                : p
+            )
+          );
+        } catch (error) {
+          console.error("Failed to poll transcript status:", error);
+        }
+      }
+    }, 4000);
+
+    return () => clearInterval(interval);
+  }, [projects]);
 
   /** Delete a project. */
   async function handleDeleteProject(projectId: string) {
@@ -180,6 +263,19 @@ export default function DashboardPage() {
                         <span>{formatDuration(project.durationMs)}</span>
                       )}
                       <span>{formatDate(project.createdAt)}</span>
+                      {TRANSCRIPT_STATUS_LABEL[project.transcriptStatus] && (
+                        <span
+                          className={
+                            project.transcriptStatus === "failed"
+                              ? "text-red-400"
+                              : project.transcriptStatus === "ready"
+                                ? "text-green-400"
+                                : "text-blue-400"
+                          }
+                        >
+                          {TRANSCRIPT_STATUS_LABEL[project.transcriptStatus]}
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>

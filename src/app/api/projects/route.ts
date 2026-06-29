@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { projects, users } from "@/db/schema";
 import { eq, desc } from "drizzle-orm";
+import { hasValidAccessCode } from "@/lib/access-code";
 
 /**
  * POST /api/projects — Create a new project.
@@ -18,6 +19,17 @@ export async function POST(request: Request) {
   }
 
   try {
+    // Re-check the access code here too, not just in the user.created
+    // webhook. signUp.create() grants a session immediately, before the
+    // webhook has had a chance to run and delete an invalid account —
+    // without this check, a fast enough request in that window could
+    // create real rows before the webhook catches up.
+    const clerkUser = await currentUser();
+
+    if (!hasValidAccessCode(clerkUser?.unsafeMetadata)) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
+    }
+
     const body = await request.json();
     const { fileName, durationMs } = body;
 
@@ -41,7 +53,6 @@ export async function POST(request: Request) {
       // Fallback for the rare race where a project is created before
       // the user.created webhook has landed — fetch the real email
       // directly instead of leaving it blank.
-      const clerkUser = await currentUser();
       const email = clerkUser?.emailAddresses[0]?.emailAddress ?? "";
 
       const [newUser] = await db
