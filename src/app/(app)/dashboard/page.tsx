@@ -1,0 +1,213 @@
+"use client";
+
+import { useState, useEffect, useCallback } from "react";
+import { useRouter } from "next/navigation";
+import FilePicker, { type VideoMetadata } from "@/components/file-picker";
+import { formatDuration, formatDate } from "@/lib/utils";
+
+interface Project {
+  id: string;
+  fileName: string;
+  durationMs: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Dashboard page — the user's home screen after login.
+ *
+ * Shows existing projects and a file picker for creating new ones.
+ * Fetches projects from the API on mount.
+ */
+export default function DashboardPage() {
+  const router = useRouter();
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [isLoadingProjects, setIsLoadingProjects] = useState(true);
+  const [isCreating, setIsCreating] = useState(false);
+
+  /** Fetch user's projects on mount. */
+  useEffect(() => {
+    async function fetchProjects() {
+      try {
+        const response = await fetch("/api/projects");
+        if (response.ok) {
+          const data = await response.json();
+          setProjects(data);
+        }
+      } catch (error) {
+        console.error("Failed to fetch projects:", error);
+      } finally {
+        setIsLoadingProjects(false);
+      }
+    }
+
+    fetchProjects();
+  }, []);
+
+  /** Handle file selection — create a new project. */
+  const handleFileSelected = useCallback(
+    async (_file: File, metadata: VideoMetadata) => {
+      setIsCreating(true);
+
+      try {
+        const response = await fetch("/api/projects", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            fileName: metadata.fileName,
+            durationMs: metadata.durationMs,
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error("Failed to create project");
+        }
+
+        const project = await response.json();
+        // In Phase 1, redirect to dashboard. In Phase 3+, this will go to the editor.
+        router.push(`/dashboard`);
+        // Add new project to the list immediately for instant feedback
+        setProjects((prev) => [project, ...prev]);
+      } catch (error) {
+        console.error("Failed to create project:", error);
+      } finally {
+        setIsCreating(false);
+      }
+    },
+    [router]
+  );
+
+  /** Delete a project. */
+  async function handleDeleteProject(projectId: string) {
+    try {
+      const response = await fetch(`/api/projects/${projectId}`, {
+        method: "DELETE",
+      });
+
+      if (response.ok) {
+        setProjects((prev) => prev.filter((p) => p.id !== projectId));
+      }
+    } catch (error) {
+      console.error("Failed to delete project:", error);
+    }
+  }
+
+  return (
+    <div className="mx-auto max-w-4xl px-6 py-12">
+      {/* Header */}
+      <div className="mb-10">
+        <h1 className="text-3xl font-bold tracking-tight text-foreground">
+          Your Projects
+        </h1>
+        <p className="mt-2 text-foreground/50">
+          Select a video file to start a new rough cut
+        </p>
+      </div>
+
+      {/* File Picker */}
+      <div className="mb-12">
+        <FilePicker
+          onFileSelected={handleFileSelected}
+          isLoading={isCreating}
+        />
+      </div>
+
+      {/* Project List */}
+      <div>
+        <h2 className="mb-4 text-lg font-semibold text-foreground/80">
+          Recent projects
+        </h2>
+
+        {isLoadingProjects ? (
+          <div className="flex items-center justify-center py-12 text-foreground/30">
+            <svg
+              className="mr-3 h-5 w-5 animate-spin"
+              viewBox="0 0 24 24"
+              fill="none"
+            >
+              <circle
+                className="opacity-25"
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                strokeWidth="4"
+              />
+              <path
+                className="opacity-75"
+                fill="currentColor"
+                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+              />
+            </svg>
+            Loading projects...
+          </div>
+        ) : projects.length === 0 ? (
+          <div className="rounded-xl border border-foreground/5 bg-foreground/[0.02] px-8 py-12 text-center">
+            <p className="text-foreground/30">
+              No projects yet. Select a video file above to get started.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {projects.map((project) => (
+              <div
+                key={project.id}
+                id={`project-${project.id}`}
+                className="group flex items-center justify-between rounded-xl border border-foreground/5 bg-foreground/[0.02] px-6 py-4 transition-colors hover:border-foreground/10 hover:bg-foreground/[0.04]"
+              >
+                <div className="flex items-center gap-4">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-500/10">
+                    <svg
+                      className="h-5 w-5 text-blue-400"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"
+                      />
+                    </svg>
+                  </div>
+                  <div>
+                    <p className="font-medium text-foreground">
+                      {project.fileName}
+                    </p>
+                    <div className="mt-0.5 flex items-center gap-3 text-xs text-foreground/40">
+                      {project.durationMs && (
+                        <span>{formatDuration(project.durationMs)}</span>
+                      )}
+                      <span>{formatDate(project.createdAt)}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => handleDeleteProject(project.id)}
+                  className="rounded-lg p-2 text-foreground/20 opacity-0 transition-all hover:bg-red-500/10 hover:text-red-400 group-hover:opacity-100"
+                  title="Delete project"
+                >
+                  <svg
+                    className="h-4 w-4"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                    />
+                  </svg>
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
