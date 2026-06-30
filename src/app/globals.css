@@ -39,3 +39,48 @@ body {
 .animate-indeterminate-progress {
   animation: indeterminate-progress 1.4s ease-in-out infinite;
 }
+
+/* Keyboard-only focus ring. Mouse clicks don't trigger :focus-visible, so this
+   only shows for keyboard/AT users — visible affordance without hurting the
+   hover-driven mouse design. Browsers round the outline to the element radius. */
+@layer base {
+  button:focus-visible,
+  a:focus-visible,
+  input:focus-visible,
+  [role="button"]:focus-visible,
+  [role="separator"]:focus-visible,
+  [tabindex]:focus-visible {
+    outline: 2px solid rgb(139 92 246 / 0.9); /* violet-500 */
+    outline-offset: 2px;
+  }
+}
+
+/* Respect reduced-motion for the one CSS-keyframe animation not covered by
+   Tailwind's motion-safe variants. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-indeterminate-progress {
+    animation: none;
+  }
+}
+
+/* Slim, on-brand horizontal scrollbar for the timeline scroller (replaces the
+   default OS bar). Thin track, pill thumb, violet on hover. */
+.timeline-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(255 255 255 / 0.16) transparent;
+}
+.timeline-scroll::-webkit-scrollbar {
+  height: 10px;
+}
+.timeline-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.timeline-scroll::-webkit-scrollbar-thumb {
+  background-color: rgb(255 255 255 / 0.16);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+.timeline-scroll::-webkit-scrollbar-thumb:hover {
+  background-color: rgb(167 139 250 / 0.55); /* violet-400 */
+}

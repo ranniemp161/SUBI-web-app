@@ -41,10 +41,16 @@ colors. Pick one direction before shipping: either migrate the marketing/dashboa
 surfaces to violet, or treat violet as an editor-only accent on purpose. Until
 resolved, **new editor components → violet; new dashboard/marketing components → blue.**
 
-**Icon note:** the editor currently uses emoji glyphs (▶ ⏮ ✂ ⌒ 🔊 ⛶ etc.) as
-placeholder icons. These are not a long-term pattern — replace with real SVG
-icons (the dashboard/file-picker already use inline `stroke="currentColor"` SVGs;
-match that approach when upgrading).
+**Icon note:** the editor uses **`lucide-react`** for all iconography (swapped in
+from emoji placeholders on 2026-06-30). Conventions: import named icons directly
+(`import { Play, Scissors } from "lucide-react"`); size with `h-4 w-4` (inline /
+transport / toolbar) or `h-5 w-5` (tool rail), and `h-3.5 w-3.5` for small inline
+affordances (context-menu trailing glyphs, timeline toolbar). Use `fill-current` on
+Play/Pause for a solid transport look; nudge the Play triangle with `translate-x-0.5`
+to optically center it. Icons inherit color via `currentColor` (stroke-based), so
+they pick up the surrounding `text-*` class. The dashboard/file-picker still use
+hand-rolled inline `stroke="currentColor"` SVGs — fine to leave, but prefer lucide
+for new work.
 
 ---
 

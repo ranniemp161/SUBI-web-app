@@ -3,6 +3,36 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
+import {
+  ArrowLeft,
+  Clapperboard,
+  Undo2,
+  Redo2,
+  Share2,
+  Download,
+  MousePointer2,
+  Scissors,
+  Sparkles,
+  AudioLines,
+  Captions,
+  SlidersHorizontal,
+  Type,
+  Settings,
+  Play,
+  Pause,
+  Rewind,
+  FastForward,
+  Volume2,
+  VolumeX,
+  Maximize,
+  X,
+  AlertTriangle,
+  Loader2,
+  Clock,
+  type LucideIcon,
+} from "lucide-react";
+import type { ReactNode } from "react";
+import { Toaster, toast } from "sonner";
 import FilePicker from "@/components/file-picker";
 import VideoPlayer, {
   type VideoPlayerHandle,
@@ -32,6 +62,8 @@ interface Project {
 }
 
 const AUTOSAVE_DELAY_MS = 800;
+const MIN_TRANSCRIPT_W = 300;
+const MAX_TRANSCRIPT_W = 640;
 
 export default function EditorPage() {
   const { id } = useParams<{ id: string }>();
@@ -50,6 +82,8 @@ export default function EditorPage() {
   const [muted, setMuted] = useState(false);
   const [videoMeta, setVideoMeta] = useState<VideoMeta | null>(null);
   const [savedAt, setSavedAt] = useState<"saved" | "saving">("saved");
+  const resizingRef = useRef(false);
+  const transcriptRef = useRef<HTMLDivElement>(null);
 
   const undoStack = useRef<EDL[]>([]);
   const redoStack = useRef<EDL[]>([]);
@@ -115,7 +149,14 @@ export default function EditorPage() {
         body: JSON.stringify({ edl }),
       })
         .then(() => setSavedAt("saved"))
-        .catch((error) => console.error("Failed to auto-save EDL:", error));
+        .catch((error) => {
+          // Leave the status on "Saving…" (it genuinely hasn't saved); the next
+          // edit re-triggers this effect and retries. The toast is the signal.
+          console.error("Failed to auto-save EDL:", error);
+          toast.error("Couldn't save your changes", {
+            description: "Your edits are safe here — we'll retry on your next edit.",
+          });
+        });
     }, AUTOSAVE_DELAY_MS);
 
     return () => {
@@ -134,20 +175,42 @@ export default function EditorPage() {
     []
   );
 
+  const undo = useCallback(() => {
+    setEdl((prev) => {
+      if (!prev || undoStack.current.length === 0) return prev;
+      redoStack.current.push(prev);
+      return undoStack.current.pop()!;
+    });
+  }, []);
+
+  const redo = useCallback(() => {
+    setEdl((prev) => {
+      if (!prev || redoStack.current.length === 0) return prev;
+      undoStack.current.push(prev);
+      return redoStack.current.pop()!;
+    });
+  }, []);
+
   const handleCutWords = useCallback(
     (words: TranscriptWord[]) => {
       if (!edl) return;
       applyEdl(cutWordsInEdl(edl, words));
+      toast(`Cut ${words.length} word${words.length === 1 ? "" : "s"}`, {
+        action: { label: "Undo", onClick: () => undo() },
+      });
     },
-    [edl, applyEdl]
+    [edl, applyEdl, undo]
   );
 
   const handleRestoreSegment = useCallback(
     (segment: EDLSegment) => {
       if (!edl) return;
       applyEdl(restoreSegmentInEdl(edl, segment));
+      toast("Segment restored", {
+        action: { label: "Undo", onClick: () => undo() },
+      });
     },
-    [edl, applyEdl]
+    [edl, applyEdl, undo]
   );
 
   // Boundary drags call onTrimStart once (snapshots undo state, like applyEdl)
@@ -163,22 +226,6 @@ export default function EditorPage() {
 
   const handleTrimBoundary = useCallback((leftIndex: number, newTime: number) => {
     setEdl((prev) => (prev ? trimBoundaryInEdl(prev, leftIndex, newTime) : prev));
-  }, []);
-
-  const undo = useCallback(() => {
-    setEdl((prev) => {
-      if (!prev || undoStack.current.length === 0) return prev;
-      redoStack.current.push(prev);
-      return undoStack.current.pop()!;
-    });
-  }, []);
-
-  const redo = useCallback(() => {
-    setEdl((prev) => {
-      if (!prev || redoStack.current.length === 0) return prev;
-      undoStack.current.push(prev);
-      return redoStack.current.pop()!;
-    });
   }, []);
 
   const handleSeek = useCallback((seconds: number) => {
@@ -358,39 +405,78 @@ export default function EditorPage() {
     });
   }, []);
 
+  // Width is managed imperatively on the DOM node (not React state): avoids a
+  // re-render per drag step and an SSR hydration mismatch on the persisted value.
+  // Restore the saved width after mount.
+  useEffect(() => {
+    const saved = Number(localStorage.getItem("rc:transcriptWidth"));
+    if (saved >= MIN_TRANSCRIPT_W && saved <= MAX_TRANSCRIPT_W && transcriptRef.current) {
+      transcriptRef.current.style.width = `${saved}px`;
+    }
+  }, []);
+
+  const startResize = useCallback((e: React.PointerEvent) => {
+    e.preventDefault();
+    resizingRef.current = true;
+    e.currentTarget.setPointerCapture(e.pointerId);
+  }, []);
+  const onResizeMove = useCallback((e: React.PointerEvent) => {
+    if (!resizingRef.current || !transcriptRef.current) return;
+    // Transcript is pinned to the right edge, so its width grows as the pointer
+    // moves left: width = viewport right edge − pointer x.
+    const next = Math.min(MAX_TRANSCRIPT_W, Math.max(MIN_TRANSCRIPT_W, window.innerWidth - e.clientX));
+    transcriptRef.current.style.width = `${next}px`;
+  }, []);
+  const endResize = useCallback((e: React.PointerEvent) => {
+    if (!resizingRef.current) return;
+    resizingRef.current = false;
+    e.currentTarget.releasePointerCapture(e.pointerId);
+    if (transcriptRef.current) {
+      localStorage.setItem("rc:transcriptWidth", String(transcriptRef.current.offsetWidth));
+    }
+  }, []);
+
   if (isLoading) {
-    return (
-      <div className="mx-auto max-w-5xl px-6 py-12 text-foreground/40">
-        Loading project...
-      </div>
-    );
+    return <EditorSkeleton />;
   }
 
   if (loadError || !project) {
     return (
-      <div className="mx-auto max-w-5xl px-6 py-12">
-        <p className="text-red-400">{loadError || "Project not found."}</p>
-        <Link href="/dashboard" className="mt-4 inline-block text-sm text-blue-400 hover:underline">
-          Back to dashboard
-        </Link>
-      </div>
+      <StatusScreen
+        tone="error"
+        icon={<AlertTriangle className="h-7 w-7" />}
+        title="Project not found"
+        message={loadError || "We couldn't find this project. It may have been deleted."}
+      />
     );
   }
 
   if (project.transcriptStatus !== "ready") {
+    if (project.transcriptStatus === "processing") {
+      return (
+        <StatusScreen
+          icon={<Loader2 className="h-7 w-7 motion-safe:animate-spin" />}
+          title="Transcribing your video"
+          message="This usually takes a minute or two. Come back once it's ready — we'll have the transcript waiting."
+        />
+      );
+    }
+    if (project.transcriptStatus === "failed") {
+      return (
+        <StatusScreen
+          tone="error"
+          icon={<AlertTriangle className="h-7 w-7" />}
+          title="Transcription failed"
+          message="Something went wrong while transcribing this video. Try re-uploading it from the dashboard."
+        />
+      );
+    }
     return (
-      <div className="mx-auto max-w-5xl px-6 py-12">
-        <Link href="/dashboard" className="text-sm text-blue-400 hover:underline">
-          Back to dashboard
-        </Link>
-        <p className="mt-6 text-foreground/50">
-          {project.transcriptStatus === "processing" &&
-            "Transcription is still in progress — come back once it's ready."}
-          {project.transcriptStatus === "failed" &&
-            "Transcription failed for this project."}
-          {project.transcriptStatus === "idle" && "Transcription hasn't started yet."}
-        </p>
-      </div>
+      <StatusScreen
+        icon={<Clock className="h-7 w-7" />}
+        title="Transcription hasn't started"
+        message="This project doesn't have a transcript yet. Start one from the dashboard to begin editing."
+      />
     );
   }
 
@@ -413,15 +499,15 @@ export default function EditorPage() {
     );
   }
 
-  const railTools: { icon: string; label: string; badge?: number; active?: boolean }[] = [
-    { icon: "▿", label: "Select", active: true },
-    { icon: "✂", label: "Trim" },
-    { icon: "✦", label: "Filler" },
-    { icon: "∿", label: "Silence", badge: stats.removedCount },
-    { icon: "CC", label: "Captions" },
-    { icon: "🎚", label: "Audio" },
-    { icon: "T", label: "Titles" },
-    { icon: "⚙", label: "Settings" },
+  const railTools: { Icon: LucideIcon; label: string; badge?: number; active?: boolean }[] = [
+    { Icon: MousePointer2, label: "Select", active: true },
+    { Icon: Scissors, label: "Trim" },
+    { Icon: Sparkles, label: "Filler" },
+    { Icon: AudioLines, label: "Silence", badge: stats.removedCount },
+    { Icon: Captions, label: "Captions" },
+    { Icon: SlidersHorizontal, label: "Audio" },
+    { Icon: Type, label: "Titles" },
+    { Icon: Settings, label: "Settings" },
   ];
 
   const transportBtn =
@@ -440,6 +526,7 @@ export default function EditorPage() {
               key={tool.label}
               type="button"
               disabled={!tool.active}
+              aria-pressed={tool.active}
               title={tool.active ? tool.label : `${tool.label} (coming soon)`}
               className={`relative flex w-14 flex-col items-center gap-1 rounded-lg py-2 text-[10px] ${
                 tool.active
@@ -447,7 +534,7 @@ export default function EditorPage() {
                   : "cursor-not-allowed text-foreground/30"
               }`}
             >
-              <span className="text-base">{tool.icon}</span>
+              <tool.Icon className="h-5 w-5" strokeWidth={1.75} />
               {tool.label}
               {tool.badge ? (
                 <span className="absolute right-2 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-gradient-to-br from-orange-500 to-amber-500 px-1 text-[9px] font-bold text-white">
@@ -482,9 +569,9 @@ export default function EditorPage() {
                   type="button"
                   aria-label="Play"
                   onClick={() => playerRef.current?.play()}
-                  className="absolute inset-0 m-auto flex h-16 w-16 items-center justify-center rounded-full bg-violet-600/90 text-2xl text-white shadow-lg transition-transform hover:scale-105"
+                  className="absolute inset-0 m-auto flex h-16 w-16 items-center justify-center rounded-full bg-violet-600/90 text-white shadow-lg motion-safe:transition-transform motion-safe:hover:scale-105"
                 >
-                  ▶
+                  <Play className="h-7 w-7 translate-x-0.5 fill-current" />
                 </button>
               )}
             </div>
@@ -504,7 +591,7 @@ export default function EditorPage() {
                 onClick={() => playerRef.current?.seek(Math.max(0, currentTime - 5))}
                 className={transportBtn}
               >
-                ⏮
+                <Rewind className="h-4 w-4" />
               </button>
               <button
                 type="button"
@@ -512,7 +599,11 @@ export default function EditorPage() {
                 onClick={() => playerRef.current?.togglePlay()}
                 className="flex h-10 w-10 items-center justify-center rounded-full bg-violet-600 text-white transition-colors hover:bg-violet-500"
               >
-                {isPlaying ? "⏸" : "▶"}
+                {isPlaying ? (
+                  <Pause className="h-5 w-5 fill-current" />
+                ) : (
+                  <Play className="h-5 w-5 translate-x-0.5 fill-current" />
+                )}
               </button>
               <button
                 type="button"
@@ -520,7 +611,7 @@ export default function EditorPage() {
                 onClick={() => playerRef.current?.seek(currentTime + 5)}
                 className={transportBtn}
               >
-                ⏭
+                <FastForward className="h-4 w-4" />
               </button>
             </div>
             <div className="flex items-center gap-1">
@@ -536,9 +627,10 @@ export default function EditorPage() {
                 type="button"
                 onClick={toggleMute}
                 aria-label={muted ? "Unmute" : "Mute"}
+                aria-pressed={muted}
                 className={transportBtn}
               >
-                {muted ? "🔇" : "🔊"}
+                {muted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
               </button>
               <button
                 type="button"
@@ -546,14 +638,27 @@ export default function EditorPage() {
                 aria-label="Fullscreen"
                 className={transportBtn}
               >
-                ⛶
+                <Maximize className="h-4 w-4" />
               </button>
             </div>
           </div>
         </div>
 
+        {/* Resize handle */}
+        <div
+          onPointerDown={startResize}
+          onPointerMove={onResizeMove}
+          onPointerUp={endResize}
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize transcript panel"
+          className="group relative z-10 w-1 shrink-0 cursor-col-resize"
+        >
+          <div className="absolute inset-y-0 -left-1 -right-1 transition-colors group-hover:bg-violet-500/30" />
+        </div>
+
         {/* Transcript */}
-        <div className="w-[380px] shrink-0">
+        <div ref={transcriptRef} className="shrink-0" style={{ width: 380 }}>
           <TranscriptPanel
             words={words}
             edl={edl ?? { segments: [] }}
@@ -582,7 +687,7 @@ export default function EditorPage() {
       />
 
       {/* Status bar */}
-      <div className="flex items-center justify-between border-t border-foreground/5 px-4 py-1.5 text-[11px] text-foreground/40">
+      <div className="flex items-center justify-between border-t border-foreground/5 px-4 py-1.5 text-[11px] text-foreground/55">
         <div className="flex items-center gap-3">
           <span>
             Original <span className="font-mono text-foreground/60">{formatDuration(totalSeconds * 1000)}</span>
@@ -607,6 +712,115 @@ export default function EditorPage() {
       </div>
 
       {showShortcuts && <ShortcutsOverlay onClose={() => setShowShortcuts(false)} />}
+
+      <Toaster
+        position="bottom-center"
+        gap={8}
+        toastOptions={{
+          classNames: {
+            toast:
+              "!rounded-lg !border !border-foreground/10 !bg-background !text-foreground !shadow-2xl",
+            description: "!text-foreground/60",
+            actionButton:
+              "!rounded-md !bg-violet-600 !px-2.5 !py-1 !text-xs !font-medium !text-white hover:!bg-violet-500",
+            error: "!text-red-300",
+            icon: "!text-violet-300",
+          },
+        }}
+      />
+    </div>
+  );
+}
+
+function StatusScreen({
+  icon,
+  title,
+  message,
+  tone,
+}: {
+  icon: ReactNode;
+  title: string;
+  message: string;
+  tone?: "error";
+}) {
+  return (
+    <div className="flex h-screen flex-col items-center justify-center gap-4 bg-background px-6 text-center">
+      <div
+        className={`flex h-14 w-14 items-center justify-center rounded-2xl ${
+          tone === "error" ? "bg-red-500/10 text-red-400" : "bg-violet-500/15 text-violet-300"
+        }`}
+      >
+        {icon}
+      </div>
+      <div className="space-y-1.5">
+        <h1 className="text-lg font-bold text-foreground">{title}</h1>
+        <p className="max-w-md text-sm text-foreground/50">{message}</p>
+      </div>
+      <Link
+        href="/dashboard"
+        className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-foreground/10 px-3 py-1.5 text-sm text-foreground/70 hover:bg-foreground/10"
+      >
+        <ArrowLeft className="h-4 w-4" /> Back to dashboard
+      </Link>
+    </div>
+  );
+}
+
+function EditorSkeleton() {
+  const block = "rounded-md bg-foreground/[0.06] motion-safe:animate-pulse";
+  return (
+    <div className="flex h-screen flex-col bg-background" aria-busy="true" aria-label="Loading editor">
+      {/* Top bar */}
+      <div className="flex shrink-0 items-center justify-between border-b border-foreground/10 px-3 py-2">
+        <div className="flex items-center gap-3">
+          <div className={`h-8 w-28 ${block}`} />
+          <div className={`h-8 w-40 ${block}`} />
+        </div>
+        <div className="flex items-center gap-2">
+          <div className={`h-8 w-16 ${block}`} />
+          <div className={`h-8 w-20 ${block}`} />
+          <div className={`h-8 w-24 ${block}`} />
+        </div>
+      </div>
+
+      {/* Middle band */}
+      <div className="flex min-h-0 flex-1">
+        <div className="flex w-16 shrink-0 flex-col items-center gap-2 border-r border-foreground/5 py-3">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className={`h-10 w-12 ${block}`} />
+          ))}
+        </div>
+        <div className="flex min-w-0 flex-1 flex-col">
+          <div className="flex min-h-0 flex-1 items-center justify-center bg-black/40 p-4">
+            <div className={`h-full w-full max-w-3xl ${block}`} />
+          </div>
+          <div className="flex items-center gap-3 border-t border-foreground/5 px-4 py-2.5">
+            <div className={`h-5 w-28 ${block}`} />
+            <div className="flex flex-1 items-center justify-center gap-2">
+              <div className={`h-9 w-9 rounded-full ${block}`} />
+              <div className={`h-10 w-10 rounded-full ${block}`} />
+              <div className={`h-9 w-9 rounded-full ${block}`} />
+            </div>
+            <div className={`h-7 w-20 ${block}`} />
+          </div>
+        </div>
+        <div className="w-[380px] shrink-0 space-y-3 border-l border-foreground/5 p-5">
+          <div className={`h-7 w-32 ${block}`} />
+          <div className={`h-9 w-full ${block}`} />
+          <div className="space-y-2.5 pt-3">
+            {[72, 88, 64, 80, 56, 84, 68, 76].map((w, i) => (
+              <div key={i} className={`h-4 ${block}`} style={{ width: `${w}%` }} />
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Timeline dock */}
+      <div className="space-y-3 border-t border-foreground/10 p-4">
+        <div className={`h-6 w-full ${block}`} />
+        <div className={`h-12 w-full ${block}`} />
+        <div className={`h-10 w-full ${block}`} />
+      </div>
     </div>
   );
 }
@@ -633,17 +847,20 @@ function TopBar({
           href="/dashboard"
           className="flex items-center gap-1.5 rounded-lg border border-foreground/10 px-3 py-1.5 text-sm text-foreground/70 hover:bg-foreground/10"
         >
-          ← Dashboard
+          <ArrowLeft className="h-4 w-4" /> Dashboard
         </Link>
         <div className="flex items-center gap-2">
           <span className="flex h-7 w-7 items-center justify-center rounded-md bg-violet-500/15 text-violet-300">
-            ▶
+            <Clapperboard className="h-4 w-4" />
           </span>
           <div>
             <div className="flex items-center gap-1 text-sm font-semibold text-foreground">
               {fileName}
             </div>
-            <div className="flex items-center gap-1 text-[11px] text-foreground/40">
+            <div
+              aria-live="polite"
+              className="flex items-center gap-1 text-[11px] text-foreground/55"
+            >
               <span
                 className={`h-1.5 w-1.5 rounded-full ${
                   savedAt === "saving" ? "bg-amber-400" : "bg-emerald-400"
@@ -658,10 +875,10 @@ function TopBar({
       <div className="flex items-center gap-2">
         <div className="flex items-center rounded-lg border border-foreground/10">
           <button type="button" onClick={onUndo} disabled={disabled} aria-label="Undo" className={iconBtn}>
-            ↶
+            <Undo2 className="h-4 w-4" />
           </button>
           <button type="button" onClick={onRedo} disabled={disabled} aria-label="Redo" className={iconBtn}>
-            ↷
+            <Redo2 className="h-4 w-4" />
           </button>
         </div>
         <button
@@ -670,7 +887,7 @@ function TopBar({
           title="Share (coming soon)"
           className="flex cursor-not-allowed items-center gap-1.5 rounded-lg border border-foreground/10 px-3 py-1.5 text-sm text-foreground/40"
         >
-          ⤴ Share
+          <Share2 className="h-4 w-4" /> Share
         </button>
         <button
           type="button"
@@ -678,7 +895,7 @@ function TopBar({
           title="Export (rendering comes in a later phase)"
           className="flex cursor-not-allowed items-center gap-1.5 rounded-lg bg-violet-600/60 px-4 py-1.5 text-sm font-semibold text-white/70"
         >
-          ⬆ Export
+          <Download className="h-4 w-4" /> Export
         </button>
       </div>
     </div>
@@ -719,7 +936,7 @@ function ShortcutsOverlay({ onClose }: { onClose: () => void }) {
             className="rounded-lg p-1.5 text-foreground/40 hover:bg-foreground/10 hover:text-foreground/80"
             aria-label="Close"
           >
-            ✕
+            <X className="h-4 w-4" />
           </button>
         </div>
         <div className="space-y-1.5">

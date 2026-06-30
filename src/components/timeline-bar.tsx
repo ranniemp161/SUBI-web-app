@@ -5,10 +5,12 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
+import { Scissors, Trash2, Magnet, Minus, Plus, Eye, Lock, VolumeX } from "lucide-react";
 import {
   totalDuration,
   type EDL,
@@ -47,10 +49,12 @@ const SNAP_PX = 8;
 
 const RULER_H = 24;
 const VIDEO_H = 72;
-const AUDIO_H = 64;
+const AUDIO_H = 104;
 const TOTAL_H = RULER_H + VIDEO_H + AUDIO_H;
 const HEADER_W = 88;
-const WAVE_COLOR = "rgba(167, 139, 250, 0.55)";
+const WAVE_COLOR = "rgba(167, 139, 250, 0.6)";
+// Amplitude boost so quieter passages still read clearly; clamped to the track.
+const WAVE_GAIN = 2.2;
 
 function niceRulerStep(targetSeconds: number): number {
   return RULER_STEPS.find((step) => step >= targetSeconds) ?? RULER_STEPS[RULER_STEPS.length - 1];
@@ -103,6 +107,12 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
   const dragLeftIndexRef = useRef<number | null>(null);
   const dragMovedRef = useRef(false);
   const scrubbingRef = useRef(false);
+  // Latest zoom level for the (stable) native wheel listener to read.
+  const pxPerSecRef = useRef(pxPerSec);
+  pxPerSecRef.current = pxPerSec;
+  // After a wheel-zoom, restore the time that was under the cursor (applied in
+  // a layout effect once the content has re-sized to the new zoom).
+  const pendingZoomRef = useRef<{ time: number; offsetX: number } | null>(null);
 
   const total = totalDuration(edl);
   const widthPx = Math.max(1, total * pxPerSec);
@@ -162,6 +172,51 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
     };
   }, []);
 
+  // Mouse-wheel zoom toward the cursor; shift / horizontal wheel pans instead.
+  // Attached natively (not via React's passive onWheel) so we can preventDefault.
+  useEffect(() => {
+    const scroller = scrollRef.current;
+    if (!scroller) return;
+
+    function onWheel(e: WheelEvent) {
+      // Normalize wheel deltas to pixels — mice report line/page units
+      // (deltaMode 1/2) with tiny deltaY, which otherwise barely zooms.
+      const unit =
+        e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? scroller!.clientHeight : 1;
+      const dx = e.deltaX * unit;
+      const dy = e.deltaY * unit;
+      const horizontal = e.shiftKey || Math.abs(dx) > Math.abs(dy);
+      if (horizontal) {
+        if (e.shiftKey && dx === 0) {
+          scroller!.scrollLeft += dy;
+          e.preventDefault();
+        }
+        return; // let native horizontal trackpad scroll through
+      }
+      e.preventDefault();
+      const rect = scroller!.getBoundingClientRect();
+      const offsetX = e.clientX - rect.left;
+      const px = pxPerSecRef.current;
+      const time = (scroller!.scrollLeft + offsetX) / px;
+      const next = Math.min(MAX_PX_PER_SEC, Math.max(MIN_PX_PER_SEC, px * Math.exp(-dy * 0.0015)));
+      if (next === px) return;
+      pendingZoomRef.current = { time, offsetX };
+      setPxPerSec(next);
+    }
+
+    scroller.addEventListener("wheel", onWheel, { passive: false });
+    return () => scroller.removeEventListener("wheel", onWheel);
+  }, []);
+
+  // Keep the cursor's time anchored after a wheel-zoom resizes the content.
+  useLayoutEffect(() => {
+    const pending = pendingZoomRef.current;
+    if (!pending) return;
+    const scroller = scrollRef.current;
+    if (scroller) scroller.scrollLeft = pending.time * pxPerSec - pending.offsetX;
+    pendingZoomRef.current = null;
+  }, [pxPerSec]);
+
   // Draw only the visible slice of the waveform, mapped against the audio's own
   // decoded duration so peaks line up with the clips.
   useEffect(() => {
@@ -181,8 +236,8 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
       const t = (view.scrollLeft + x) / pxPerSec;
       if (t > duration) break;
       const bucketIndex = Math.min(buckets - 1, Math.floor((t / duration) * buckets));
-      const min = peaksMin[bucketIndex] ?? 0;
-      const max = peaksMax[bucketIndex] ?? 0;
+      const min = Math.max(-1, (peaksMin[bucketIndex] ?? 0) * WAVE_GAIN);
+      const max = Math.min(1, (peaksMax[bucketIndex] ?? 0) * WAVE_GAIN);
       const yTop = mid - max * mid;
       const yBottom = mid - min * mid;
       ctx.fillRect(x, yTop, 1, Math.max(1, yBottom - yTop));
@@ -300,14 +355,15 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
             {formatDuration(total * 1000)}
           </span>
           <button type="button" disabled title="Split (coming soon)" className={toolBtn}>
-            ✂ Split
+            <Scissors className="h-3.5 w-3.5" /> Split
           </button>
           <button type="button" disabled title="Ripple delete (coming soon)" className={toolBtn}>
-            🗑 Ripple delete
+            <Trash2 className="h-3.5 w-3.5" /> Ripple delete
           </button>
           <button
             type="button"
             onClick={() => setSnapEnabled((s) => !s)}
+            aria-pressed={snapEnabled}
             title="Toggle snapping to word edges"
             className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors ${
               snapEnabled
@@ -315,7 +371,7 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
                 : "text-foreground/50 hover:bg-foreground/10 hover:text-foreground/80"
             }`}
           >
-            ⌒ Snap
+            <Magnet className="h-3.5 w-3.5" /> Snap
           </button>
         </div>
 
@@ -333,7 +389,7 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
           </span>
           <div className="flex items-center gap-1.5">
             <button type="button" aria-label="Zoom out" onClick={zoomOut} className={zoomBtn}>
-              −
+              <Minus className="h-3.5 w-3.5" />
             </button>
             <button
               type="button"
@@ -343,7 +399,7 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
               Fit
             </button>
             <button type="button" aria-label="Zoom in" onClick={zoomIn} className={zoomBtn}>
-              +
+              <Plus className="h-3.5 w-3.5" />
             </button>
           </div>
         </div>
@@ -359,19 +415,25 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
             className="flex flex-col justify-center gap-1 border-b border-foreground/5 px-3"
           >
             <span className="text-xs font-semibold text-foreground/70">Video</span>
-            <span className="text-foreground/25">👁 🔒</span>
+            <span className="flex items-center gap-1.5 text-foreground/25">
+              <Eye className="h-3.5 w-3.5" />
+              <Lock className="h-3.5 w-3.5" />
+            </span>
           </div>
           <div
             style={{ height: AUDIO_H }}
             className="flex flex-col justify-center gap-1 px-3"
           >
             <span className="text-xs font-semibold text-foreground/70">Audio</span>
-            <span className="text-foreground/25">🔇 🔒</span>
+            <span className="flex items-center gap-1.5 text-foreground/25">
+              <VolumeX className="h-3.5 w-3.5" />
+              <Lock className="h-3.5 w-3.5" />
+            </span>
           </div>
         </div>
 
         {/* Scrollable tracks */}
-        <div ref={scrollRef} className="flex-1 overflow-x-auto overflow-y-hidden">
+        <div ref={scrollRef} className="timeline-scroll flex-1 overflow-x-auto overflow-y-hidden">
           <div
             ref={contentRef}
             style={{ width: widthPx, height: TOTAL_H }}

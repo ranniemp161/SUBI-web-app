@@ -50,12 +50,24 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
     const edlRef = useRef(edl);
     edlRef.current = edl;
 
+    // video.play() returns a promise that rejects with AbortError if a pause()
+    // or seek interrupts it before it resolves. The editor interleaves
+    // play/pause/seek constantly, so swallow that benign rejection here.
+    const safePlay = (video: HTMLVideoElement) => {
+      const result = video.play();
+      if (result !== undefined) {
+        result.catch((error: DOMException) => {
+          if (error.name !== "AbortError") console.error("Video play failed:", error);
+        });
+      }
+    };
+
     useImperativeHandle(ref, () => ({
       seek(seconds: number) {
         if (videoRef.current) videoRef.current.currentTime = seconds;
       },
       play() {
-        videoRef.current?.play();
+        if (videoRef.current) safePlay(videoRef.current);
       },
       pause() {
         videoRef.current?.pause();
@@ -63,7 +75,7 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       togglePlay() {
         const video = videoRef.current;
         if (!video) return;
-        if (video.paused) video.play();
+        if (video.paused) safePlay(video);
         else video.pause();
       },
       setPlaybackRate(rate: number) {
@@ -114,7 +126,7 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
         onClick={() => {
           const video = videoRef.current;
           if (!video) return;
-          if (video.paused) video.play();
+          if (video.paused) safePlay(video);
           else video.pause();
         }}
         className={className ?? "h-full w-full cursor-pointer bg-black object-contain"}
