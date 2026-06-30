@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { useRouter } from "next/navigation";
 import FilePicker, { type VideoMetadata } from "@/components/file-picker";
 import { formatDuration, formatDate } from "@/lib/utils";
 
@@ -22,41 +21,25 @@ const TRANSCRIPT_STATUS_LABEL: Record<Project["transcriptStatus"], string> = {
 };
 
 /**
- * Kick off transcription for a project: ask our server for a short-lived
- * Deepgram key + callback URL, then upload the video straight to Deepgram
- * from the browser. The file never touches our own server — Deepgram
- * extracts the audio itself, since it accepts common video containers
- * directly.
+ * Kick off transcription for a project.
+ *
+ * TEMPORARY: routed through local faster-whisper (/api/transcribe/whisper)
+ * instead of Deepgram while Deepgram project access is being sorted out
+ * with the client. Swap back to the /api/transcribe/init + direct-to-Deepgram
+ * flow once that's resolved.
  */
 async function startTranscription(projectId: string, file: File) {
-  const initResponse = await fetch("/api/transcribe/init", {
+  const formData = new FormData();
+  formData.set("projectId", projectId);
+  formData.set("file", file);
+
+  const response = await fetch("/api/transcribe/whisper", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ projectId }),
+    body: formData,
   });
 
-  if (!initResponse.ok) {
-    throw new Error("Failed to initialize transcription");
-  }
-
-  const { temporaryApiKey, callbackUrl } = await initResponse.json();
-
-  const deepgramUrl = new URL("https://api.deepgram.com/v1/listen");
-  deepgramUrl.searchParams.set("callback", callbackUrl);
-  deepgramUrl.searchParams.set("model", "nova-3");
-  deepgramUrl.searchParams.set("smart_format", "true");
-
-  const uploadResponse = await fetch(deepgramUrl.toString(), {
-    method: "POST",
-    headers: {
-      Authorization: `Token ${temporaryApiKey}`,
-      "Content-Type": file.type || "application/octet-stream",
-    },
-    body: file,
-  });
-
-  if (!uploadResponse.ok) {
-    throw new Error(`Deepgram upload failed: ${await uploadResponse.text()}`);
+  if (!response.ok) {
+    throw new Error(`Whisper transcription failed: ${await response.text()}`);
   }
 }
 
@@ -67,7 +50,6 @@ async function startTranscription(projectId: string, file: File) {
  * Fetches projects from the API on mount.
  */
 export default function DashboardPage() {
-  const router = useRouter();
   const [projects, setProjects] = useState<Project[]>([]);
   const [isLoadingProjects, setIsLoadingProjects] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
@@ -111,10 +93,14 @@ export default function DashboardPage() {
         }
 
         const project = await response.json();
-        // In Phase 1, redirect to dashboard. In Phase 3+, this will go to the editor.
-        router.push(`/dashboard`);
-        // Add new project to the list immediately for instant feedback
-        setProjects((prev) => [project, ...prev]);
+        // Add new project to the list immediately for instant feedback.
+        // Mark it "processing" right away (instead of waiting on a poll
+        // tick) so the progress bar shows from the start — startTranscription
+        // is about to set this same status server-side anyway.
+        setProjects((prev) => [
+          { ...project, transcriptStatus: "processing" },
+          ...prev,
+        ]);
 
         // Fire-and-forget — status updates arrive via polling below.
         startTranscription(project.id, file).catch((error) => {
@@ -126,7 +112,7 @@ export default function DashboardPage() {
         setIsCreating(false);
       }
     },
-    [router]
+    []
   );
 
   /** Poll any project still transcribing until it's ready or failed. */
@@ -254,7 +240,7 @@ export default function DashboardPage() {
                       />
                     </svg>
                   </div>
-                  <div>
+                  <div className="min-w-0 flex-1">
                     <p className="font-medium text-foreground">
                       {project.fileName}
                     </p>
@@ -277,6 +263,15 @@ export default function DashboardPage() {
                         </span>
                       )}
                     </div>
+                    {project.transcriptStatus === "processing" && (
+                      <div
+                        role="progressbar"
+                        aria-label="Transcription in progress"
+                        className="mt-2 h-1 w-full max-w-48 overflow-hidden rounded-full bg-foreground/10"
+                      >
+                        <div className="h-full w-1/3 animate-indeterminate-progress rounded-full bg-blue-500" />
+                      </div>
+                    )}
                   </div>
                 </div>
 

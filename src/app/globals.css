@@ -24,3 +24,18 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Indeterminate progress bar — used while transcription status is "processing",
+   since we don't have a real percentage to report. */
+@keyframes indeterminate-progress {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(250%);
+  }
+}
+
+.animate-indeterminate-progress {
+  animation: indeterminate-progress 1.4s ease-in-out infinite;
+}
