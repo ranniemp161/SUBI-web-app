@@ -467,16 +467,19 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
             >
               {edl.segments.map((segment, index) => {
                 const isCut = segment.status === "cut";
+                const isRetake = isCut && segment.reason === "retake";
+                const cutTooltip =
+                  segment.reason === "retake"
+                    ? "Retake — kept the later take. Click to restore."
+                    : segment.reason === "silence"
+                      ? "Silence — auto-trimmed. Click to restore."
+                      : "Cut — click to restore.";
                 return (
                   <div
                     key={index}
                     onClick={(e) => handleSegmentClick(e, segment)}
                     onPointerDown={(e) => e.stopPropagation()}
-                    title={
-                      isCut
-                        ? `Cut (${segment.reason ?? "manual"}) — click to restore`
-                        : "Keep — click to seek"
-                    }
+                    title={isCut ? cutTooltip : "Keep — click to seek"}
                     style={{
                       left: segment.start * pxPerSec,
                       width: Math.max(1, (segment.end - segment.start) * pxPerSec),
@@ -485,9 +488,11 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
                         : undefined,
                     }}
                     className={`absolute top-2 bottom-2 flex items-center overflow-hidden rounded-md border ${
-                      isCut
-                        ? "border-foreground/10 bg-black/40"
-                        : "border-violet-400/40 bg-gradient-to-b from-violet-500/85 to-violet-600/85 hover:from-violet-500 hover:to-violet-600"
+                      isRetake
+                        ? "border-amber-400/30 bg-amber-950/40"
+                        : isCut
+                          ? "border-foreground/10 bg-black/40"
+                          : "border-violet-400/40 bg-gradient-to-b from-violet-500/85 to-violet-600/85 hover:from-violet-500 hover:to-violet-600"
                     }`}
                   >
                     {!isCut && index === firstKeepIndex && (

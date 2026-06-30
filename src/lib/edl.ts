@@ -6,6 +6,8 @@
  * `durationMs` (stored in Postgres) is involved.
  */
 
+import { detectRetakes } from "./retake-detection";
+
 /** A single transcribed word with timing, matching the Deepgram/whisper response shape. */
 export interface TranscriptWord {
   word: string;
@@ -36,6 +38,38 @@ export interface EDL {
 
 /** Gaps between words longer than this are flagged as dead air. */
 const SILENCE_GAP_SECONDS = 2;
+
+/**
+ * An initial auto-build that would keep less than this fraction of the clip is
+ * treated as a data problem (e.g. missing word timestamps), not a real edit —
+ * we fall back to keep-all rather than silently delete the whole video.
+ */
+const MIN_INITIAL_KEEP_FRACTION = 0.1;
+
+/**
+ * Drop transcript words with unusable timing before they reach the EDL math.
+ * ASR (faster-whisper especially) can return null/NaN word timestamps; those
+ * coerce to 0 in arithmetic, which collapses every gap check and leaves
+ * `prevEnd` stuck at 0 — so the trailing-gap branch marks the entire clip as
+ * one giant "silence" cut. Keep only finite, forward-ordered words.
+ */
+export function sanitizeWords(words: TranscriptWord[]): TranscriptWord[] {
+  return words
+    .filter(
+      (w) =>
+        Number.isFinite(w.start) && Number.isFinite(w.end) && w.end > w.start
+    )
+    .sort((a, b) => a.start - b.start);
+}
+
+/** A single "keep" segment spanning the whole clip — the safe fallback. */
+function keepAll(durationSeconds: number): EDL {
+  return {
+    segments: [
+      { start: 0, end: Math.max(durationSeconds, 0), status: "keep", reason: null },
+    ],
+  };
+}
 
 /** Merge adjacent segments that share the same status/reason and touch end-to-end. */
 function mergeAdjacent(segments: EDLSegment[]): EDLSegment[] {
@@ -69,7 +103,7 @@ export function generateInitialEDL(
   const cuts: { start: number; end: number }[] = [];
   let prevEnd = 0;
 
-  for (const word of words) {
+  for (const word of sanitizeWords(words)) {
     if (word.start - prevEnd > SILENCE_GAP_SECONDS) {
       cuts.push({ start: prevEnd, end: word.start });
     }
@@ -96,6 +130,35 @@ export function generateInitialEDL(
   }
 
   return { segments };
+}
+
+/**
+ * Build the initial EDL for a fresh transcript: silence pass (generateInitialEDL)
+ * composed with the retake-detection pass, so a new project arrives already
+ * mostly cut. Only ever called once per project — see the `data.edl ?? ...`
+ * guard at the call site, which skips this entirely once an EDL is saved.
+ */
+export function buildInitialEDL(words: TranscriptWord[], durationSeconds: number): EDL {
+  const clean = sanitizeWords(words);
+
+  // No usable word timing → we can't trust any cut. Keep everything rather
+  // than guess (a degenerate transcript must never auto-delete the video).
+  if (clean.length === 0 || durationSeconds <= 0) {
+    return keepAll(durationSeconds);
+  }
+
+  let edl = generateInitialEDL(clean, durationSeconds);
+  for (const retake of detectRetakes(clean)) {
+    edl = setRangeStatus(edl, retake.cutStart, retake.cutEnd, "cut", "retake");
+  }
+
+  // Safety floor: an initial auto-cut that removes (nearly) the whole clip is
+  // almost certainly bad input, not a real edit. Refuse it and keep everything.
+  if (keptDuration(edl) < durationSeconds * MIN_INITIAL_KEEP_FRACTION) {
+    return keepAll(durationSeconds);
+  }
+
+  return edl;
 }
 
 /**

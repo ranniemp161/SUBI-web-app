@@ -29,6 +29,8 @@ import {
   AlertTriangle,
   Loader2,
   Clock,
+  Check,
+  RotateCcw,
   type LucideIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -45,7 +47,8 @@ import {
   cutWords as cutWordsInEdl,
   restoreSegment as restoreSegmentInEdl,
   trimBoundary as trimBoundaryInEdl,
-  generateInitialEDL,
+  buildInitialEDL,
+  keptDuration,
   type EDL,
   type EDLSegment,
   type Transcript,
@@ -78,6 +81,7 @@ export default function EditorPage() {
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
+  const [showRetakeReview, setShowRetakeReview] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(1);
   const [muted, setMuted] = useState(false);
   const [videoMeta, setVideoMeta] = useState<VideoMeta | null>(null);
@@ -87,6 +91,10 @@ export default function EditorPage() {
 
   const undoStack = useRef<EDL[]>([]);
   const redoStack = useRef<EDL[]>([]);
+  // A freshly auto-generated initial EDL must NOT be persisted until the user
+  // actually edits — otherwise a bad auto-build saves itself and, because the
+  // load path is `data.edl ?? buildInitialEDL(...)`, can never be rebuilt.
+  const hasEditedRef = useRef(false);
   const playerRef = useRef<VideoPlayerHandle>(null);
   const timelineRef = useRef<TimelineHandle>(null);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -115,7 +123,22 @@ export default function EditorPage() {
         const durationSeconds =
           data.transcript?.duration ?? (data.durationMs ? data.durationMs / 1000 : 0);
 
-        setEdl(data.edl ?? generateInitialEDL(words, durationSeconds));
+        // A saved EDL that keeps nothing is unusable (you can't export an empty
+        // cut) and is almost certainly a corrupted auto-build from before the
+        // keep-all safety floor existed — rebuild it instead of loading it.
+        const savedEdl =
+          data.edl && keptDuration(data.edl) > 0 ? data.edl : null;
+
+        // Only auto-build from the transcript once it's actually ready. Whisper
+        // transcribes in the background, so an editor opened mid-processing has
+        // no words yet — building then would derive the EDL from an empty
+        // transcript (the original whole-video-deleted bug). When ready we build;
+        // otherwise we keep any valid saved EDL and wait for a reload.
+        setEdl(
+          data.transcriptStatus === "ready"
+            ? savedEdl ?? buildInitialEDL(words, durationSeconds)
+            : savedEdl
+        );
       } catch {
         setLoadError("Failed to load project.");
       } finally {
@@ -136,9 +159,10 @@ export default function EditorPage() {
     return () => URL.revokeObjectURL(sourceUrl);
   }, [sourceUrl]);
 
-  // Debounced auto-save of EDL changes to Postgres.
+  // Debounced auto-save of EDL changes to Postgres. Only runs after a real
+  // user edit — the initial auto-built EDL stays unsaved until then.
   useEffect(() => {
-    if (!edl || !project) return;
+    if (!edl || !project || !hasEditedRef.current) return;
 
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     saveTimeoutRef.current = setTimeout(() => {
@@ -166,6 +190,7 @@ export default function EditorPage() {
 
   const applyEdl = useCallback(
     (next: EDL) => {
+      hasEditedRef.current = true;
       setEdl((prev) => {
         if (prev) undoStack.current.push(prev);
         redoStack.current = [];
@@ -178,6 +203,7 @@ export default function EditorPage() {
   const undo = useCallback(() => {
     setEdl((prev) => {
       if (!prev || undoStack.current.length === 0) return prev;
+      hasEditedRef.current = true;
       redoStack.current.push(prev);
       return undoStack.current.pop()!;
     });
@@ -186,6 +212,7 @@ export default function EditorPage() {
   const redo = useCallback(() => {
     setEdl((prev) => {
       if (!prev || redoStack.current.length === 0) return prev;
+      hasEditedRef.current = true;
       undoStack.current.push(prev);
       return redoStack.current.pop()!;
     });
@@ -217,6 +244,7 @@ export default function EditorPage() {
   // then onTrimBoundary repeatedly as the pointer moves — those live updates
   // must not each push a new undo entry, or undo would only step back a pixel.
   const handleTrimStart = useCallback(() => {
+    hasEditedRef.current = true;
     setEdl((prev) => {
       if (prev) undoStack.current.push(prev);
       redoStack.current = [];
@@ -334,6 +362,7 @@ export default function EditorPage() {
           break;
         case "Escape":
           setShowShortcuts(false);
+          setShowRetakeReview(false);
           break;
       }
     }
@@ -667,6 +696,7 @@ export default function EditorPage() {
             onSeek={handleSeek}
             onCutWords={handleCutWords}
             onRestoreSegment={handleRestoreSegment}
+            onOpenRetakeReview={() => setShowRetakeReview(true)}
           />
         </div>
       </div>
@@ -712,6 +742,15 @@ export default function EditorPage() {
       </div>
 
       {showShortcuts && <ShortcutsOverlay onClose={() => setShowShortcuts(false)} />}
+
+      {showRetakeReview && edl && (
+        <RetakeReviewQueue
+          edl={edl}
+          onSeek={handleSeek}
+          onRestoreSegment={handleRestoreSegment}
+          onClose={() => setShowRetakeReview(false)}
+        />
+      )}
 
       <Toaster
         position="bottom-center"
@@ -917,6 +956,100 @@ const SHORTCUTS: { keys: string; label: string }[] = [
   { keys: "⌘Z / ⇧⌘Z", label: "Undo / redo" },
   { keys: "?", label: "Toggle this help" },
 ];
+
+interface RetakeReviewQueueProps {
+  edl: EDL;
+  onSeek: (seconds: number) => void;
+  onRestoreSegment: (segment: EDLSegment) => void;
+  onClose: () => void;
+}
+
+/**
+ * Jump-through review of auto-cut retakes: one at a time, "Accept cut" moves
+ * on, "Keep both" restores it. Restoring shrinks the queue and shifts the
+ * next retake into the same index, so the index only advances on accept.
+ */
+function RetakeReviewQueue({ edl, onSeek, onRestoreSegment, onClose }: RetakeReviewQueueProps) {
+  const retakes = useMemo(
+    () =>
+      edl.segments
+        .filter((s) => s.status === "cut" && s.reason === "retake")
+        .sort((a, b) => a.start - b.start),
+    [edl]
+  );
+  const [index, setIndex] = useState(0);
+  const clampedIndex = Math.min(index, Math.max(0, retakes.length - 1));
+  const current = retakes[clampedIndex];
+
+  // Preview the current retake in the player as the queue advances.
+  useEffect(() => {
+    if (current) onSeek(current.start);
+  }, [current, onSeek]);
+
+  return (
+    <div
+      onClick={onClose}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6 backdrop-blur-sm"
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-md rounded-2xl border border-foreground/10 bg-background p-6 shadow-2xl"
+      >
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-lg font-bold text-foreground">Review retakes</h2>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg p-1.5 text-foreground/40 hover:bg-foreground/10 hover:text-foreground/80"
+            aria-label="Close"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {current ? (
+          <>
+            <p className="mb-4 text-xs text-foreground/50">
+              {clampedIndex + 1} of {retakes.length} — kept the later take
+            </p>
+            <div className="mb-5 rounded-lg border border-amber-400/20 bg-amber-500/[0.08] px-3 py-2 font-mono text-xs text-amber-300">
+              {formatDuration(current.start * 1000)} – {formatDuration(current.end * 1000)}
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => onRestoreSegment(current)}
+                className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-foreground/10 px-3 py-2 text-sm font-medium text-foreground/80 hover:bg-foreground/15"
+              >
+                <RotateCcw className="h-3.5 w-3.5" /> Keep both
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  setIndex((i) => Math.min(i + 1, Math.max(0, retakes.length - 1)))
+                }
+                className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-emerald-500/15 px-3 py-2 text-sm font-medium text-emerald-300 hover:bg-emerald-500/25"
+              >
+                <Check className="h-3.5 w-3.5" /> Accept cut
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="mb-5 text-sm text-foreground/60">All retakes reviewed.</p>
+            <button
+              type="button"
+              onClick={onClose}
+              className="w-full rounded-lg bg-violet-500/20 px-3 py-2 text-sm font-medium text-violet-300 hover:bg-violet-500/30"
+            >
+              Done
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
 
 function ShortcutsOverlay({ onClose }: { onClose: () => void }) {
   return (

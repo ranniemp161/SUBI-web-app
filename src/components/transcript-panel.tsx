@@ -14,6 +14,7 @@ interface TranscriptPanelProps {
   onSeek: (seconds: number) => void;
   onCutWords: (words: TranscriptWord[]) => void;
   onRestoreSegment: (segment: EDLSegment) => void;
+  onOpenRetakeReview: () => void;
 }
 
 interface ContextMenuState {
@@ -26,6 +27,7 @@ interface WordSpanProps {
   index: number;
   word: string;
   isCut: boolean;
+  isRetake: boolean;
   isSelected: boolean;
   isActive: boolean;
   isMatch: boolean;
@@ -44,6 +46,7 @@ const WordSpan = memo(function WordSpan({
   index,
   word,
   isCut,
+  isRetake,
   isSelected,
   isActive,
   isMatch,
@@ -60,14 +63,18 @@ const WordSpan = memo(function WordSpan({
         onMouseDown={(e) => onMouseDown(index, e)}
         onMouseEnter={() => onMouseEnter(index)}
         onContextMenu={(e) => onContextMenu(index, e)}
-        className={`cursor-pointer rounded px-0.5 motion-safe:transition-[color,text-decoration-color] motion-safe:duration-200 ${
+        className={`cursor-pointer rounded px-0.5 motion-safe:transition-[color,text-decoration-color,background-color] motion-safe:duration-200 ${
           isCut
-            ? "text-red-400/70 line-through decoration-red-400/50 hover:text-emerald-300/80 hover:decoration-transparent"
-            : "text-foreground/90 hover:bg-foreground/10"
-        } ${isSelected ? "bg-violet-500/30" : ""} ${
-          isMatch && !isSelected ? "bg-amber-400/25" : ""
-        } ${isActive && !isCut ? "bg-violet-500/20" : ""}`}
-        title={isCut ? "Click to restore this cut" : undefined}
+            ? isRetake
+              ? "text-amber-400/70 line-through decoration-amber-400/50 hover:text-emerald-300/80 hover:decoration-transparent"
+              : "text-red-400/70 line-through decoration-red-400/50 hover:text-emerald-300/80 hover:decoration-transparent"
+            : isActive
+              ? "bg-violet-500 font-medium text-white shadow-sm shadow-violet-500/40 ring-1 ring-violet-300/60"
+              : "text-foreground/90 hover:bg-foreground/10"
+        } ${isSelected && !isActive ? "bg-violet-500/30" : ""} ${
+          isMatch && !isSelected && !isActive ? "bg-amber-400/25" : ""
+        }`}
+        title={isCut ? (isRetake ? "Retake — click to restore" : "Click to restore this cut") : undefined}
       >
         {word}
       </span>{" "}
@@ -88,6 +95,7 @@ export default function TranscriptPanel({
   onSeek,
   onCutWords,
   onRestoreSegment,
+  onOpenRetakeReview,
 }: TranscriptPanelProps) {
   const [anchorIndex, setAnchorIndex] = useState<number | null>(null);
   const [selection, setSelection] = useState<Set<number>>(new Set());
@@ -137,6 +145,9 @@ export default function TranscriptPanel({
 
   const silenceCount = edl.segments.filter(
     (s) => s.status === "cut" && s.reason === "silence"
+  ).length;
+  const retakeCount = edl.segments.filter(
+    (s) => s.status === "cut" && s.reason === "retake"
   ).length;
 
   // Keep the active word in view while playing.
@@ -415,6 +426,7 @@ export default function TranscriptPanel({
             words.map((word, index) => {
               const segment = segmentForWord[index];
               const isCut = segment?.status === "cut";
+              const isRetake = isCut && segment?.reason === "retake";
               const isSelected = selection.has(index);
               const isActive = index === activeIndex;
               const isMatch = matches.has(index);
@@ -425,6 +437,7 @@ export default function TranscriptPanel({
                   index={index}
                   word={word.word}
                   isCut={isCut}
+                  isRetake={isRetake}
                   isSelected={isSelected}
                   isActive={isActive}
                   isMatch={isMatch}
@@ -456,14 +469,21 @@ export default function TranscriptPanel({
               {silenceCount} silence{silenceCount === 1 ? "" : "s"} auto-removed
             </p>
             <p className="truncate text-xs text-foreground/50">
-              Filler-word cleanup (“um”, “uh”) coming soon
+              {retakeCount > 0
+                ? `${retakeCount} retake${retakeCount === 1 ? "" : "s"} auto-cut — kept the later take`
+                : "No repeated takes detected"}
             </p>
           </div>
           <button
             type="button"
-            disabled
-            title="AI cleanup coming soon"
-            className="cursor-not-allowed rounded-lg bg-foreground/10 px-3 py-1.5 text-xs font-medium text-foreground/40"
+            disabled={retakeCount === 0}
+            onClick={onOpenRetakeReview}
+            title={retakeCount === 0 ? "No retakes to review" : "Review detected retakes"}
+            className={
+              retakeCount === 0
+                ? "cursor-not-allowed rounded-lg bg-foreground/10 px-3 py-1.5 text-xs font-medium text-foreground/40"
+                : "rounded-lg bg-amber-500/20 px-3 py-1.5 text-xs font-medium text-amber-300 hover:bg-amber-500/30"
+            }
           >
             Review
           </button>

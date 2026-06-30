@@ -61,9 +61,24 @@ for new work.
 | Success / saved / decoded | dot `bg-emerald-400`, text `text-emerald-400` |
 | In-progress / saving | dot `bg-amber-400` |
 | Search match (highlight) | `bg-amber-400/25` |
+| Active word (playback tracker) | `bg-violet-500 font-medium text-white shadow-sm shadow-violet-500/40 ring-1 ring-violet-300/60` |
 | Destructive / cut word | `text-red-400/70 line-through decoration-red-400/50` |
 | Cut action button  | `bg-red-500/15 text-red-300 hover:bg-red-500/25` |
+| Retake (auto-detected repeated take) | word: `text-amber-400/70 line-through decoration-amber-400/50`; timeline clip: `border-amber-400/30 bg-amber-950/40`; review action: `bg-amber-500/20 text-amber-300 hover:bg-amber-500/30` |
 | Count badge        | `bg-gradient-to-br from-orange-500 to-amber-500 text-white` |
+
+**Cut-color note:** cut styling now branches on `EDLSegment.reason` — `"silence"` and
+`"manual"` stay red (the original cut color), `"retake"` is amber, so a glance at the
+transcript or timeline tells you *why* something was cut. Added 2026-06-30 alongside
+`src/lib/retake-detection.ts`.
+
+**Active-word note:** the currently-playing word is a solid violet karaoke-style
+highlight (filled bg + white text + ring), deliberately high-contrast so the user can
+track playback position at a glance. It takes precedence over selection/search-match
+backgrounds (those are gated with `!isActive`). The active-color branch lives in the
+non-cut path so its `text-white` wins over the default `text-foreground/90` — Tailwind
+resolves conflicts by stylesheet order, not class-string order, so mutually-exclusive
+branches are required rather than appending an override.
 
 ---
 
