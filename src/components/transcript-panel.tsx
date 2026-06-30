@@ -69,7 +69,7 @@ const WordSpan = memo(function WordSpan({
               ? "text-amber-400/70 line-through decoration-amber-400/50 hover:text-emerald-300/80 hover:decoration-transparent"
               : "text-red-400/70 line-through decoration-red-400/50 hover:text-emerald-300/80 hover:decoration-transparent"
             : isActive
-              ? "bg-violet-500 font-medium text-white shadow-sm shadow-violet-500/40 ring-1 ring-violet-300/60"
+              ? "bg-violet-600 text-white shadow-sm shadow-violet-500/40 ring-1 ring-violet-300/60"
               : "text-foreground/90 hover:bg-foreground/10"
         } ${isSelected && !isActive ? "bg-violet-500/30" : ""} ${
           isMatch && !isSelected && !isActive ? "bg-amber-400/25" : ""

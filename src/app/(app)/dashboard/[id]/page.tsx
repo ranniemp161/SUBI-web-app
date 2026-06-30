@@ -47,6 +47,8 @@ import {
   cutWords as cutWordsInEdl,
   restoreSegment as restoreSegmentInEdl,
   trimBoundary as trimBoundaryInEdl,
+  setRangeStatus as setRangeStatusInEdl,
+  findSegmentAt,
   buildInitialEDL,
   keptDuration,
   type EDL,
@@ -240,6 +242,30 @@ export default function EditorPage() {
     [edl, applyEdl, undo]
   );
 
+  // Q / W — trim the kept clip under the playhead up to / from it (Premiere-style
+  // "trim previous/next edit to playhead"). Only acts inside a kept clip.
+  const cutToPlayhead = useCallback(
+    (side: "left" | "right") => {
+      if (!edl) return;
+      const seg = findSegmentAt(edl, currentTime);
+      if (!seg || seg.status === "cut") {
+        toast("Nothing to trim here", {
+          description: "Park the playhead inside a clip first.",
+        });
+        return;
+      }
+      const [start, end] =
+        side === "left" ? [seg.start, currentTime] : [currentTime, seg.end];
+      // Playhead sitting on the clip edge — nothing to remove.
+      if (end - start < 1e-3) return;
+      applyEdl(setRangeStatusInEdl(edl, start, end, "cut", "manual"));
+      toast(side === "left" ? "Trimmed clip start" : "Trimmed clip end", {
+        action: { label: "Undo", onClick: () => undo() },
+      });
+    },
+    [edl, currentTime, applyEdl, undo]
+  );
+
   // Boundary drags call onTrimStart once (snapshots undo state, like applyEdl)
   // then onTrimBoundary repeatedly as the pointer moves — those live updates
   // must not each push a new undo entry, or undo would only step back a pixel.
@@ -316,6 +342,14 @@ export default function EditorPage() {
         case "l":
           seekRelative(5);
           break;
+        case "q":
+          e.preventDefault();
+          cutToPlayhead("left");
+          break;
+        case "w":
+          e.preventDefault();
+          cutToPlayhead("right");
+          break;
         case "ArrowLeft":
           e.preventDefault();
           seekRelative(e.shiftKey ? -5 : -1);
@@ -369,7 +403,7 @@ export default function EditorPage() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [edl, undo, redo, seekRelative, seekToEditPoint]);
+  }, [edl, undo, redo, seekRelative, seekToEditPoint, cutToPlayhead]);
 
   const words = useMemo(() => project?.transcript?.words ?? [], [project]);
   const totalSeconds = useMemo(
@@ -714,6 +748,7 @@ export default function EditorPage() {
         onRestoreSegment={handleRestoreSegment}
         onTrimStart={handleTrimStart}
         onTrimBoundary={handleTrimBoundary}
+        onCutToPlayhead={cutToPlayhead}
       />
 
       {/* Status bar */}
@@ -950,6 +985,7 @@ const SHORTCUTS: { keys: string; label: string }[] = [
   { keys: "Home / End", label: "Jump to start / end" },
   { keys: "Click word", label: "Seek to that word" },
   { keys: "Shift-click + Delete", label: "Cut selected words" },
+  { keys: "Q / W", label: "Trim clip to playhead — left / right" },
   { keys: "Click a cut", label: "Restore it" },
   { keys: "Drag handle", label: "Trim a cut edge (Alt = free, no snap)" },
   { keys: "= / − / 0", label: "Zoom in / out / fit timeline" },

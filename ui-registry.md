@@ -61,7 +61,7 @@ for new work.
 | Success / saved / decoded | dot `bg-emerald-400`, text `text-emerald-400` |
 | In-progress / saving | dot `bg-amber-400` |
 | Search match (highlight) | `bg-amber-400/25` |
-| Active word (playback tracker) | `bg-violet-500 font-medium text-white shadow-sm shadow-violet-500/40 ring-1 ring-violet-300/60` |
+| Active word (playback tracker) | `bg-violet-600 text-white shadow-sm shadow-violet-500/40 ring-1 ring-violet-300/60` |
 | Destructive / cut word | `text-red-400/70 line-through decoration-red-400/50` |
 | Cut action button  | `bg-red-500/15 text-red-300 hover:bg-red-500/25` |
 | Retake (auto-detected repeated take) | word: `text-amber-400/70 line-through decoration-amber-400/50`; timeline clip: `border-amber-400/30 bg-amber-950/40`; review action: `bg-amber-500/20 text-amber-300 hover:bg-amber-500/30` |
@@ -74,8 +74,10 @@ transcript or timeline tells you *why* something was cut. Added 2026-06-30 along
 
 **Active-word note:** the currently-playing word is a solid violet karaoke-style
 highlight (filled bg + white text + ring), deliberately high-contrast so the user can
-track playback position at a glance. It takes precedence over selection/search-match
-backgrounds (those are gated with `!isActive`). The active-color branch lives in the
+track playback position at a glance. Uses the `bg-violet-600` solid-accent token (not
+`violet-500`) so white text clears WCAG AA (~4.6:1); no font-weight change, to avoid
+per-word width jitter as the highlight advances. It takes precedence over
+selection/search-match backgrounds (those are gated with `!isActive`). The active-color branch lives in the
 non-cut path so its `text-white` wins over the default `text-foreground/90` — Tailwind
 resolves conflicts by stylesheet order, not class-string order, so mutually-exclusive
 branches are required rather than appending an override.
@@ -177,6 +179,22 @@ Last updated: 2026-06-30
 | Active          | `bg-violet-500/15`–`/20 text-violet-300` |
 | Inactive        | `text-foreground/50 hover:bg-foreground/10 hover:text-foreground/80` |
 | Border radius   | `rounded-md` / `rounded-lg` |
+
+---
+
+## Toolbar action button (enabled vs coming-soon)
+
+File: `src/components/timeline-bar.tsx`
+Last updated: 2026-06-30
+
+| State        | Class |
+| ------------ | ----- |
+| Enabled (`actionBtn`) | `flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-foreground/70 transition-colors hover:bg-foreground/10 hover:text-foreground/90` |
+| Disabled / coming-soon (`toolBtn`) | same shape but `text-foreground/40 cursor-not-allowed` (no hover) |
+
+Icon + label, `h-3.5 w-3.5` icon. Disabled placeholders carry a `title="… (coming
+soon)"`; enabled actions put the keyboard hint in the title (e.g. `Cut left of
+playhead (Q)`).
 
 ---
 

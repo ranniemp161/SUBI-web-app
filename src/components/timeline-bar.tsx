@@ -10,7 +10,18 @@ import {
   useRef,
   useState,
 } from "react";
-import { Scissors, Trash2, Magnet, Minus, Plus, Eye, Lock, VolumeX } from "lucide-react";
+import {
+  Scissors,
+  Trash2,
+  Magnet,
+  Minus,
+  Plus,
+  Eye,
+  Lock,
+  VolumeX,
+  ArrowLeftToLine,
+  ArrowRightToLine,
+} from "lucide-react";
 import {
   totalDuration,
   type EDL,
@@ -38,6 +49,8 @@ interface TimelineBarProps {
   /** Called once when a boundary drag actually moves, before onTrimBoundary. */
   onTrimStart: () => void;
   onTrimBoundary: (leftIndex: number, newTime: number) => void;
+  /** Trim the clip under the playhead up to / from it (mirrors the Q / W keys). */
+  onCutToPlayhead: (side: "left" | "right") => void;
 }
 
 const MIN_PX_PER_SEC = 5;
@@ -92,6 +105,7 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
     onRestoreSegment,
     onTrimStart,
     onTrimBoundary,
+    onCutToPlayhead,
   },
   ref
 ) {
@@ -341,6 +355,8 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
 
   const toolBtn =
     "flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-foreground/40 cursor-not-allowed";
+  const actionBtn =
+    "flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-foreground/70 transition-colors hover:bg-foreground/10 hover:text-foreground/90";
   const zoomBtn =
     "flex h-7 w-7 items-center justify-center rounded-md border border-foreground/10 text-foreground/60 hover:bg-foreground/10 hover:text-foreground/90";
 
@@ -354,6 +370,22 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
             {" / "}
             {formatDuration(total * 1000)}
           </span>
+          <button
+            type="button"
+            onClick={() => onCutToPlayhead("left")}
+            title="Cut left of playhead (Q)"
+            className={actionBtn}
+          >
+            <ArrowLeftToLine className="h-3.5 w-3.5" /> Cut left
+          </button>
+          <button
+            type="button"
+            onClick={() => onCutToPlayhead("right")}
+            title="Cut right of playhead (W)"
+            className={actionBtn}
+          >
+            <ArrowRightToLine className="h-3.5 w-3.5" /> Cut right
+          </button>
           <button type="button" disabled title="Split (coming soon)" className={toolBtn}>
             <Scissors className="h-3.5 w-3.5" /> Split
           </button>
