@@ -21,23 +21,28 @@ def main() -> None:
     media_path = sys.argv[1]
 
     model = WhisperModel("small", device="cpu", compute_type="int8")
-    segments, info = model.transcribe(media_path, beam_size=5)
+    segments, info = model.transcribe(media_path, beam_size=5, word_timestamps=True)
+
+    segments = list(segments)
+
+    words = [
+        {
+            "word": word.word.strip(),
+            "start": word.start,
+            "end": word.end,
+            "confidence": round(word.probability, 4),
+        }
+        for segment in segments
+        for word in (segment.words or [])
+    ]
 
     result = {
         "language": info.language,
         "language_probability": info.language_probability,
         "duration": info.duration,
-        "segments": [
-            {
-                "id": segment.id,
-                "start": segment.start,
-                "end": segment.end,
-                "text": segment.text.strip(),
-            }
-            for segment in segments
-        ],
+        "words": words,
+        "text": " ".join(segment.text.strip() for segment in segments),
     }
-    result["text"] = " ".join(s["text"] for s in result["segments"])
 
     print(json.dumps(result))
 

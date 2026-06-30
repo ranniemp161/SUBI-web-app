@@ -1,7 +1,10 @@
 import { execFile } from "child_process";
-import { mkdtemp, writeFile, rm } from "fs/promises";
+import { mkdtemp, rm } from "fs/promises";
+import { createWriteStream } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
+import { pipeline } from "stream/promises";
+import { Readable } from "stream";
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import { db } from "@/db";
@@ -67,8 +70,10 @@ export async function POST(request: Request) {
   try {
     workDir = await mkdtemp(join(tmpdir(), "whisper-"));
     mediaPath = join(workDir, file.name || "input.mp4");
-    const bytes = Buffer.from(await file.arrayBuffer());
-    await writeFile(mediaPath, bytes);
+    await pipeline(
+      Readable.fromWeb(file.stream() as import("stream/web").ReadableStream),
+      createWriteStream(mediaPath)
+    );
   } catch (error) {
     console.error("Error saving upload for whisper transcription:", error);
 

@@ -1,17 +1,29 @@
+"use client";
+
 import { UserButton } from "@clerk/nextjs";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 
 /**
  * Layout for authenticated app pages (dashboard, editor, etc.).
  *
- * Provides a consistent top navigation with the app logo and
- * Clerk's UserButton for account management.
+ * The editor (/dashboard/[id]) is a full-screen studio with its own top bar,
+ * so the marketing-style app nav is hidden there. Everything else gets the
+ * standard nav with logo + account button.
  */
 export default function AppLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const pathname = usePathname();
+  // /dashboard/<id> is the editor; /dashboard (list) and others keep the nav.
+  const isEditor = /^\/dashboard\/[^/]+$/.test(pathname ?? "");
+
+  if (isEditor) {
+    return <div className="h-screen bg-background">{children}</div>;
+  }
+
   return (
     <div className="flex min-h-screen flex-col bg-background">
       <nav className="border-b border-foreground/5">

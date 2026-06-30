@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import Link from "next/link";
 import FilePicker, { type VideoMetadata } from "@/components/file-picker";
 import { formatDuration, formatDate } from "@/lib/utils";
 
@@ -123,11 +124,22 @@ export default function DashboardPage() {
 
     if (processingIds.length === 0) return;
 
+    const abortController = new AbortController();
+
     const interval = setInterval(async () => {
       for (const id of processingIds) {
         try {
-          const response = await fetch(`/api/projects/${id}`);
+          const response = await fetch(`/api/projects/${id}`, {
+            signal: abortController.signal,
+          });
           if (!response.ok) continue;
+
+          // A redirect (e.g. to the sign-in page during a session refresh)
+          // resolves with response.ok === true but an HTML body, not JSON —
+          // guard against parsing that as a transcript status update.
+          if (!response.headers.get("content-type")?.includes("application/json")) {
+            continue;
+          }
 
           const updated = await response.json();
           setProjects((prev) =>
@@ -138,16 +150,21 @@ export default function DashboardPage() {
             )
           );
         } catch (error) {
+          if (error instanceof DOMException && error.name === "AbortError") continue;
           console.error("Failed to poll transcript status:", error);
         }
       }
     }, 4000);
 
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      abortController.abort();
+    };
   }, [projects]);
 
   /** Delete a project. */
-  async function handleDeleteProject(projectId: string) {
+  async function handleDeleteProject(e: React.MouseEvent, projectId: string) {
+    e.preventDefault();
     try {
       const response = await fetch(`/api/projects/${projectId}`, {
         method: "DELETE",
@@ -224,7 +241,10 @@ export default function DashboardPage() {
                 id={`project-${project.id}`}
                 className="group flex items-center justify-between rounded-xl border border-foreground/5 bg-foreground/[0.02] px-6 py-4 transition-colors hover:border-foreground/10 hover:bg-foreground/[0.04]"
               >
-                <div className="flex items-center gap-4">
+                <Link
+                  href={`/dashboard/${project.id}`}
+                  className="flex min-w-0 flex-1 items-center gap-4"
+                >
                   <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-500/10">
                     <svg
                       className="h-5 w-5 text-blue-400"
@@ -273,10 +293,10 @@ export default function DashboardPage() {
                       </div>
                     )}
                   </div>
-                </div>
+                </Link>
 
                 <button
-                  onClick={() => handleDeleteProject(project.id)}
+                  onClick={(e) => handleDeleteProject(e, project.id)}
                   className="rounded-lg p-2 text-foreground/20 opacity-0 transition-all hover:bg-red-500/10 hover:text-red-400 group-hover:opacity-100"
                   title="Delete project"
                 >

@@ -60,7 +60,7 @@ export default function LandingPage() {
       <main className="flex flex-1 flex-col items-center justify-center px-6 py-24">
         <div className="mx-auto max-w-3xl text-center">
           <div className="mb-6 inline-flex items-center rounded-full border border-blue-500/20 bg-blue-500/10 px-4 py-1.5 text-sm font-medium text-blue-400">
-            Your video never leaves your machine
+            Edit your video like a document
           </div>
 
           <h1 className="text-5xl font-bold leading-tight tracking-tight text-foreground sm:text-6xl">
@@ -158,11 +158,11 @@ export default function LandingPage() {
               </svg>
             </div>
             <h3 className="text-lg font-semibold text-foreground">
-              100% private
+              Browser-based rendering
             </h3>
             <p className="mt-2 text-sm leading-relaxed text-foreground/50">
-              Your video file never leaves your computer. All processing and
-              rendering happens locally in your browser.
+              Preview your edits and export the final cut directly in your
+              browser — no waiting on a render queue.
             </p>
           </div>
         </div>

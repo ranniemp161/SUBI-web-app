@@ -16,7 +16,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Rough Cut — Automated Video Editing",
   description:
-    "Turn raw footage into a clean rough cut. Remove silence, retakes, and dead air — all in your browser. Your video never leaves your machine.",
+    "Turn raw footage into a clean rough cut. Remove silence, retakes, and dead air, then edit like a document instead of a timeline.",
 };
 
 export default function RootLayout({

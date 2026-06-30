@@ -142,7 +142,7 @@ export default function FilePicker({
           or drag and drop here — MP4, MOV, WebM
         </span>
         <span className="mt-3 text-xs text-foreground/25">
-          Your video stays on your machine — nothing is uploaded
+          MP4, MOV, or WebM up to a few hours long
         </span>
       </button>
 
