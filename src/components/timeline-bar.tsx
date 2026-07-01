@@ -49,6 +49,9 @@ interface TimelineBarProps {
   /** Called once when a boundary drag actually moves, before onTrimBoundary. */
   onTrimStart: () => void;
   onTrimBoundary: (leftIndex: number, newTime: number) => void;
+  /** Called when a boundary drag ends (only if it moved) so the trim can be
+   *  pinned — marked as manual intent that survives a rough-cut re-run. */
+  onTrimEnd: (leftIndex: number) => void;
   /** Trim the clip under the playhead up to / from it (mirrors the Q / W keys). */
   onCutToPlayhead: (side: "left" | "right") => void;
   /** Razor the clip under the playhead into two clips (mirrors the S key). */
@@ -113,6 +116,7 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
     onRestoreSegment,
     onTrimStart,
     onTrimBoundary,
+    onTrimEnd,
     onCutToPlayhead,
     onSplit,
     selectedStart,
@@ -359,8 +363,14 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
   );
   const handleBoundaryPointerUp = useCallback((e: React.PointerEvent) => {
     e.currentTarget.releasePointerCapture(e.pointerId);
+    // Pin the boundary only if the drag actually moved it (a bare click is not
+    // a trim). Fires within the same undo unit opened by onTrimStart.
+    if (dragMovedRef.current && dragLeftIndexRef.current !== null) {
+      onTrimEnd(dragLeftIndexRef.current);
+    }
     dragLeftIndexRef.current = null;
-  }, []);
+    dragMovedRef.current = false;
+  }, [onTrimEnd]);
 
   const rulerStep = niceRulerStep(80 / pxPerSec);
   const rulerMarks = useMemo(() => {

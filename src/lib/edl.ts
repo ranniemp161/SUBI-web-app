@@ -39,12 +39,54 @@ export interface EDLSegment {
   split?: boolean;
 }
 
-export interface EDL {
-  segments: EDLSegment[];
+export interface TimeRange {
+  start: number;
+  end: number;
 }
 
-/** Gaps between words longer than this are flagged as dead air. */
-const SILENCE_GAP_SECONDS = 2;
+export interface EDL {
+  segments: EDLSegment[];
+  /**
+   * The sensitivity preset the auto rough cut last ran at, persisted in the
+   * saved EDL so a reload restores the user's choice. Optional — auto-built and
+   * older EDLs omit it, and the value only influences a future re-run.
+   */
+  sensitivity?: SensitivityLevel;
+  /**
+   * Ranges the user explicitly kept — restored auto-cuts, or the kept side of a
+   * pinned trim. Stored out-of-band (not as a segment reason) so restored spans
+   * still merge seamlessly into neighbouring clips, while `reRoughCut` can still
+   * honour them and not re-cut what the user deliberately kept.
+   */
+  protectedKeeps?: TimeRange[];
+}
+
+/**
+ * Tunable detection thresholds. Silence is inferred from word-gap timing
+ * (Deepgram timestamps are trusted), retakes from fuzzy sentence similarity.
+ * Surfaced in the studio as a three-way sensitivity control.
+ */
+export interface DetectionSettings {
+  /** A gap between words longer than this (seconds) is flagged as dead air. */
+  silenceGapSeconds: number;
+  /** Breath left on each side of a silence cut so word onsets/tails aren't clipped. */
+  silencePadSeconds: number;
+  /** Minimum token-sequence similarity [0..1] for two sentences to count as one retake. */
+  retakeSimilarity: number;
+}
+
+export type SensitivityLevel = "aggressive" | "balanced" | "light";
+
+export const SENSITIVITY_PRESETS: Record<SensitivityLevel, DetectionSettings> = {
+  aggressive: { silenceGapSeconds: 0.5, silencePadSeconds: 0.06, retakeSimilarity: 0.72 },
+  balanced: { silenceGapSeconds: 0.7, silencePadSeconds: 0.1, retakeSimilarity: 0.8 },
+  light: { silenceGapSeconds: 1.2, silencePadSeconds: 0.15, retakeSimilarity: 0.88 },
+};
+
+export const DEFAULT_SENSITIVITY: SensitivityLevel = "balanced";
+
+/** The settings used when a caller doesn't specify one. */
+const DEFAULT_SETTINGS = SENSITIVITY_PRESETS[DEFAULT_SENSITIVITY];
 
 /**
  * An initial auto-build that would keep less than this fraction of the clip is
@@ -106,20 +148,30 @@ function mergeAdjacent(segments: EDLSegment[]): EDLSegment[] {
  */
 export function generateInitialEDL(
   words: TranscriptWord[],
-  durationSeconds: number
+  durationSeconds: number,
+  settings: DetectionSettings = DEFAULT_SETTINGS
 ): EDL {
   const cuts: { start: number; end: number }[] = [];
   let prevEnd = 0;
 
+  // Pad the cut inward from any speech-adjacent edge so it doesn't clip the tail
+  // of the previous word or the onset of the next. The file's own start (0) and
+  // end (duration) aren't speech, so they're left unpadded — no tiny slivers.
+  const pushSilenceCut = (from: number, to: number) => {
+    const start = from > 0 ? from + settings.silencePadSeconds : from;
+    const end = to < durationSeconds ? to - settings.silencePadSeconds : to;
+    if (end > start) cuts.push({ start, end });
+  };
+
   for (const word of sanitizeWords(words)) {
-    if (word.start - prevEnd > SILENCE_GAP_SECONDS) {
-      cuts.push({ start: prevEnd, end: word.start });
+    if (word.start - prevEnd > settings.silenceGapSeconds) {
+      pushSilenceCut(prevEnd, word.start);
     }
     prevEnd = Math.max(prevEnd, word.end);
   }
 
-  if (durationSeconds - prevEnd > SILENCE_GAP_SECONDS) {
-    cuts.push({ start: prevEnd, end: durationSeconds });
+  if (durationSeconds - prevEnd > settings.silenceGapSeconds) {
+    pushSilenceCut(prevEnd, durationSeconds);
   }
 
   const segments: EDLSegment[] = [];
@@ -146,7 +198,28 @@ export function generateInitialEDL(
  * mostly cut. Only ever called once per project — see the `data.edl ?? ...`
  * guard at the call site, which skips this entirely once an EDL is saved.
  */
-export function buildInitialEDL(words: TranscriptWord[], durationSeconds: number): EDL {
+/**
+ * The pure auto layer: silence pass composed with retake detection, no safety
+ * floor. Shared by the initial build and by re-run. Assumes pre-sanitized,
+ * non-empty words and a positive duration.
+ */
+function buildAutoLayer(
+  clean: TranscriptWord[],
+  durationSeconds: number,
+  settings: DetectionSettings
+): EDL {
+  let edl = generateInitialEDL(clean, durationSeconds, settings);
+  for (const retake of detectRetakes(clean, settings.retakeSimilarity)) {
+    edl = setRangeStatus(edl, retake.cutStart, retake.cutEnd, "cut", "retake");
+  }
+  return edl;
+}
+
+export function buildInitialEDL(
+  words: TranscriptWord[],
+  durationSeconds: number,
+  settings: DetectionSettings = DEFAULT_SETTINGS
+): EDL {
   const clean = sanitizeWords(words);
 
   // No usable word timing → we can't trust any cut. Keep everything rather
@@ -155,13 +228,12 @@ export function buildInitialEDL(words: TranscriptWord[], durationSeconds: number
     return keepAll(durationSeconds);
   }
 
-  let edl = generateInitialEDL(clean, durationSeconds);
-  for (const retake of detectRetakes(clean)) {
-    edl = setRangeStatus(edl, retake.cutStart, retake.cutEnd, "cut", "retake");
-  }
+  const edl = buildAutoLayer(clean, durationSeconds, settings);
 
-  // Safety floor: an initial auto-cut that removes (nearly) the whole clip is
-  // almost certainly bad input, not a real edit. Refuse it and keep everything.
+  // Safety floor for the *first* build only: an auto-cut that removes nearly the
+  // whole clip is almost certainly bad input (e.g. missing timestamps), not a
+  // real edit. A deliberate re-run bypasses this — the user picked the
+  // sensitivity, and applyEdl still refuses a fully-empty timeline.
   if (keptDuration(edl) < durationSeconds * MIN_INITIAL_KEEP_FRACTION) {
     return keepAll(durationSeconds);
   }
@@ -210,7 +282,7 @@ export function setRangeStatus(
 
   result.sort((a, b) => a.start - b.start);
 
-  return { segments: mergeAdjacent(result) };
+  return { ...edl, segments: mergeAdjacent(result) };
 }
 
 /** Cut the time range spanned by the given words (manual cut, e.g. via Delete key). */
@@ -223,9 +295,106 @@ export function cutWords(edl: EDL, words: TranscriptWord[]): EDL {
   return setRangeStatus(edl, start, end, "cut", "manual");
 }
 
-/** Restore a cut segment back to "keep". */
+/** Add a range to a protected-keep list, keeping it sorted and coalesced. */
+function addProtectedRange(
+  ranges: TimeRange[] | undefined,
+  start: number,
+  end: number
+): TimeRange[] {
+  const merged: TimeRange[] = [];
+  const all = [...(ranges ?? []), { start, end }].sort((a, b) => a.start - b.start);
+  for (const r of all) {
+    const last = merged[merged.length - 1];
+    if (last && r.start <= last.end + 1e-6) last.end = Math.max(last.end, r.end);
+    else merged.push({ ...r });
+  }
+  return merged;
+}
+
+/**
+ * Restore a cut segment back to "keep". The span merges seamlessly into its
+ * neighbours (reason:null, so the timeline heals into one clip) and is also
+ * recorded in `protectedKeeps` so a later `reRoughCut` won't re-cut what the
+ * user deliberately brought back.
+ */
 export function restoreSegment(edl: EDL, segment: EDLSegment): EDL {
-  return setRangeStatus(edl, segment.start, segment.end, "keep", null);
+  const kept = setRangeStatus(edl, segment.start, segment.end, "keep", null);
+  return {
+    ...kept,
+    protectedKeeps: addProtectedRange(edl.protectedKeeps, segment.start, segment.end),
+  };
+}
+
+/**
+ * Pin the boundary between segments[leftIndex] and its right neighbour so a
+ * manual trim survives re-run: whichever side is a cut is re-marked reason
+ * "manual" (captured by reRoughCut), and the kept side is added to
+ * protectedKeeps (so it isn't re-cut). A keep|keep boundary is a razor split —
+ * already preserved via its `split` flag — so it's left untouched.
+ */
+export function pinTrimmedBoundary(edl: EDL, leftIndex: number): EDL {
+  const left = edl.segments[leftIndex];
+  const right = edl.segments[leftIndex + 1];
+  if (!left || !right) return edl;
+  if (left.status === "keep" && right.status === "keep") return edl;
+
+  let next = edl;
+  let protectedKeeps = edl.protectedKeeps;
+  // Read both spans up front, then apply by range — safe against re-indexing.
+  for (const seg of [{ ...left }, { ...right }]) {
+    if (seg.status === "cut") {
+      next = setRangeStatus(next, seg.start, seg.end, "cut", "manual");
+    } else {
+      protectedKeeps = addProtectedRange(protectedKeeps, seg.start, seg.end);
+    }
+  }
+  return { ...next, protectedKeeps };
+}
+
+/**
+ * Re-run the automatic rough cut at new settings while preserving the user's
+ * manual work. Manual cuts and razor splits (read off the segments) and
+ * protected keeps (the out-of-band range list) are lifted off the current EDL;
+ * the silence + retake layer is regenerated fresh from the transcript; then the
+ * manual layer is re-applied on top (manual always wins) and the splits
+ * re-inserted wherever they still fall inside a kept clip.
+ */
+export function reRoughCut(
+  edl: EDL,
+  words: TranscriptWord[],
+  durationSeconds: number,
+  settings: DetectionSettings = DEFAULT_SETTINGS
+): EDL {
+  const clean = sanitizeWords(words);
+  // Nothing to regenerate from → leave the current edit untouched rather than
+  // risk wiping it from a degenerate transcript.
+  if (clean.length === 0 || durationSeconds <= 0) return edl;
+
+  const manualCuts = edl.segments.filter(
+    (s) => s.status === "cut" && s.reason === "manual"
+  );
+  const protectedKeeps = edl.protectedKeeps ?? [];
+  const splitPoints = edl.segments.filter((s) => s.split).map((s) => s.start);
+
+  // Floor-free: an explicit re-run at a chosen sensitivity is allowed to cut
+  // deep; applyEdl is the guard against a fully-empty timeline.
+  let next = buildAutoLayer(clean, durationSeconds, settings);
+
+  // Manual layer wins over the freshly generated auto layer.
+  for (const r of protectedKeeps) {
+    next = setRangeStatus(next, r.start, r.end, "keep", null);
+  }
+  for (const seg of manualCuts) {
+    next = setRangeStatus(next, seg.start, seg.end, "cut", "manual");
+  }
+  // Re-insert razor boundaries; splitAt no-ops any that no longer land inside a
+  // kept clip (e.g. the boundary now sits within a regenerated cut).
+  for (const t of splitPoints) {
+    next = splitAt(next, t);
+  }
+
+  // Carry forward the out-of-band fields the fresh build didn't produce.
+  return { ...next, protectedKeeps, sensitivity: edl.sensitivity };
 }
 
 /**
@@ -257,7 +426,7 @@ export function splitAt(edl: EDL, timeSec: number): EDL {
     }
   }
 
-  return didSplit ? { segments } : edl;
+  return didSplit ? { ...edl, segments } : edl;
 }
 
 /** Smallest a segment is allowed to shrink to when trimming a shared boundary. */
@@ -283,7 +452,7 @@ export function trimBoundary(edl: EDL, leftIndex: number, newBoundaryTime: numbe
     return seg;
   });
 
-  return { segments };
+  return { ...edl, segments };
 }
 
 /** Find the EDL segment containing a given time, if any. */

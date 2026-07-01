@@ -49,9 +49,14 @@ import {
   trimBoundary as trimBoundaryInEdl,
   setRangeStatus as setRangeStatusInEdl,
   splitAt as splitAtInEdl,
+  reRoughCut as reRoughCutInEdl,
+  pinTrimmedBoundary as pinTrimmedBoundaryInEdl,
   findSegmentAt,
   buildInitialEDL,
   keptDuration,
+  SENSITIVITY_PRESETS,
+  DEFAULT_SENSITIVITY,
+  type SensitivityLevel,
   type EDL,
   type EDLSegment,
   type Transcript,
@@ -90,6 +95,9 @@ export default function EditorPage() {
   const [selectedStart, setSelectedStart] = useState<number | null>(null);
   const [playbackRate, setPlaybackRate] = useState(1);
   const [muted, setMuted] = useState(false);
+  // Auto-cut aggressiveness. Drives silence + retake thresholds on the next
+  // re-run; restored from the saved EDL on load.
+  const [sensitivity, setSensitivity] = useState<SensitivityLevel>(DEFAULT_SENSITIVITY);
   const [videoMeta, setVideoMeta] = useState<VideoMeta | null>(null);
   const [savedAt, setSavedAt] = useState<"saved" | "saving">("saved");
   const resizingRef = useRef(false);
@@ -135,6 +143,8 @@ export default function EditorPage() {
         const savedEdl =
           data.edl && keptDuration(data.edl) > 0 ? data.edl : null;
 
+        if (savedEdl?.sensitivity) setSensitivity(savedEdl.sensitivity);
+
         // Only auto-build from the transcript once it's actually ready. Whisper
         // transcribes in the background, so an editor opened mid-processing has
         // no words yet — building then would derive the EDL from an empty
@@ -176,7 +186,10 @@ export default function EditorPage() {
       fetch(`/api/projects/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ edl }),
+        // Stamp the current sensitivity onto the saved EDL so a reload restores
+        // it. Kept out of the EDL transforms (which drop top-level fields) —
+        // merged in only at the save boundary.
+        body: JSON.stringify({ edl: { ...edl, sensitivity } }),
       })
         .then(() => setSavedAt("saved"))
         .catch((error) => {
@@ -192,7 +205,7 @@ export default function EditorPage() {
     return () => {
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     };
-  }, [edl, project, id]);
+  }, [edl, project, id, sensitivity]);
 
   // Apply an edit, returning whether it was accepted. An edit that keeps
   // nothing is refused: the timeline must always retain at least one clip,
@@ -333,6 +346,12 @@ export default function EditorPage() {
 
   const handleTrimBoundary = useCallback((leftIndex: number, newTime: number) => {
     setEdl((prev) => (prev ? trimBoundaryInEdl(prev, leftIndex, newTime) : prev));
+  }, []);
+
+  // Pin the trimmed boundary as manual intent so a rough-cut re-run preserves
+  // it. No undo push — this rides inside the drag's existing undo entry.
+  const handleTrimEnd = useCallback((leftIndex: number) => {
+    setEdl((prev) => (prev ? pinTrimmedBoundaryInEdl(prev, leftIndex) : prev));
   }, []);
 
   const handleSeek = useCallback((seconds: number) => {
@@ -477,6 +496,26 @@ export default function EditorPage() {
     () => (edl ? Math.max(...edl.segments.map((s) => s.end), 0) : 0),
     [edl]
   );
+  // Source duration for regenerating the auto cut — the transcript's own
+  // duration, falling back to the stored source length.
+  const durationSeconds = useMemo(
+    () =>
+      project?.transcript?.duration ??
+      (project?.durationMs ? project.durationMs / 1000 : 0),
+    [project]
+  );
+
+  // Re-run the automatic rough cut at the current sensitivity, keeping manual
+  // edits. This is what applies improved detection to an already-edited project.
+  const reRunRoughCut = useCallback(() => {
+    if (!edl || durationSeconds <= 0) return;
+    const next = reRoughCutInEdl(edl, words, durationSeconds, SENSITIVITY_PRESETS[sensitivity]);
+    if (!applyEdl(next)) return;
+    toast("Rough cut re-run", {
+      description: "Silence & retakes regenerated — your manual edits were kept.",
+      action: { label: "Undo", onClick: () => undo() },
+    });
+  }, [edl, words, durationSeconds, sensitivity, applyEdl, undo]);
   // Sorted, de-duped word edges that timeline trim drags snap to.
   const snapTimes = useMemo(() => {
     const edges = new Set<number>();
@@ -815,6 +854,7 @@ export default function EditorPage() {
         onRestoreSegment={handleRestoreSegment}
         onTrimStart={handleTrimStart}
         onTrimBoundary={handleTrimBoundary}
+        onTrimEnd={handleTrimEnd}
         onCutToPlayhead={cutToPlayhead}
         onSplit={splitAtPlayhead}
         selectedStart={selectedStart}
@@ -838,13 +878,44 @@ export default function EditorPage() {
           <span>·</span>
           <span>{stats.clipCount} clip{stats.clipCount === 1 ? "" : "s"}</span>
         </div>
-        <button
-          type="button"
-          onClick={() => setShowShortcuts(true)}
-          className="text-violet-400/70 hover:text-violet-400 hover:underline"
-        >
-          Shortcuts (?)
-        </button>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1.5">
+            <span className="text-foreground/40">Sensitivity</span>
+            <div className="flex overflow-hidden rounded-md border border-foreground/10">
+              {(["light", "balanced", "aggressive"] as SensitivityLevel[]).map((level) => (
+                <button
+                  key={level}
+                  type="button"
+                  onClick={() => setSensitivity(level)}
+                  aria-pressed={sensitivity === level}
+                  title={`${level} auto-cut`}
+                  className={`px-2 py-0.5 capitalize transition-colors ${
+                    sensitivity === level
+                      ? "bg-violet-600 text-white"
+                      : "text-foreground/55 hover:bg-foreground/10 hover:text-foreground/80"
+                  }`}
+                >
+                  {level}
+                </button>
+              ))}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={reRunRoughCut}
+            title="Regenerate silence & retake cuts, keeping your manual edits"
+            className="inline-flex items-center gap-1 rounded-md border border-foreground/10 px-2 py-0.5 text-foreground/70 transition-colors hover:bg-foreground/10 hover:text-foreground"
+          >
+            <RotateCcw className="h-3 w-3" /> Re-run rough cut
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowShortcuts(true)}
+            className="text-violet-400/70 hover:text-violet-400 hover:underline"
+          >
+            Shortcuts (?)
+          </button>
+        </div>
       </div>
 
       {showShortcuts && <ShortcutsOverlay onClose={() => setShowShortcuts(false)} />}
