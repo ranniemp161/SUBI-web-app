@@ -43,6 +43,7 @@ import VideoPlayer, {
 import TranscriptPanel from "@/components/transcript-panel";
 import TimelineBar, { type TimelineHandle } from "@/components/timeline-bar";
 import { formatDuration } from "@/lib/utils";
+import { isExportSupported, startExport, type ExportHandle } from "@/lib/export/export-trigger";
 import {
   cutWords as cutWordsInEdl,
   restoreSegment as restoreSegmentInEdl,
@@ -100,6 +101,8 @@ export default function EditorPage() {
   const [sensitivity, setSensitivity] = useState<SensitivityLevel>(DEFAULT_SENSITIVITY);
   const [videoMeta, setVideoMeta] = useState<VideoMeta | null>(null);
   const [savedAt, setSavedAt] = useState<"saved" | "saving">("saved");
+  const [exportState, setExportState] = useState<"idle" | "exporting">("idle");
+  const exportHandleRef = useRef<ExportHandle | null>(null);
   const resizingRef = useRef(false);
   const transcriptRef = useRef<HTMLDivElement>(null);
 
@@ -524,6 +527,53 @@ export default function EditorPage() {
       action: { label: "Undo", onClick: () => undo() },
     });
   }, [edl, words, durationSeconds, sensitivity, applyEdl, undo]);
+  // Kick off a WebCodecs export of the current EDL, streaming the result
+  // straight to a file the user picks via the native save dialog.
+  const handleExport = useCallback(async () => {
+    if (!sourceFile || !edl || !project) return;
+
+    const support = isExportSupported();
+    if (!support.supported) {
+      toast.error("Export isn't available", { description: support.reason });
+      return;
+    }
+
+    setExportState("exporting");
+    try {
+      exportHandleRef.current = await startExport(sourceFile, edl, project.fileName, {
+        onProgress: (processedSeconds, totalSeconds) => {
+          const pct = totalSeconds > 0 ? Math.round((processedSeconds / totalSeconds) * 100) : 0;
+          toast.loading(`Exporting… ${pct}%`, { id: "export" });
+        },
+        onDone: () => {
+          setExportState("idle");
+          toast.success("Export complete", { id: "export" });
+        },
+        onError: (message) => {
+          setExportState("idle");
+          toast.error("Export failed", { id: "export", description: message });
+        },
+      });
+    } catch (error) {
+      setExportState("idle");
+      // The user closing the native save dialog isn't a real error.
+      if ((error as DOMException)?.name !== "AbortError") {
+        toast.error("Couldn't start export");
+      }
+    }
+  }, [sourceFile, edl, project]);
+
+  // Warn on tab close/reload while a render is in flight — closing loses it.
+  useEffect(() => {
+    if (exportState !== "exporting") return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [exportState]);
+
   // Sorted, de-duped word edges that timeline trim drags snap to.
   const snapTimes = useMemo(() => {
     const edges = new Set<number>();
@@ -692,7 +742,15 @@ export default function EditorPage() {
 
   return (
     <div className="flex h-screen flex-col bg-background text-foreground">
-      <TopBar fileName={project.fileName} savedAt={savedAt} onUndo={undo} onRedo={redo} />
+      <TopBar
+        fileName={project.fileName}
+        savedAt={savedAt}
+        onUndo={undo}
+        onRedo={redo}
+        onExport={handleExport}
+        exportDisabled={!sourceFile || exportState === "exporting"}
+        exportState={exportState}
+      />
 
       {/* Middle band: rail + preview + transcript */}
       <div className="flex min-h-0 flex-1">
@@ -1055,12 +1113,18 @@ function TopBar({
   onUndo,
   onRedo,
   disabled,
+  onExport,
+  exportDisabled,
+  exportState,
 }: {
   fileName: string;
   savedAt: "saved" | "saving";
   onUndo?: () => void;
   onRedo?: () => void;
   disabled?: boolean;
+  onExport?: () => void;
+  exportDisabled?: boolean;
+  exportState?: "idle" | "exporting";
 }) {
   const iconBtn =
     "flex h-8 w-8 items-center justify-center rounded-md text-foreground/60 hover:bg-foreground/10 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40";
@@ -1115,11 +1179,17 @@ function TopBar({
         </button>
         <button
           type="button"
-          disabled
-          title="Export (rendering comes in a later phase)"
-          className="flex cursor-not-allowed items-center gap-1.5 rounded-lg bg-violet-600/60 px-4 py-1.5 text-sm font-semibold text-white/70"
+          onClick={onExport}
+          disabled={exportDisabled}
+          title={exportDisabled ? "Select your source video first" : "Export to MP4"}
+          className="flex items-center gap-1.5 rounded-lg bg-violet-600 px-4 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-violet-500 disabled:cursor-not-allowed disabled:bg-violet-600/60 disabled:text-white/70 disabled:hover:bg-violet-600/60"
         >
-          <Download className="h-4 w-4" /> Export
+          {exportState === "exporting" ? (
+            <Loader2 className="h-4 w-4 motion-safe:animate-spin" />
+          ) : (
+            <Download className="h-4 w-4" />
+          )}
+          {exportState === "exporting" ? "Exporting…" : "Export"}
         </button>
       </div>
     </div>
