@@ -51,6 +51,8 @@ interface TimelineBarProps {
   onTrimBoundary: (leftIndex: number, newTime: number) => void;
   /** Trim the clip under the playhead up to / from it (mirrors the Q / W keys). */
   onCutToPlayhead: (side: "left" | "right") => void;
+  /** Razor the clip under the playhead into two clips (mirrors the S key). */
+  onSplit: () => void;
 }
 
 const MIN_PX_PER_SEC = 5;
@@ -106,6 +108,7 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
     onTrimStart,
     onTrimBoundary,
     onCutToPlayhead,
+    onSplit,
   },
   ref
 ) {
@@ -386,7 +389,12 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
           >
             <ArrowRightToLine className="h-3.5 w-3.5" /> Cut right
           </button>
-          <button type="button" disabled title="Split (coming soon)" className={toolBtn}>
+          <button
+            type="button"
+            onClick={onSplit}
+            title="Split clip at playhead (S)"
+            className={actionBtn}
+          >
             <Scissors className="h-3.5 w-3.5" /> Split
           </button>
           <button type="button" disabled title="Ripple delete (coming soon)" className={toolBtn}>
@@ -536,22 +544,30 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
                 );
               })}
 
-              {/* Boundary trim handles */}
-              {edl.segments.slice(0, -1).map((segment, index) => (
-                <div
-                  key={`handle-${index}`}
-                  onPointerDown={(e) => handleBoundaryPointerDown(e, index)}
-                  onPointerMove={handleBoundaryPointerMove}
-                  onPointerUp={handleBoundaryPointerUp}
-                  style={{
-                    left: segment.end * pxPerSec - HANDLE_HIT_WIDTH / 2,
-                    width: HANDLE_HIT_WIDTH,
-                  }}
-                  className="group absolute top-0 z-10 flex h-full cursor-col-resize items-center justify-center"
-                >
-                  <div className="h-8 w-0.5 rounded-full bg-foreground/25 group-hover:bg-violet-400" />
-                </div>
-              ))}
+              {/* Boundary trim handles — a razor split boundary reads brighter
+                  (violet) so the user can see where they cut the clip. */}
+              {edl.segments.slice(0, -1).map((segment, index) => {
+                const isSplit = edl.segments[index + 1]?.split;
+                return (
+                  <div
+                    key={`handle-${index}`}
+                    onPointerDown={(e) => handleBoundaryPointerDown(e, index)}
+                    onPointerMove={handleBoundaryPointerMove}
+                    onPointerUp={handleBoundaryPointerUp}
+                    style={{
+                      left: segment.end * pxPerSec - HANDLE_HIT_WIDTH / 2,
+                      width: HANDLE_HIT_WIDTH,
+                    }}
+                    className="group absolute top-0 z-10 flex h-full cursor-col-resize items-center justify-center"
+                  >
+                    <div
+                      className={`h-8 w-0.5 rounded-full group-hover:bg-violet-400 ${
+                        isSplit ? "bg-violet-400/80" : "bg-foreground/25"
+                      }`}
+                    />
+                  </div>
+                );
+              })}
             </div>
 
             {/* Audio track — waveform */}
