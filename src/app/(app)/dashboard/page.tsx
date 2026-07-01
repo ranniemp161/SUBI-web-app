@@ -21,15 +21,48 @@ const TRANSCRIPT_STATUS_LABEL: Record<Project["transcriptStatus"], string> = {
   failed: "Transcription failed",
 };
 
+// Which transcription backend to use. Deepgram is the real pipeline; local
+// faster-whisper is the token-saving stand-in for local dev. Set
+// NEXT_PUBLIC_TRANSCRIBE_PROVIDER=deepgram to exercise the Deepgram path
+// (requires the app be reached over the public tunnel so Deepgram's callback
+// can land on /api/transcribe/callback).
+const TRANSCRIBE_PROVIDER =
+  process.env.NEXT_PUBLIC_TRANSCRIBE_PROVIDER === "deepgram" ? "deepgram" : "whisper";
+
+/** Kick off transcription for a project, dispatching to the active provider. */
+function startTranscription(projectId: string, file: File) {
+  return TRANSCRIBE_PROVIDER === "deepgram"
+    ? startDeepgramTranscription(projectId, file)
+    : startWhisperTranscription(projectId, file);
+}
+
 /**
- * Kick off transcription for a project.
- *
- * TEMPORARY: routed through local faster-whisper (/api/transcribe/whisper)
- * instead of Deepgram while Deepgram project access is being sorted out
- * with the client. Swap back to the /api/transcribe/init + direct-to-Deepgram
- * flow once that's resolved.
+ * Deepgram path: upload the media to our own server, which forwards it to
+ * Deepgram with a callback URL. We proxy (rather than upload straight from the
+ * browser) because Deepgram's pre-recorded REST endpoint isn't CORS-enabled.
+ * Deepgram posts the finished transcript to /api/transcribe/callback, which the
+ * dashboard's polling picks up.
  */
-async function startTranscription(projectId: string, file: File) {
+async function startDeepgramTranscription(projectId: string, file: File) {
+  const response = await fetch(
+    `/api/transcribe/deepgram?projectId=${encodeURIComponent(projectId)}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": file.type || "application/octet-stream" },
+      body: file,
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(`Deepgram transcription failed: ${await response.text()}`);
+  }
+}
+
+/**
+ * Local faster-whisper path: upload the video to our own route, which runs
+ * whisper in the background and writes the transcript when it finishes.
+ */
+async function startWhisperTranscription(projectId: string, file: File) {
   const formData = new FormData();
   formData.set("projectId", projectId);
   formData.set("file", file);
