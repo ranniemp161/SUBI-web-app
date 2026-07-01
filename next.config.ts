@@ -10,7 +10,7 @@ const nextConfig: NextConfig = {
   // the body it buffers at 10MB — too small for the video uploads that
   // /api/transcribe/whisper accepts directly.
   experimental: {
-    proxyClientMaxBodySize: "2gb",
+    proxyClientMaxBodySize: "8gb",
   },
 };
 

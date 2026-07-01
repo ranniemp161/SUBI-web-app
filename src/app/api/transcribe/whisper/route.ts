@@ -16,9 +16,9 @@ import { hasValidAccessCode } from "@/lib/access-code";
 /**
  * POST /api/transcribe/whisper
  *
- * Temporary local stand-in for the Deepgram pipeline (src/app/api/transcribe/init
- * + callback routes) while Deepgram project access is being sorted out with the
- * client. The browser uploads the video here instead of straight to Deepgram.
+ * Local stand-in for the Deepgram pipeline (src/app/api/transcribe/deepgram
+ * + callback routes) — token-saver for local testing. The browser uploads the
+ * video here instead of to Deepgram.
  *
  * Responds as soon as the upload is saved to disk, then runs faster-whisper in
  * the background and writes the transcript when it finishes — the dashboard's

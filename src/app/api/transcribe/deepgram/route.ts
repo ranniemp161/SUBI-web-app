@@ -79,11 +79,15 @@ export async function POST(request: Request) {
     callback: callbackUrl,
   });
 
-  try {
-    // Buffer the upload, then hand it to Deepgram. Fine for the videos we test
-    // with; a production build would stream this straight through.
-    const media = Buffer.from(await request.arrayBuffer());
+  if (!request.body) {
+    return NextResponse.json({ error: "No media in request body." }, { status: 400 });
+  }
 
+  try {
+    // Stream the upload straight through to Deepgram instead of buffering the
+    // whole file into memory with arrayBuffer() — a multi-GB Buffer + single
+    // socket write is what blew up with EPROTO. `duplex: "half"` is required
+    // by Node/undici whenever the fetch body is a stream.
     const dgResponse = await fetch(`https://api.deepgram.com/v1/listen?${params}`, {
       method: "POST",
       headers: {
@@ -91,8 +95,9 @@ export async function POST(request: Request) {
         "Content-Type":
           request.headers.get("content-type") || "application/octet-stream",
       },
-      body: media,
-    });
+      body: request.body,
+      duplex: "half",
+    } as RequestInit & { duplex: "half" });
 
     if (!dgResponse.ok) {
       const detail = await dgResponse.text();
@@ -126,8 +131,7 @@ export async function POST(request: Request) {
       .where(eq(projects.id, projectId));
 
     return NextResponse.json(
-      // TEMP: surface the real cause to the browser while debugging the test.
-      { error: "Failed to start transcription.", detail: String(error) },
+      { error: "Failed to start transcription." },
       { status: 500 }
     );
   }
