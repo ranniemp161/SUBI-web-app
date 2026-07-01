@@ -85,6 +85,9 @@ export default function EditorPage() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showRetakeReview, setShowRetakeReview] = useState(false);
+  // The timeline clip the user has selected, identified by its start time
+  // (segment starts are unique). null = nothing selected.
+  const [selectedStart, setSelectedStart] = useState<number | null>(null);
   const [playbackRate, setPlaybackRate] = useState(1);
   const [muted, setMuted] = useState(false);
   const [videoMeta, setVideoMeta] = useState<VideoMeta | null>(null);
@@ -191,14 +194,25 @@ export default function EditorPage() {
     };
   }, [edl, project, id]);
 
+  // Apply an edit, returning whether it was accepted. An edit that keeps
+  // nothing is refused: the timeline must always retain at least one clip,
+  // otherwise the load path (which discards a zero-kept EDL as corrupt) would
+  // silently rebuild from the transcript and wipe every edit on the next reload.
   const applyEdl = useCallback(
-    (next: EDL) => {
+    (next: EDL): boolean => {
+      if (keptDuration(next) <= 0) {
+        toast("Can't remove everything", {
+          description: "At least one clip must stay in the timeline.",
+        });
+        return false;
+      }
       hasEditedRef.current = true;
       setEdl((prev) => {
         if (prev) undoStack.current.push(prev);
         redoStack.current = [];
         return next;
       });
+      return true;
     },
     []
   );
@@ -224,7 +238,7 @@ export default function EditorPage() {
   const handleCutWords = useCallback(
     (words: TranscriptWord[]) => {
       if (!edl) return;
-      applyEdl(cutWordsInEdl(edl, words));
+      if (!applyEdl(cutWordsInEdl(edl, words))) return;
       toast(`Cut ${words.length} word${words.length === 1 ? "" : "s"}`, {
         action: { label: "Undo", onClick: () => undo() },
       });
@@ -259,7 +273,7 @@ export default function EditorPage() {
         side === "left" ? [seg.start, currentTime] : [currentTime, seg.end];
       // Playhead sitting on the clip edge — nothing to remove.
       if (end - start < 1e-3) return;
-      applyEdl(setRangeStatusInEdl(edl, start, end, "cut", "manual"));
+      if (!applyEdl(setRangeStatusInEdl(edl, start, end, "cut", "manual"))) return;
       toast(side === "left" ? "Trimmed clip start" : "Trimmed clip end", {
         action: { label: "Undo", onClick: () => undo() },
       });
@@ -287,6 +301,23 @@ export default function EditorPage() {
     applyEdl(splitAtInEdl(edl, currentTime));
     toast("Split clip", { action: { label: "Undo", onClick: () => undo() } });
   }, [edl, currentTime, applyEdl, undo]);
+
+  // Select a timeline clip (or pass null to clear). Seeking is handled
+  // separately by the click, so this only tracks what's selected.
+  const handleSelectSegment = useCallback((segment: EDLSegment | null) => {
+    setSelectedStart(segment ? segment.start : null);
+  }, []);
+
+  // Delete the selected clip — mark its whole span as a manual cut (skipped on
+  // playback). Only kept clips are deletable; no-op otherwise.
+  const deleteSelected = useCallback(() => {
+    if (!edl || selectedStart === null) return;
+    const seg = edl.segments.find((s) => s.start === selectedStart);
+    setSelectedStart(null);
+    if (!seg || seg.status !== "keep") return;
+    if (!applyEdl(setRangeStatusInEdl(edl, seg.start, seg.end, "cut", "manual"))) return;
+    toast("Clip deleted", { action: { label: "Undo", onClick: () => undo() } });
+  }, [edl, selectedStart, applyEdl, undo]);
 
   // Boundary drags call onTrimStart once (snapshots undo state, like applyEdl)
   // then onTrimBoundary repeatedly as the pointer moves — those live updates
@@ -376,6 +407,15 @@ export default function EditorPage() {
           e.preventDefault();
           splitAtPlayhead();
           break;
+        case "Delete":
+        case "Backspace":
+          // Only claim Delete when a clip is selected; the transcript panel
+          // handles it for word selections.
+          if (selectedStart !== null) {
+            e.preventDefault();
+            deleteSelected();
+          }
+          break;
         case "ArrowLeft":
           e.preventDefault();
           seekRelative(e.shiftKey ? -5 : -1);
@@ -423,13 +463,14 @@ export default function EditorPage() {
         case "Escape":
           setShowShortcuts(false);
           setShowRetakeReview(false);
+          setSelectedStart(null);
           break;
       }
     }
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [edl, undo, redo, seekRelative, seekToEditPoint, cutToPlayhead, splitAtPlayhead]);
+  }, [edl, undo, redo, seekRelative, seekToEditPoint, cutToPlayhead, splitAtPlayhead, selectedStart, deleteSelected]);
 
   const words = useMemo(() => project?.transcript?.words ?? [], [project]);
   const totalSeconds = useMemo(
@@ -776,6 +817,9 @@ export default function EditorPage() {
         onTrimBoundary={handleTrimBoundary}
         onCutToPlayhead={cutToPlayhead}
         onSplit={splitAtPlayhead}
+        selectedStart={selectedStart}
+        onSelectSegment={handleSelectSegment}
+        onDeleteSelected={deleteSelected}
       />
 
       {/* Status bar */}
@@ -1014,6 +1058,7 @@ const SHORTCUTS: { keys: string; label: string }[] = [
   { keys: "Shift-click + Delete", label: "Cut selected words" },
   { keys: "Q / W", label: "Trim clip to playhead — left / right" },
   { keys: "S", label: "Split clip at playhead" },
+  { keys: "Click clip + Delete", label: "Select a clip, then delete it" },
   { keys: "Click a cut", label: "Restore it" },
   { keys: "Drag handle", label: "Trim a cut edge (Alt = free, no snap)" },
   { keys: "= / − / 0", label: "Zoom in / out / fit timeline" },

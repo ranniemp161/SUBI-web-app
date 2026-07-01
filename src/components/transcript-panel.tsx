@@ -379,7 +379,7 @@ export default function TranscriptPanel({
         ref={containerRef}
         tabIndex={0}
         onKeyDown={handleKeyDown}
-        className="relative flex-1 select-none overflow-y-auto px-5 outline-none"
+        className="transcript-scroll relative flex-1 select-none overflow-y-auto px-5 outline-none"
       >
         {/* Selection action bar */}
         {selection.size > 0 && (
