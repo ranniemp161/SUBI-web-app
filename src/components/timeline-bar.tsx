@@ -53,6 +53,12 @@ interface TimelineBarProps {
   onCutToPlayhead: (side: "left" | "right") => void;
   /** Razor the clip under the playhead into two clips (mirrors the S key). */
   onSplit: () => void;
+  /** Start time of the currently selected clip, or null when none is selected. */
+  selectedStart: number | null;
+  /** Select a clip (or pass null to clear the selection). */
+  onSelectSegment: (segment: EDLSegment | null) => void;
+  /** Delete the selected clip (mirrors the Delete key). */
+  onDeleteSelected: () => void;
 }
 
 const MIN_PX_PER_SEC = 5;
@@ -109,6 +115,9 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
     onTrimBoundary,
     onCutToPlayhead,
     onSplit,
+    selectedStart,
+    onSelectSegment,
+    onDeleteSelected,
   },
   ref
 ) {
@@ -289,9 +298,11 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
     (e: React.PointerEvent) => {
       e.currentTarget.setPointerCapture(e.pointerId);
       scrubbingRef.current = true;
+      // Scrubbing empty timeline / ruler clears any clip selection.
+      onSelectSegment(null);
       onSeek(timeFromClientX(e.clientX));
     },
-    [onSeek, timeFromClientX]
+    [onSelectSegment, onSeek, timeFromClientX]
   );
   const handleScrubPointerMove = useCallback(
     (e: React.PointerEvent) => {
@@ -305,14 +316,19 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
     scrubbingRef.current = false;
   }, []);
 
-  // --- Clip click (seek keep / restore cut) ---
+  // --- Clip click (select + seek keep / restore cut) ---
   const handleSegmentClick = useCallback(
     (e: React.MouseEvent, segment: EDLSegment) => {
       e.stopPropagation();
-      if (segment.status === "cut") onRestoreSegment(segment);
-      else onSeek(timeFromClientX(e.clientX));
+      if (segment.status === "cut") {
+        onRestoreSegment(segment);
+        onSelectSegment(null);
+      } else {
+        onSelectSegment(segment);
+        onSeek(timeFromClientX(e.clientX));
+      }
     },
-    [onRestoreSegment, onSeek, timeFromClientX]
+    [onRestoreSegment, onSelectSegment, onSeek, timeFromClientX]
   );
 
   // --- Boundary trim drag ---
@@ -355,6 +371,11 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
 
   const playheadLeft = currentTime * pxPerSec;
   const firstKeepIndex = edl.segments.findIndex((s) => s.status === "keep");
+  // A live selection that still points at an existing kept clip — the toolbar
+  // Delete button only enables when there's actually something to delete.
+  const canDelete =
+    selectedStart !== null &&
+    edl.segments.some((s) => s.status === "keep" && s.start === selectedStart);
 
   const toolBtn =
     "flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-foreground/40 cursor-not-allowed";
@@ -396,6 +417,17 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
             className={actionBtn}
           >
             <Scissors className="h-3.5 w-3.5" /> Split
+          </button>
+          <button
+            type="button"
+            onClick={onDeleteSelected}
+            disabled={!canDelete}
+            title={
+              canDelete ? "Delete selected clip (Delete)" : "Select a clip to delete"
+            }
+            className={canDelete ? actionBtn : toolBtn}
+          >
+            <Trash2 className="h-3.5 w-3.5" /> Delete
           </button>
           <button type="button" disabled title="Ripple delete (coming soon)" className={toolBtn}>
             <Trash2 className="h-3.5 w-3.5" /> Ripple delete
@@ -508,6 +540,10 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
               {edl.segments.map((segment, index) => {
                 const isCut = segment.status === "cut";
                 const isRetake = isCut && segment.reason === "retake";
+                const isSelected =
+                  !isCut &&
+                  selectedStart !== null &&
+                  segment.start === selectedStart;
                 const cutTooltip =
                   segment.reason === "retake"
                     ? "Retake — kept the later take. Click to restore."
@@ -519,7 +555,7 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
                     key={index}
                     onClick={(e) => handleSegmentClick(e, segment)}
                     onPointerDown={(e) => e.stopPropagation()}
-                    title={isCut ? cutTooltip : "Keep — click to seek"}
+                    title={isCut ? cutTooltip : "Keep — click to select, Delete to remove"}
                     style={{
                       left: segment.start * pxPerSec,
                       width: Math.max(1, (segment.end - segment.start) * pxPerSec),
@@ -533,12 +569,27 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
                         : isCut
                           ? "border-foreground/10 bg-black/40"
                           : "border-violet-400/40 bg-gradient-to-b from-violet-500/85 to-violet-600/85 hover:from-violet-500 hover:to-violet-600"
-                    }`}
+                    } ${isSelected ? "ring-2 ring-inset ring-white/90" : ""}`}
                   >
                     {!isCut && index === firstKeepIndex && (
                       <span className="truncate px-2 text-[11px] font-medium text-white/90">
                         {fileName}
                       </span>
+                    )}
+                    {isSelected && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onDeleteSelected();
+                        }}
+                        onPointerDown={(e) => e.stopPropagation()}
+                        title="Delete clip (Delete)"
+                        aria-label="Delete clip"
+                        className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded bg-black/50 text-white/90 hover:bg-red-600"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
                     )}
                   </div>
                 );
