@@ -30,6 +30,13 @@ export interface EDLSegment {
   end: number;
   status: "keep" | "cut";
   reason: EDLReason;
+  /**
+   * A user-created razor boundary begins here. The segment plays back
+   * identically to a non-split one — the flag exists only so `mergeAdjacent`
+   * won't fuse this segment into a same-status/reason left neighbour, keeping
+   * the two halves of a split as independently editable clips.
+   */
+  split?: boolean;
 }
 
 export interface EDL {
@@ -79,6 +86,7 @@ function mergeAdjacent(segments: EDLSegment[]): EDLSegment[] {
     const last = merged[merged.length - 1];
     if (
       last &&
+      !seg.split &&
       last.status === seg.status &&
       last.reason === seg.reason &&
       Math.abs(last.end - seg.start) < 1e-6
@@ -180,10 +188,12 @@ export function setRangeStatus(
       continue;
     }
 
+    // Left remainder keeps seg.start, so a razor boundary there is still real.
     if (seg.start < startSec) {
       result.push({ ...seg, end: startSec });
     }
 
+    // The re-marked middle is a brand-new span — never inherits a razor flag.
     result.push({
       start: Math.max(seg.start, startSec),
       end: Math.min(seg.end, endSec),
@@ -191,8 +201,10 @@ export function setRangeStatus(
       reason,
     });
 
+    // Right remainder now starts at the cut edge, not the original razor point,
+    // so drop `split` — otherwise a phantom boundary lingers there.
     if (seg.end > endSec) {
-      result.push({ ...seg, start: endSec });
+      result.push({ ...seg, start: endSec, split: undefined });
     }
   }
 
@@ -214,6 +226,38 @@ export function cutWords(edl: EDL, words: TranscriptWord[]): EDL {
 /** Restore a cut segment back to "keep". */
 export function restoreSegment(edl: EDL, segment: EDLSegment): EDL {
   return setRangeStatus(edl, segment.start, segment.end, "keep", null);
+}
+
+/**
+ * Razor: insert a persistent boundary at `timeSec`, dividing the kept clip that
+ * contains it into two independent clips. The right half is flagged `split` so
+ * `mergeAdjacent` (which would otherwise treat the touching same-status halves
+ * as one) keeps them apart, leaving each separately cuttable / trimmable.
+ *
+ * Only kept clips are razorable — splitting a "cut" span is meaningless (both
+ * halves are skipped on playback either way). No-op when the time lands on (or
+ * within EPS of) an existing boundary, or outside every kept clip.
+ */
+export function splitAt(edl: EDL, timeSec: number): EDL {
+  const EPS = 1e-4;
+  const segments: EDLSegment[] = [];
+  let didSplit = false;
+
+  for (const seg of edl.segments) {
+    if (
+      seg.status === "keep" &&
+      timeSec > seg.start + EPS &&
+      timeSec < seg.end - EPS
+    ) {
+      segments.push({ ...seg, end: timeSec });
+      segments.push({ ...seg, start: timeSec, split: true });
+      didSplit = true;
+    } else {
+      segments.push(seg);
+    }
+  }
+
+  return didSplit ? { segments } : edl;
 }
 
 /** Smallest a segment is allowed to shrink to when trimming a shared boundary. */

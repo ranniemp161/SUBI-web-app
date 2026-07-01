@@ -48,6 +48,7 @@ import {
   restoreSegment as restoreSegmentInEdl,
   trimBoundary as trimBoundaryInEdl,
   setRangeStatus as setRangeStatusInEdl,
+  splitAt as splitAtInEdl,
   findSegmentAt,
   buildInitialEDL,
   keptDuration,
@@ -266,6 +267,27 @@ export default function EditorPage() {
     [edl, currentTime, applyEdl, undo]
   );
 
+  // S — razor: split the clip under the playhead into two independent clips
+  // (a persistent boundary, so each half is separately cuttable / trimmable).
+  const splitAtPlayhead = useCallback(() => {
+    if (!edl) return;
+    const seg = findSegmentAt(edl, currentTime);
+    const EPS = 1e-3;
+    if (
+      !seg ||
+      seg.status !== "keep" ||
+      currentTime <= seg.start + EPS ||
+      currentTime >= seg.end - EPS
+    ) {
+      toast("Nothing to split here", {
+        description: "Park the playhead inside a clip, away from its edges.",
+      });
+      return;
+    }
+    applyEdl(splitAtInEdl(edl, currentTime));
+    toast("Split clip", { action: { label: "Undo", onClick: () => undo() } });
+  }, [edl, currentTime, applyEdl, undo]);
+
   // Boundary drags call onTrimStart once (snapshots undo state, like applyEdl)
   // then onTrimBoundary repeatedly as the pointer moves — those live updates
   // must not each push a new undo entry, or undo would only step back a pixel.
@@ -350,6 +372,10 @@ export default function EditorPage() {
           e.preventDefault();
           cutToPlayhead("right");
           break;
+        case "s":
+          e.preventDefault();
+          splitAtPlayhead();
+          break;
         case "ArrowLeft":
           e.preventDefault();
           seekRelative(e.shiftKey ? -5 : -1);
@@ -403,7 +429,7 @@ export default function EditorPage() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [edl, undo, redo, seekRelative, seekToEditPoint, cutToPlayhead]);
+  }, [edl, undo, redo, seekRelative, seekToEditPoint, cutToPlayhead, splitAtPlayhead]);
 
   const words = useMemo(() => project?.transcript?.words ?? [], [project]);
   const totalSeconds = useMemo(
@@ -749,6 +775,7 @@ export default function EditorPage() {
         onTrimStart={handleTrimStart}
         onTrimBoundary={handleTrimBoundary}
         onCutToPlayhead={cutToPlayhead}
+        onSplit={splitAtPlayhead}
       />
 
       {/* Status bar */}
@@ -986,6 +1013,7 @@ const SHORTCUTS: { keys: string; label: string }[] = [
   { keys: "Click word", label: "Seek to that word" },
   { keys: "Shift-click + Delete", label: "Cut selected words" },
   { keys: "Q / W", label: "Trim clip to playhead — left / right" },
+  { keys: "S", label: "Split clip at playhead" },
   { keys: "Click a cut", label: "Restore it" },
   { keys: "Drag handle", label: "Trim a cut edge (Alt = free, no snap)" },
   { keys: "= / − / 0", label: "Zoom in / out / fit timeline" },
