@@ -29,16 +29,23 @@ function post(message: ExportResponseMessage) {
 }
 
 let activeConversion: Conversion | null = null;
+// Set when a cancel arrives; covers the window before Conversion.init resolves
+// (activeConversion is still null then, so cancel() has nothing to act on). The
+// pre-execute check in runExport bails on it.
+let cancelRequested = false;
 
 self.onmessage = async (event: MessageEvent<ExportRequestMessage>) => {
   const message = event.data;
 
   if (message.type === "cancel") {
+    cancelRequested = true;
     await activeConversion?.cancel();
     return;
   }
 
   if (message.type !== "start") return;
+
+  cancelRequested = false;
 
   // The worker owns the write lifecycle: on success it commits the file with
   // close(); on any failure it abort()s, which discards the temporary swap
@@ -116,6 +123,14 @@ async function runExport(file: File, edl: EDL, writable: FileSystemWritableFileS
   }
 
   activeConversion = conversion;
+
+  // A cancel that landed while Conversion.init was still awaiting couldn't act
+  // on activeConversion (it was null). Honour it now, before we start encoding.
+  // No await sits between this check and execute(), so no cancel can slip past.
+  if (cancelRequested) {
+    throw new ExportError("cancelled", "Export cancelled.");
+  }
+
   // onProgress fires per output packet — far too often to forward every call
   // (flooding the main thread's toast store trips React's update-depth guard).
   // Post at most once per whole percent.

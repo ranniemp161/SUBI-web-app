@@ -1,114 +1,92 @@
-# Memory — Phase 5: In-Browser MP4 Export (WebCodecs)
+# Memory — Phase 5 Export: Review + Cancel-Path Fixes
 
 Last updated: 2026-07-01
 
 ## What was built
 
-Phase 5 of the rough-cut editor — client-side MP4 export that renders the
-EDL's "keep" segments to a downloadable file, entirely in the browser
-(Chrome/Edge, WebCodecs). New files:
+No new feature this session — Phase 5 (in-browser WebCodecs/Mediabunny MP4
+export) was reviewed via `/review` and two of three findings were fixed.
 
-- **`src/lib/export/plan.ts`** (+ `plan.test.ts`, 12 tests) — pure logic:
-  `getKeepRanges`, `totalKeptSeconds`, and `createTimeRemapper` (maps a
-  source-timeline timestamp to its position in the rendered output, where
-  kept ranges are concatenated gap-free; returns null for cut/out-of-range
-  timestamps so the caller drops that sample).
-- **`src/lib/export/types.ts`** — worker message protocol
-  (`start`/`cancel` → worker; `progress`/`done`/`error` ← worker) and
-  `ExportErrorCode`. The `start` message carries the source `File`, the
-  `EDL`, and a `FileSystemFileHandle` (structured-cloneable — the writable
-  stream it produces is NOT, so the handle crosses into the worker and the
-  worker creates its own writable).
-- **`src/lib/export/export-trigger.ts`** — main-thread orchestration:
-  `isExportSupported()` (checks VideoEncoder/Decoder + showSaveFilePicker)
-  and `startExport()` (opens the native save dialog inside the click's
-  user-activation, spins up the worker, relays progress/done/error).
-- **`src/lib/export/file-system-access.d.ts`** — ambient `showSaveFilePicker`
-  types (missing from lib.dom.d.ts).
-- **`src/workers/export-worker.ts`** — runs Mediabunny's `Conversion`
-  off-main-thread; `video.process`/`audio.process` remap each sample's
-  timestamp (or return null to drop it) per the EDL.
-- **`src/app/(app)/dashboard/[id]/page.tsx`** — Export button in `TopBar`
-  now live (was hardcoded `disabled`); added `exportState`, `handleExport`
-  (sonner progress toast with id "export"), and a `beforeunload` guard while
-  exporting.
+Files changed this session:
+
+- **`src/workers/export-worker.ts`** — closed a cancel-before-init race. Added
+  a module-level `cancelRequested` flag: set on any `cancel` message, reset at
+  the top of each `start`. After `Conversion.init` resolves (which is the only
+  `await` before encoding) and `activeConversion` is set, the worker checks the
+  flag and `throw new ExportError("cancelled", "Export cancelled.")` *before*
+  `execute()` — no `await` sits between the check and `execute()`, so no cancel
+  can slip past. Previously a cancel that arrived while `init` was still
+  awaiting was silently dropped (activeConversion was null, so `.cancel()`
+  no-op'd) and the export ran to completion.
+- **`src/app/(app)/dashboard/[id]/page.tsx`** — `handleExport`'s `onError`
+  callback now takes `(message, code)` and, when `code === "cancelled"`, calls
+  `toast.dismiss("export")` and returns instead of showing a red "Export
+  failed" toast. A user-initiated cancel is no longer surfaced as a failure.
 
 ## Decisions made
 
-- **Switched from the planned `mp4box` + `mp4-muxer` to `mediabunny`**
-  (v1.50.0). `mp4-muxer` installed as *deprecated* in favour of Mediabunny —
-  the same author's actively-maintained successor that does demux + mux +
-  WebCodecs glue + a high-level `Conversion` (trim/transcode) API in one
-  zero-dependency, fully-typed package. It's literally sponsored by Gling.ai
-  (the competitor this app is modelled on). User approved the swap
-  mid-implementation. `mp4box`/`mp4-muxer` were uninstalled.
-- **Output streams to disk via File System Access API** (showSaveFilePicker
-  + FileSystemWritableFileStream), not a buffered Blob — keeps memory flat
-  for long exports (same OOM-class risk as the prior Deepgram upload fix).
-- **Worker owns the write lifecycle.** The `FileSystemWritableFileStream`
-  writes to a temp swap file and only commits on `close()`; on error the
-  worker `abort()`s to discard the temp and leave any original untouched.
-- **MVP scope only** — one video + one audio track, Mediabunny's default
-  encode settings (no bitrate/resolution UI), simple % progress,
-  beforeunload guard. No libav fallback: unsupported source codecs fail with
-  a clear message (Conversion `isValid`/`discardedTracks`).
+- **Finding #3 (boundary fuzz) intentionally NOT fixed** — it's inherent to
+  cutting at whole-sample granularity (only a sample's *start* timestamp is
+  remapped; the exclusive `t < r.end` boundary drops/keeps at most one frame /
+  one audio packet at each cut edge). It is bounded per-cut and does NOT
+  accumulate into drift (every timestamp is absolutely remapped). Eliminating
+  it needs frame-accurate re-slicing = real Phase-6+ scope, likely unnecessary.
+  The mitigation is the planned A/V spot-check; only invest if a cut edge
+  actually sounds/looks wrong on real footage.
+- The cancel *path* is now correct end-to-end, so wiring the Phase-6 cancel
+  button becomes pure UI work: just call `exportHandleRef.current.cancel()`.
+  Fixes #1/#2 are latent (no UI triggers cancel yet) but preventive.
 
 ## Problems solved
 
-Two bugs surfaced on the first real export (file wrote fine but UI said
-"failed", plus a React crash):
+(From the review — see also the prior export session's double-close and
+progress-throttle fixes, already committed in 44a68e2.)
 
-- **Double-close → false "Export failed".** Mediabunny's `StreamTarget`
-  already closes whatever WritableStream it's given when the conversion
-  finalizes. The worker then called `writable.close()` a second time on the
-  already-closed stream → throw → "failed" toast, even though the muxer had
-  already written a complete, playable MP4. **Fix:** hand `StreamTarget` a
-  thin forwarding `WritableStream` wrapper (only implements `write`, piping
-  chunks — shape `{type:'write',data,position}` — to `fileWritable.write()`).
-  The real file stream stays unlocked and under the worker message-handler's
-  sole control: `close()` (commit) on success, `abort()` (discard) on error.
-- **"Maximum update depth exceeded" React crash.** Mediabunny's `onProgress`
-  fires per output packet (hundreds+ of times); each call hit
-  `toast.loading(...,{id:"export"})`, flooding sonner's store until React's
-  update-depth guard tripped. **Fix:** the worker throttles progress messages
-  to at most once per whole percent (`Math.floor(progress*100)` change).
+- **Cancel would have shown "Export failed."** `activeConversion.cancel()` makes
+  `execute()` reject with `ConversionCanceledError` → classified as code
+  `"cancelled"` but still posted as an `error` message; the dashboard treated
+  every error the same. Fixed by branching on the `code` field.
+- **Cancel during init was a no-op.** Fixed with the `cancelRequested` flag.
 
 ## Current state
 
-- Export is implemented and passes all static checks: `tsc --noEmit`,
-  eslint, 40/40 vitest, and a full `next build` (Turbopack) that bundles the
-  worker without error.
-- **Confirmed working end-to-end pre-fix already produced a complete,
-  playable MP4** (user played the 71MB output — perfect). The only issue was
-  the false "failed" toast from the double-close, now fixed.
-- Both fixes are in the working tree but **NOT yet re-verified after a clean
-  dev-server restart** — worker code and next.config.ts do NOT reliably
-  hot-reload (same gotcha as the Deepgram session). The dev server on
-  :3000 was killed at end of session for the user to restart.
-- All Phase-5 changes are uncommitted (git status: new src/lib/export/*,
-  src/workers/export-worker.ts, modified dashboard/[id]/page.tsx,
-  package.json/lock).
+- IMPORTANT CORRECTION vs. last memory: all Phase-5 export work is **already
+  committed** — `44a68e2 feat: implement WebCodecs export functionality...`.
+  Working tree was clean at session start.
+- This session's two fixes are **uncommitted** in the working tree
+  (export-worker.ts + dashboard page.tsx).
+- Static checks all green after the fixes: `tsc --noEmit` clean, eslint clean,
+  vitest 12/12 (export suite; 40/40 project-wide previously).
+- Fixes are **NOT yet verified in-browser** after a clean restart. Worker code
+  does not reliably hot-reload — must restart dev + hard-refresh.
+- Dev server was started fresh this session and is (or was) running on :3000
+  (Next.js 16.2.9, `next dev --webpack`). The manual export re-test from the
+  restore step was **never actually run** — got interrupted by the review.
+- `gh` is NOT authenticated (`gh auth login` needed before any PR).
 
 ## Next session starts with
 
-1. Restart `npm run dev`, hard-refresh the editor tab (Ctrl+Shift+R) so the
-   new worker bundle loads, and re-run an export. Expect: smooth progress,
-   green "Export complete" toast, no "Maximum update depth" error, playable
+1. Ensure `npm run dev` is running fresh; hard-refresh the editor tab
+   (Ctrl+Shift+R) so the new worker bundle loads.
+2. Run a real export on a clip with at least one cut. Expect: smooth progress
+   toast → green "Export complete", no "Maximum update depth" error, playable
    MP4 with cuts landing correctly.
-2. Spot-check a cut boundary or two for A/V sync in the output.
-3. If good, commit the Phase-5 work and open a PR (check `gh auth status`
-   first — gh was not authenticated in earlier sessions).
-4. Then Phase 6 polish: cancel button wired to `ExportHandle.cancel`,
-   HEVC/MOV (iPhone) + VP9/WebM source testing, browser-support gating UI.
+3. Spot-check one or two cut boundaries for A/V sync (this is also the
+   verification for un-fixed finding #3).
+4. Commit this session's cancel-path fixes (export-worker.ts + dashboard). They
+   can go in their own commit or fold into a Phase-5 follow-up.
+5. Then Phase 6: wire the cancel button to `exportHandleRef.current.cancel()`
+   (path is ready), plus HEVC/MOV + VP9/WebM source testing and browser-support
+   gating UI.
 
 ## Open questions
 
-- Does export hold up on non-H.264 sources (HEVC/MOV from iPhone, VP9/WebM
-  screen recordings)? Only tested on the one 71MB file so far.
-- Export decodes the *whole* source even for heavily-cut timelines (only
-  encode is skipped for cut spans) — acceptable for MVP, but may be slow on
-  long footage. Lower-level keyframe-seek skipping is the follow-up if so.
-- Still deferred from prior sessions: filler-word detection,
-  semantic/rambling trim, preset tuning against real footage; and the
-  R2/object-storage scalability decision pending the client conversation
-  (see project_r2_storage_decision.md in cross-session memory).
+- iPhone/non-H.264 source support (HEVC/MOV, VP9/WebM) — user said they'll
+  address this later. Only the one 71MB H.264 file tested so far.
+- Export decodes the whole source even for heavily-cut timelines (only encode
+  is skipped for cut spans) — acceptable for MVP, may be slow on long footage;
+  keyframe-seek skipping is the follow-up if it proves too slow.
+- Deferred from prior sessions: filler-word detection, semantic/rambling trim,
+  preset tuning against real footage; and the R2/object-storage scalability
+  decision pending the client conversation (see
+  project_r2_storage_decision.md in cross-session memory).

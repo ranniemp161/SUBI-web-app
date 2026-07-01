@@ -549,8 +549,13 @@ export default function EditorPage() {
           setExportState("idle");
           toast.success("Export complete", { id: "export" });
         },
-        onError: (message) => {
+        onError: (message, code) => {
           setExportState("idle");
+          // A user-initiated cancel isn't a failure — just clear the toast.
+          if (code === "cancelled") {
+            toast.dismiss("export");
+            return;
+          }
           toast.error("Export failed", { id: "export", description: message });
         },
       });
