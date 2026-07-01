@@ -6,6 +6,11 @@ import { projects } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { getOwnedProject } from "@/lib/projects";
 import { hasValidAccessCode } from "@/lib/access-code";
+import {
+  extractDeepgramError,
+  normalizeDeepgram,
+  type DeepgramResponse,
+} from "@/lib/deepgram";
 
 /**
  * POST /api/transcribe/deepgram?projectId=<id>
@@ -15,13 +20,31 @@ import { hasValidAccessCode } from "@/lib/access-code";
  * pre-recorded REST endpoint doesn't send CORS headers, so a cross-origin
  * fetch with an Authorization header is blocked at preflight. So the browser
  * POSTs the raw media here (Content-Type = the file's type) and we forward it
- * to Deepgram with our key and a `callback` URL.
+ * to Deepgram with our key.
  *
- * With a callback set, Deepgram responds immediately with a request_id and
- * posts the finished transcript to /api/transcribe/callback, which the
- * dashboard's polling picks up — so this route returns as soon as Deepgram has
- * accepted the job, without waiting for transcription to finish.
+ * Two completion modes, chosen by whether we can hand Deepgram a publicly
+ * reachable callback URL:
+ *
+ * - **Callback (public host):** we pass a `callback` URL; Deepgram accepts the
+ *   job immediately and POSTs the finished transcript to
+ *   /api/transcribe/callback. This route returns as soon as the job is
+ *   accepted — the connection isn't held for the whole transcription.
+ * - **Synchronous (localhost):** Deepgram can't reach a localhost callback
+ *   (it rejects it as "Invalid callback URL"), so instead we omit the callback
+ *   and read the transcript straight out of Deepgram's HTTP response, storing
+ *   it here before returning. No tunnel needed for local dev — mirrors how the
+ *   local faster-whisper path works.
  */
+function isLocalHostname(hostname: string): boolean {
+  return (
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "::1" ||
+    hostname === "[::1]" ||
+    hostname.endsWith(".local")
+  );
+}
+
 export async function POST(request: Request) {
   const { userId: clerkId } = await auth();
 
@@ -57,8 +80,33 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Project not found." }, { status: 404 });
   }
 
-  // Random token so the (unsigned) Deepgram callback can be verified as ours.
-  const callbackToken = randomBytes(32).toString("hex");
+  if (!request.body) {
+    return NextResponse.json({ error: "No media in request body." }, { status: 400 });
+  }
+
+  // The base Deepgram's callback must POST back to. PUBLIC_APP_URL (a tunnel's
+  // https origin) overrides the request origin for local-dev callback testing;
+  // otherwise we use the request origin, which is already public in production.
+  const callbackBase = (process.env.PUBLIC_APP_URL ?? new URL(request.url).origin).replace(/\/+$/, "");
+  // A localhost base can't receive a Deepgram callback, so fall back to reading
+  // the transcript synchronously from the response instead.
+  const useSync = isLocalHostname(new URL(callbackBase).hostname);
+
+  const params = new URLSearchParams({
+    model: "nova-3",
+    smart_format: "true",
+    punctuate: "true",
+  });
+
+  // Callback mode needs a one-time token so the (unsigned) callback can be
+  // verified as ours. Sync mode reads the transcript here, so no token/callback.
+  const callbackToken = useSync ? null : randomBytes(32).toString("hex");
+  if (!useSync && callbackToken) {
+    params.set(
+      "callback",
+      `${callbackBase}/api/transcribe/callback?projectId=${projectId}&token=${callbackToken}`
+    );
+  }
 
   await db
     .update(projects)
@@ -68,20 +116,6 @@ export async function POST(request: Request) {
       updatedAt: new Date(),
     })
     .where(eq(projects.id, projectId));
-
-  const origin = new URL(request.url).origin;
-  const callbackUrl = `${origin}/api/transcribe/callback?projectId=${projectId}&token=${callbackToken}`;
-
-  const params = new URLSearchParams({
-    model: "nova-3",
-    smart_format: "true",
-    punctuate: "true",
-    callback: callbackUrl,
-  });
-
-  if (!request.body) {
-    return NextResponse.json({ error: "No media in request body." }, { status: 400 });
-  }
 
   try {
     // Stream the upload straight through to Deepgram instead of buffering the
@@ -102,7 +136,7 @@ export async function POST(request: Request) {
     if (!dgResponse.ok) {
       const detail = await dgResponse.text();
       console.error("Deepgram rejected the transcription request:", detail);
-      // Don't leave the project stuck on "processing" — no callback is coming.
+      // Don't leave the project stuck on "processing" — no transcript is coming.
       await db
         .update(projects)
         .set({
@@ -113,10 +147,31 @@ export async function POST(request: Request) {
         .where(eq(projects.id, projectId));
 
       return NextResponse.json(
-        { error: "Deepgram rejected the request." },
+        { error: "Deepgram rejected the request.", detail: extractDeepgramError(detail) },
         { status: 502 }
       );
     }
+
+    // Callback mode: Deepgram only acknowledged the job here — the transcript
+    // arrives later at /api/transcribe/callback, which flips status to ready.
+    if (!useSync) {
+      return NextResponse.json({ received: true });
+    }
+
+    // Sync mode: the transcript is in this response. Normalize and store it, so
+    // the dashboard's polling sees "ready" on its next tick.
+    const payload = (await dgResponse.json()) as DeepgramResponse;
+    const transcript = normalizeDeepgram(payload);
+
+    await db
+      .update(projects)
+      .set({
+        transcript,
+        transcriptStatus: "ready",
+        transcriptCallbackToken: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(projects.id, projectId));
 
     return NextResponse.json({ received: true });
   } catch (error) {
