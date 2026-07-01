@@ -282,7 +282,16 @@ export function setRangeStatus(
 
   result.sort((a, b) => a.start - b.start);
 
-  return { ...edl, segments: mergeAdjacent(result) };
+  // A manual cut un-protects whatever it covers: drop the range from
+  // protectedKeeps so a later re-run doesn't try to force-keep a span the user
+  // has since deliberately cut. Only manual cuts do this — auto silence/retake
+  // cuts and restores must leave the protected list intact.
+  const protectedKeeps =
+    status === "cut" && reason === "manual"
+      ? subtractProtectedRange(edl.protectedKeeps, startSec, endSec)
+      : edl.protectedKeeps;
+
+  return { ...edl, segments: mergeAdjacent(result), protectedKeeps };
 }
 
 /** Cut the time range spanned by the given words (manual cut, e.g. via Delete key). */
@@ -312,6 +321,30 @@ function addProtectedRange(
 }
 
 /**
+ * Remove [start, end) from a protected-keep list, clipping any range it overlaps
+ * (and dropping ranges it fully covers). This is what un-protects a span: a later
+ * manual cut over a previously-restored region drops it from protection, so the
+ * list stays honest and doesn't grow with stale entries the user has since cut.
+ */
+function subtractProtectedRange(
+  ranges: TimeRange[] | undefined,
+  start: number,
+  end: number
+): TimeRange[] | undefined {
+  if (!ranges) return ranges;
+  const result: TimeRange[] = [];
+  for (const r of ranges) {
+    if (r.end <= start || r.start >= end) {
+      result.push(r); // no overlap
+      continue;
+    }
+    if (r.start < start) result.push({ start: r.start, end: start }); // left remainder
+    if (r.end > end) result.push({ start: end, end: r.end }); // right remainder
+  }
+  return result.length > 0 ? result : undefined;
+}
+
+/**
  * Restore a cut segment back to "keep". The span merges seamlessly into its
  * neighbours (reason:null, so the timeline heals into one clip) and is also
  * recorded in `protectedKeeps` so a later `reRoughCut` won't re-cut what the
@@ -326,29 +359,51 @@ export function restoreSegment(edl: EDL, segment: EDLSegment): EDL {
 }
 
 /**
- * Pin the boundary between segments[leftIndex] and its right neighbour so a
- * manual trim survives re-run: whichever side is a cut is re-marked reason
- * "manual" (captured by reRoughCut), and the kept side is added to
- * protectedKeeps (so it isn't re-cut). A keep|keep boundary is a razor split —
- * already preserved via its `split` flag — so it's left untouched.
+ * Pin a just-dragged boundary so the trim survives re-run. `originalBoundary` is
+ * where the boundary sat before the drag; the boundary now sits at the shared
+ * edge of segments[leftIndex] / its right neighbour.
+ *
+ * Whichever side is a cut is re-marked reason "manual" (captured by reRoughCut).
+ * If the drag *grew the kept side* (dragged into a cut, revealing content), only
+ * the newly-revealed sliver — the span between the old and new boundary — is
+ * added to protectedKeeps, so re-run won't re-cut just that bit without freezing
+ * the entire neighbouring clip. A keep|keep boundary is a razor split (preserved
+ * via its `split` flag), so it's left untouched.
  */
-export function pinTrimmedBoundary(edl: EDL, leftIndex: number): EDL {
+export function pinTrimmedBoundary(
+  edl: EDL,
+  leftIndex: number,
+  originalBoundary: number
+): EDL {
   const left = edl.segments[leftIndex];
   const right = edl.segments[leftIndex + 1];
   if (!left || !right) return edl;
   if (left.status === "keep" && right.status === "keep") return edl;
 
+  const newBoundary = left.end; // == right.start after a trim
+
+  // Re-mark whichever side is a cut as manual. setRangeStatus also drops these
+  // ranges from protectedKeeps, so a boundary dragged deeper into a kept clip
+  // un-protects the part it just cut.
   let next = edl;
-  let protectedKeeps = edl.protectedKeeps;
-  // Read both spans up front, then apply by range — safe against re-indexing.
   for (const seg of [{ ...left }, { ...right }]) {
     if (seg.status === "cut") {
       next = setRangeStatus(next, seg.start, seg.end, "cut", "manual");
-    } else {
-      protectedKeeps = addProtectedRange(protectedKeeps, seg.start, seg.end);
     }
   }
-  return { ...next, protectedKeeps };
+
+  // Protect only the sliver the drag revealed on the kept side (between the old
+  // and new boundary) — and only when the kept side actually grew.
+  const keptGrew =
+    (left.status === "keep" && newBoundary > originalBoundary) ||
+    (right.status === "keep" && newBoundary < originalBoundary);
+  const lo = Math.min(originalBoundary, newBoundary);
+  const hi = Math.max(originalBoundary, newBoundary);
+  if (keptGrew && hi - lo > 1e-6) {
+    next = { ...next, protectedKeeps: addProtectedRange(next.protectedKeeps, lo, hi) };
+  }
+
+  return next;
 }
 
 /**

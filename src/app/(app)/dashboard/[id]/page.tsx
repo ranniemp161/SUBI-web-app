@@ -350,8 +350,8 @@ export default function EditorPage() {
 
   // Pin the trimmed boundary as manual intent so a rough-cut re-run preserves
   // it. No undo push — this rides inside the drag's existing undo entry.
-  const handleTrimEnd = useCallback((leftIndex: number) => {
-    setEdl((prev) => (prev ? pinTrimmedBoundaryInEdl(prev, leftIndex) : prev));
+  const handleTrimEnd = useCallback((leftIndex: number, originalBoundary: number) => {
+    setEdl((prev) => (prev ? pinTrimmedBoundaryInEdl(prev, leftIndex, originalBoundary) : prev));
   }, []);
 
   const handleSeek = useCallback((seconds: number) => {
@@ -510,6 +510,14 @@ export default function EditorPage() {
   const reRunRoughCut = useCallback(() => {
     if (!edl || durationSeconds <= 0) return;
     const next = reRoughCutInEdl(edl, words, durationSeconds, SENSITIVITY_PRESETS[sensitivity]);
+    // reRoughCut returns the same EDL untouched when there's nothing to
+    // regenerate from (transcript not ready yet) — don't claim a re-run happened.
+    if (next === edl) {
+      toast("Nothing to re-run", {
+        description: "The transcript isn't ready yet.",
+      });
+      return;
+    }
     if (!applyEdl(next)) return;
     toast("Rough cut re-run", {
       description: "Silence & retakes regenerated — your manual edits were kept.",

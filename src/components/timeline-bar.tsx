@@ -50,8 +50,9 @@ interface TimelineBarProps {
   onTrimStart: () => void;
   onTrimBoundary: (leftIndex: number, newTime: number) => void;
   /** Called when a boundary drag ends (only if it moved) so the trim can be
-   *  pinned — marked as manual intent that survives a rough-cut re-run. */
-  onTrimEnd: (leftIndex: number) => void;
+   *  pinned — marked as manual intent that survives a rough-cut re-run.
+   *  `originalBoundary` is where the boundary sat before the drag. */
+  onTrimEnd: (leftIndex: number, originalBoundary: number) => void;
   /** Trim the clip under the playhead up to / from it (mirrors the Q / W keys). */
   onCutToPlayhead: (side: "left" | "right") => void;
   /** Razor the clip under the playhead into two clips (mirrors the S key). */
@@ -136,6 +137,8 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const dragLeftIndexRef = useRef<number | null>(null);
   const dragMovedRef = useRef(false);
+  // Boundary position at drag start, so the pinned trim knows how far it moved.
+  const dragOrigBoundaryRef = useRef(0);
   const scrubbingRef = useRef(false);
   // Latest zoom level for the (stable) native wheel listener to read.
   const pxPerSecRef = useRef(pxPerSec);
@@ -342,8 +345,10 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
       e.currentTarget.setPointerCapture(e.pointerId);
       dragLeftIndexRef.current = leftIndex;
       dragMovedRef.current = false;
+      // Snapshot the boundary's starting position for pinning on drag end.
+      dragOrigBoundaryRef.current = edl.segments[leftIndex]?.end ?? 0;
     },
-    []
+    [edl]
   );
   const handleBoundaryPointerMove = useCallback(
     (e: React.PointerEvent) => {
@@ -366,7 +371,7 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
     // Pin the boundary only if the drag actually moved it (a bare click is not
     // a trim). Fires within the same undo unit opened by onTrimStart.
     if (dragMovedRef.current && dragLeftIndexRef.current !== null) {
-      onTrimEnd(dragLeftIndexRef.current);
+      onTrimEnd(dragLeftIndexRef.current, dragOrigBoundaryRef.current);
     }
     dragLeftIndexRef.current = null;
     dragMovedRef.current = false;

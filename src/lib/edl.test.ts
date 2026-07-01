@@ -7,6 +7,7 @@ import {
   reRoughCut,
   restoreSegment,
   pinTrimmedBoundary,
+  trimBoundary,
   keptDuration,
   type EDL,
   type TranscriptWord,
@@ -180,31 +181,72 @@ describe("restoreSegment (heal + protect)", () => {
     expect(restored.segments).toEqual([{ start: 0, end: 6, status: "keep", reason: null }]);
     expect(restored.protectedKeeps).toEqual([{ start: 1.1, end: 4.9 }]);
   });
+
+  it("un-protects a restored span when it is later manually cut", () => {
+    const auto = generateInitialEDL([word(0, 1), word(5, 6)], 6);
+    const silence = auto.segments.find((s) => s.status === "cut")!; // [1.1,4.9]
+    const restored = restoreSegment(auto, silence); // protectedKeeps [{1.1,4.9}]
+    // A manual cut inside the restored span clips it out of protection…
+    const recut = setRangeStatus(restored, 2, 3, "cut", "manual");
+    expect(recut.protectedKeeps).toEqual([
+      { start: 1.1, end: 2 },
+      { start: 3, end: 4.9 },
+    ]);
+    // …and cutting the whole span drops the protected entry entirely.
+    const recutAll = setRangeStatus(restored, 1.1, 4.9, "cut", "manual");
+    expect(recutAll.protectedKeeps).toBeUndefined();
+  });
+
+  it("leaves protected keeps intact for auto (silence/retake) cuts", () => {
+    const auto = generateInitialEDL([word(0, 1), word(5, 6)], 6);
+    const silence = auto.segments.find((s) => s.status === "cut")!;
+    const restored = restoreSegment(auto, silence); // protectedKeeps [{1.1,4.9}]
+    const autoCut = setRangeStatus(restored, 2, 3, "cut", "silence");
+    expect(autoCut.protectedKeeps).toEqual([{ start: 1.1, end: 4.9 }]);
+  });
 });
 
 describe("pinTrimmedBoundary", () => {
-  it("marks the cut side manual and protects the kept side", () => {
+  it("marks the cut side manual and protects only the revealed sliver", () => {
     const auto = generateInitialEDL([word(0, 1), word(5, 6)], 6);
-    // leftIndex 0 is the boundary between keep [0,1.1] and cut [1.1,4.9].
-    const pinned = pinTrimmedBoundary(auto, 0);
+    // Boundary 0 sits at 1.1 (keep [0,1.1] | cut [1.1,4.9]); drag it right to 2.0,
+    // growing the keep into the silence.
+    const trimmed = trimBoundary(auto, 0, 2.0);
+    const pinned = pinTrimmedBoundary(trimmed, 0, 1.1);
     expect(pinned.segments.find((s) => s.status === "cut")!.reason).toBe("manual");
-    expect(pinned.protectedKeeps).toEqual([{ start: 0, end: 1.1 }]);
+    // Only the [1.1,2.0] the drag revealed is protected — not the whole clip.
+    expect(pinned.protectedKeeps).toEqual([{ start: 1.1, end: 2 }]);
+  });
+
+  it("protects nothing when the drag shrinks the kept side", () => {
+    const auto = generateInitialEDL([word(0, 1), word(5, 6)], 6);
+    // Drag boundary 0 left to 0.8, shrinking the keep and growing the cut.
+    const trimmed = trimBoundary(auto, 0, 0.8);
+    const pinned = pinTrimmedBoundary(trimmed, 0, 1.1);
+    expect(pinned.segments.find((s) => s.status === "cut")!.reason).toBe("manual");
+    expect(pinned.protectedKeeps).toBeUndefined();
   });
 
   it("leaves a keep|keep (razor split) boundary untouched", () => {
     const split = splitAt({ segments: [{ start: 0, end: 10, status: "keep", reason: null }] }, 5);
-    expect(pinTrimmedBoundary(split, 0)).toBe(split);
+    expect(pinTrimmedBoundary(split, 0, 5)).toBe(split);
   });
 
   it("preserves a pinned trim across a re-run", () => {
     const words = [word(0, 1), word(5, 6)];
     const auto = generateInitialEDL(words, 6);
-    const pinned = pinTrimmedBoundary(auto, 0); // cut [1.1,4.9] → manual, keep [0,1.1] protected
+    const trimmed = trimBoundary(auto, 0, 2.0);
+    const pinned = pinTrimmedBoundary(trimmed, 0, 1.1);
     const rerun = reRoughCut(pinned, words, 6);
+    // The manual cut edge the user dragged to (2.0) survives the re-run…
     expect(
       rerun.segments.some(
-        (s) => s.status === "cut" && s.reason === "manual" && Math.abs(s.start - 1.1) < 1e-6
+        (s) => s.status === "cut" && s.reason === "manual" && Math.abs(s.start - 2.0) < 1e-6
       )
     ).toBe(true);
+    // …and the revealed [1.1,2.0] stays kept rather than being re-cut as silence.
+    expect(
+      rerun.segments.some((s) => s.status === "cut" && s.start < 2.0 && s.end > 1.1)
+    ).toBe(false);
   });
 });
