@@ -15,12 +15,53 @@ interface Project {
   updatedAt: string;
 }
 
-const TRANSCRIPT_STATUS_LABEL: Record<Project["transcriptStatus"], string> = {
-  idle: "",
-  processing: "Transcribing...",
-  ready: "Transcript ready",
-  failed: "Transcription failed",
+/**
+ * Visual treatment for each transcript status, used for the pill badge shown on
+ * a project card. `idle` has no badge (null).
+ */
+const STATUS_META: Record<
+  Project["transcriptStatus"],
+  { label: string; dot: string; text: string; chip: string } | null
+> = {
+  idle: null,
+  processing: {
+    label: "Transcribing",
+    dot: "bg-blue-400",
+    text: "text-blue-200",
+    chip: "bg-blue-500/15 ring-1 ring-inset ring-blue-400/25",
+  },
+  ready: {
+    label: "Ready",
+    dot: "bg-emerald-400",
+    text: "text-emerald-200",
+    chip: "bg-emerald-500/15 ring-1 ring-inset ring-emerald-400/25",
+  },
+  failed: {
+    label: "Failed",
+    dot: "bg-red-400",
+    text: "text-red-200",
+    chip: "bg-red-500/15 ring-1 ring-inset ring-red-400/25",
+  },
 };
+
+/** Gradient presets for a project card's poster, so the grid feels alive. */
+const POSTER_GRADIENTS = [
+  "from-blue-500/25 via-indigo-500/10 to-violet-500/25",
+  "from-cyan-500/25 via-blue-500/10 to-indigo-500/25",
+  "from-violet-500/25 via-fuchsia-500/10 to-blue-500/20",
+  "from-emerald-500/20 via-teal-500/10 to-cyan-500/25",
+  "from-amber-500/20 via-orange-500/10 to-rose-500/25",
+  "from-sky-500/25 via-blue-500/10 to-purple-500/20",
+];
+
+/** Deterministically pick a poster gradient from a project id. */
+function posterFor(id: string): string {
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) {
+    hash = (hash * 31 + id.charCodeAt(i)) >>> 0;
+  }
+  return POSTER_GRADIENTS[hash % POSTER_GRADIENTS.length];
+}
 
 // Which transcription backend to use. Deepgram is the real pipeline; local
 // faster-whisper is the token-saving stand-in for local dev. Set
@@ -244,16 +285,50 @@ export default function DashboardPage() {
     }
   }
 
+  const readyCount = projects.filter((p) => p.transcriptStatus === "ready").length;
+  const processingCount = projects.filter(
+    (p) => p.transcriptStatus === "processing"
+  ).length;
+
   return (
-    <div className="mx-auto max-w-4xl px-6 py-12">
+    <div className="relative mx-auto max-w-6xl px-6 py-12">
+      {/* Ambient glow behind the header */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-72 overflow-hidden"
+      >
+        <div className="absolute left-1/2 top-[-8rem] h-72 w-[42rem] -translate-x-1/2 rounded-full bg-gradient-to-r from-blue-600/20 via-indigo-500/10 to-violet-600/20 blur-3xl" />
+      </div>
+
       {/* Header */}
-      <div className="mb-10">
-        <h1 className="text-3xl font-bold tracking-tight text-foreground">
-          Your Projects
-        </h1>
-        <p className="mt-2 text-foreground/50">
-          Select a video file to start a new rough cut
-        </p>
+      <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight text-foreground sm:text-4xl">
+            Your Projects
+          </h1>
+          <p className="mt-2 text-foreground/50">
+            Turn raw footage into a rough cut — start by adding a video below.
+          </p>
+        </div>
+        {!isLoadingProjects && projects.length > 0 && (
+          <div className="flex items-center gap-2 text-xs">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-foreground/[0.04] px-3 py-1.5 font-medium text-foreground/60 ring-1 ring-inset ring-foreground/10">
+              {projects.length} {projects.length === 1 ? "project" : "projects"}
+            </span>
+            {readyCount > 0 && (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-3 py-1.5 font-medium text-emerald-200 ring-1 ring-inset ring-emerald-400/20">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                {readyCount} ready
+              </span>
+            )}
+            {processingCount > 0 && (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-500/10 px-3 py-1.5 font-medium text-blue-200 ring-1 ring-inset ring-blue-400/20">
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-blue-400" />
+                {processingCount} transcribing
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       {/* File Picker */}
@@ -266,54 +341,134 @@ export default function DashboardPage() {
 
       {/* Project List */}
       <div>
-        <h2 className="mb-4 text-lg font-semibold text-foreground/80">
-          Recent projects
-        </h2>
+        <div className="mb-5 flex items-center gap-3">
+          <h2 className="text-lg font-semibold text-foreground/90">
+            Recent projects
+          </h2>
+          <div className="h-px flex-1 bg-foreground/5" />
+        </div>
 
         {isLoadingProjects ? (
-          <div className="flex items-center justify-center py-12 text-foreground/30">
-            <svg
-              className="mr-3 h-5 w-5 animate-spin"
-              viewBox="0 0 24 24"
-              fill="none"
-            >
-              <circle
-                className="opacity-25"
-                cx="12"
-                cy="12"
-                r="10"
-                stroke="currentColor"
-                strokeWidth="4"
-              />
-              <path
-                className="opacity-75"
-                fill="currentColor"
-                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-              />
-            </svg>
-            Loading projects...
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <div
+                key={i}
+                className="overflow-hidden rounded-2xl border border-foreground/5 bg-foreground/[0.02]"
+              >
+                <div className="aspect-video animate-pulse bg-foreground/[0.04]" />
+                <div className="space-y-2 p-4">
+                  <div className="h-4 w-2/3 animate-pulse rounded bg-foreground/[0.06]" />
+                  <div className="h-3 w-1/3 animate-pulse rounded bg-foreground/[0.04]" />
+                </div>
+              </div>
+            ))}
           </div>
         ) : projects.length === 0 ? (
-          <div className="rounded-xl border border-foreground/5 bg-foreground/[0.02] px-8 py-12 text-center">
-            <p className="text-foreground/30">
-              No projects yet. Select a video file above to get started.
+          <div className="flex flex-col items-center rounded-2xl border border-dashed border-foreground/10 bg-foreground/[0.02] px-8 py-16 text-center">
+            <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-blue-500/10 ring-1 ring-inset ring-blue-400/20">
+              <svg
+                className="h-6 w-6 text-blue-400"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"
+                />
+              </svg>
+            </div>
+            <p className="font-medium text-foreground/80">No projects yet</p>
+            <p className="mt-1 max-w-xs text-sm text-foreground/40">
+              Select a video file above and your first rough cut will show up
+              here.
             </p>
           </div>
         ) : (
-          <div className="space-y-3">
-            {projects.map((project) => (
-              <div
-                key={project.id}
-                id={`project-${project.id}`}
-                className="group flex items-center justify-between rounded-xl border border-foreground/5 bg-foreground/[0.02] px-6 py-4 transition-colors hover:border-foreground/10 hover:bg-foreground/[0.04]"
-              >
-                <Link
-                  href={`/dashboard/${project.id}`}
-                  className="flex min-w-0 flex-1 items-center gap-4"
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
+            {projects.map((project) => {
+              const status = STATUS_META[project.transcriptStatus];
+              return (
+                <div
+                  key={project.id}
+                  id={`project-${project.id}`}
+                  className="group relative overflow-hidden rounded-2xl border border-foreground/5 bg-foreground/[0.02] transition-all duration-200 hover:-translate-y-0.5 hover:border-foreground/15 hover:bg-foreground/[0.04] hover:shadow-xl hover:shadow-black/20"
                 >
-                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-500/10">
+                  <Link href={`/dashboard/${project.id}`} className="block">
+                    {/* Poster */}
+                    <div
+                      className={`relative aspect-video overflow-hidden bg-gradient-to-br ${posterFor(
+                        project.id
+                      )}`}
+                    >
+                      {/* Play glyph */}
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <div className="flex h-14 w-14 items-center justify-center rounded-full bg-black/25 text-white/90 ring-1 ring-inset ring-white/20 backdrop-blur-sm transition-transform duration-200 group-hover:scale-110">
+                          <svg
+                            className="ml-0.5 h-6 w-6"
+                            fill="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path d="M8 5v14l11-7z" />
+                          </svg>
+                        </div>
+                      </div>
+
+                      {/* Status badge */}
+                      {status && (
+                        <span
+                          className={`absolute left-3 top-3 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium backdrop-blur-sm ${status.chip} ${status.text}`}
+                        >
+                          <span
+                            className={`h-1.5 w-1.5 rounded-full ${status.dot} ${
+                              project.transcriptStatus === "processing"
+                                ? "animate-pulse"
+                                : ""
+                            }`}
+                          />
+                          {status.label}
+                        </span>
+                      )}
+
+                      {/* Duration chip */}
+                      {project.durationMs != null && (
+                        <span className="absolute bottom-3 right-3 rounded-md bg-black/45 px-2 py-0.5 text-[11px] font-medium tabular-nums text-white/90 backdrop-blur-sm">
+                          {formatDuration(project.durationMs)}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Body */}
+                    <div className="p-4">
+                      <p className="truncate font-medium text-foreground">
+                        {project.fileName}
+                      </p>
+                      <p className="mt-1 text-xs text-foreground/40">
+                        {formatDate(project.createdAt)}
+                      </p>
+
+                      {project.transcriptStatus === "processing" && (
+                        <div
+                          role="progressbar"
+                          aria-label="Transcription in progress"
+                          className="mt-3 h-1 w-full overflow-hidden rounded-full bg-foreground/10"
+                        >
+                          <div className="h-full w-1/3 animate-indeterminate-progress rounded-full bg-blue-500" />
+                        </div>
+                      )}
+                    </div>
+                  </Link>
+
+                  {/* Delete */}
+                  <button
+                    onClick={(e) => handleDeleteProject(e, project.id)}
+                    className="absolute right-3 top-3 rounded-lg bg-black/40 p-2 text-white/70 opacity-0 backdrop-blur-sm transition-all hover:bg-red-500/80 hover:text-white focus-visible:opacity-100 group-hover:opacity-100"
+                    title="Delete project"
+                  >
                     <svg
-                      className="h-5 w-5 text-blue-400"
+                      className="h-4 w-4"
                       fill="none"
                       stroke="currentColor"
                       viewBox="0 0 24 24"
@@ -322,66 +477,13 @@ export default function DashboardPage() {
                         strokeLinecap="round"
                         strokeLinejoin="round"
                         strokeWidth={2}
-                        d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"
+                        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
                       />
                     </svg>
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="font-medium text-foreground">
-                      {project.fileName}
-                    </p>
-                    <div className="mt-0.5 flex items-center gap-3 text-xs text-foreground/40">
-                      {project.durationMs && (
-                        <span>{formatDuration(project.durationMs)}</span>
-                      )}
-                      <span>{formatDate(project.createdAt)}</span>
-                      {TRANSCRIPT_STATUS_LABEL[project.transcriptStatus] && (
-                        <span
-                          className={
-                            project.transcriptStatus === "failed"
-                              ? "text-red-400"
-                              : project.transcriptStatus === "ready"
-                                ? "text-green-400"
-                                : "text-blue-400"
-                          }
-                        >
-                          {TRANSCRIPT_STATUS_LABEL[project.transcriptStatus]}
-                        </span>
-                      )}
-                    </div>
-                    {project.transcriptStatus === "processing" && (
-                      <div
-                        role="progressbar"
-                        aria-label="Transcription in progress"
-                        className="mt-2 h-1 w-full max-w-48 overflow-hidden rounded-full bg-foreground/10"
-                      >
-                        <div className="h-full w-1/3 animate-indeterminate-progress rounded-full bg-blue-500" />
-                      </div>
-                    )}
-                  </div>
-                </Link>
-
-                <button
-                  onClick={(e) => handleDeleteProject(e, project.id)}
-                  className="rounded-lg p-2 text-foreground/20 opacity-0 transition-all hover:bg-red-500/10 hover:text-red-400 group-hover:opacity-100"
-                  title="Delete project"
-                >
-                  <svg
-                    className="h-4 w-4"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                    />
-                  </svg>
-                </button>
-              </div>
-            ))}
+                  </button>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

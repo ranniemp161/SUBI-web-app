@@ -1,100 +1,114 @@
-# Memory — Deepgram large-upload fix + storage architecture decision
+# Memory — Phase 5: In-Browser MP4 Export (WebCodecs)
 
 Last updated: 2026-07-01
 
 ## What was built
 
-Confirmed (via committed code + git log) that the review fixes and Deepgram
-integration from the prior session's memory were already **committed**
-(`54f3509`, `b1d4925` — "implement Deepgram transcription integration and
-enhance error handling in dashboard"). Working tree was clean at session start.
+Phase 5 of the rough-cut editor — client-side MP4 export that renders the
+EDL's "keep" segments to a downloadable file, entirely in the browser
+(Chrome/Edge, WebCodecs). New files:
 
-This session fixed the actual Deepgram upload failure and cleaned up leftover
-debug/dead code:
-
-- **`next.config.ts`** — `experimental.proxyClientMaxBodySize` raised from
-  `"2gb"` → `"8gb"`.
-- **`src/app/api/transcribe/deepgram/route.ts`** — replaced
-  `Buffer.from(await request.arrayBuffer())` with streaming `request.body`
-  straight into the Deepgram `fetch` call (`duplex: "half"`), plus a
-  `!request.body` 400 guard. Also removed the TEMP `detail` field from the
-  catch-block 500 response (was only for debugging).
-- **Deleted `src/app/api/transcribe/init/route.ts`** (dead code — the
-  browser-direct-to-Deepgram design it supported doesn't work, per last
-  session's CORS finding). Updated two stale comments referencing it in
-  `src/app/api/transcribe/whisper/route.ts` and `src/lib/access-code.ts`.
-- Cleared `.next` (stale generated route types were breaking `tsc` after the
-  route deletion — not a real bug, just cache).
-- `tsc --noEmit` and `eslint` both clean after all changes.
+- **`src/lib/export/plan.ts`** (+ `plan.test.ts`, 12 tests) — pure logic:
+  `getKeepRanges`, `totalKeptSeconds`, and `createTimeRemapper` (maps a
+  source-timeline timestamp to its position in the rendered output, where
+  kept ranges are concatenated gap-free; returns null for cut/out-of-range
+  timestamps so the caller drops that sample).
+- **`src/lib/export/types.ts`** — worker message protocol
+  (`start`/`cancel` → worker; `progress`/`done`/`error` ← worker) and
+  `ExportErrorCode`. The `start` message carries the source `File`, the
+  `EDL`, and a `FileSystemFileHandle` (structured-cloneable — the writable
+  stream it produces is NOT, so the handle crosses into the worker and the
+  worker creates its own writable).
+- **`src/lib/export/export-trigger.ts`** — main-thread orchestration:
+  `isExportSupported()` (checks VideoEncoder/Decoder + showSaveFilePicker)
+  and `startExport()` (opens the native save dialog inside the click's
+  user-activation, spins up the worker, relays progress/done/error).
+- **`src/lib/export/file-system-access.d.ts`** — ambient `showSaveFilePicker`
+  types (missing from lib.dom.d.ts).
+- **`src/workers/export-worker.ts`** — runs Mediabunny's `Conversion`
+  off-main-thread; `video.process`/`audio.process` remap each sample's
+  timestamp (or return null to drop it) per the EDL.
+- **`src/app/(app)/dashboard/[id]/page.tsx`** — Export button in `TopBar`
+  now live (was hardcoded `disabled`); added `exportState`, `handleExport`
+  (sonner progress toast with id "export"), and a `beforeunload` guard while
+  exporting.
 
 ## Decisions made
 
-- **Root cause of the Deepgram 500/EPROTO crash:** NOT the API key (key was
-  never reached — confirmed working via a synthetic-WAV test in the prior
-  session). The Clerk proxy middleware buffers the *entire* request body in
-  memory before any route runs (`proxyClientMaxBodySize`, matches all
-  `/api/*` routes because `auth()` needs the middleware to have run). A
-  2GB+ video got truncated at the old 2GB cap, then the route's
-  `arrayBuffer()` + single-shot `fetch` body write blew up the socket
-  (`write EPROTO`). Fix: raise the cap + stream instead of buffer.
-- **Chose the quick fix (raise limit + stream) over object storage**, with
-  eyes open about its ceiling: the Clerk proxy still holds one full copy of
-  the upload in server RAM per request (now up to 8GB), so concurrent large
-  uploads risk OOM, and this is likely incompatible with serverless deploy
-  targets (body/memory/duration limits). Acceptable for current solo/testing
-  scale; not scale-tested.
-- **R2 (object storage) was deliberately removed from the stack earlier** by
-  the user to save cost, after concluding the browser can hold the video and
-  it gets deleted after MP4 export — no permanent server-side storage needed.
-  This session's finding complicates that: since Deepgram's REST endpoint
-  isn't CORS-enabled, video bytes still have to transit *the server's memory*
-  (not truly storage-free) even without R2. This tradeoff has been written up
-  and the user plans to raise it with their client before deciding whether to
-  reintroduce object storage (signed URL + delete-after-export lifecycle).
-  **Full detail saved separately** in the cross-session memory system at
-  `project_r2_storage_decision.md` (not just this file) — check there for the
-  long-form version of this decision.
+- **Switched from the planned `mp4box` + `mp4-muxer` to `mediabunny`**
+  (v1.50.0). `mp4-muxer` installed as *deprecated* in favour of Mediabunny —
+  the same author's actively-maintained successor that does demux + mux +
+  WebCodecs glue + a high-level `Conversion` (trim/transcode) API in one
+  zero-dependency, fully-typed package. It's literally sponsored by Gling.ai
+  (the competitor this app is modelled on). User approved the swap
+  mid-implementation. `mp4box`/`mp4-muxer` were uninstalled.
+- **Output streams to disk via File System Access API** (showSaveFilePicker
+  + FileSystemWritableFileStream), not a buffered Blob — keeps memory flat
+  for long exports (same OOM-class risk as the prior Deepgram upload fix).
+- **Worker owns the write lifecycle.** The `FileSystemWritableFileStream`
+  writes to a temp swap file and only commits on `close()`; on error the
+  worker `abort()`s to discard the temp and leave any original untouched.
+- **MVP scope only** — one video + one audio track, Mediabunny's default
+  encode settings (no bitrate/resolution UI), simple % progress,
+  beforeunload guard. No libav fallback: unsupported source codecs fail with
+  a clear message (Conversion `isValid`/`discardedTracks`).
 
 ## Problems solved
 
-- Confirmed Deepgram API key is valid and functional — not implicated in any
-  of today's errors.
-- Diagnosed `write EPROTO` / `fetch failed` on large uploads as a body-size +
-  buffering issue, not a network/auth issue (see Decisions above).
+Two bugs surfaced on the first real export (file wrote fine but UI said
+"failed", plus a React crash):
+
+- **Double-close → false "Export failed".** Mediabunny's `StreamTarget`
+  already closes whatever WritableStream it's given when the conversion
+  finalizes. The worker then called `writable.close()` a second time on the
+  already-closed stream → throw → "failed" toast, even though the muxer had
+  already written a complete, playable MP4. **Fix:** hand `StreamTarget` a
+  thin forwarding `WritableStream` wrapper (only implements `write`, piping
+  chunks — shape `{type:'write',data,position}` — to `fileWritable.write()`).
+  The real file stream stays unlocked and under the worker message-handler's
+  sole control: `close()` (commit) on success, `abort()` (discard) on error.
+- **"Maximum update depth exceeded" React crash.** Mediabunny's `onProgress`
+  fires per output packet (hundreds+ of times); each call hit
+  `toast.loading(...,{id:"export"})`, flooding sonner's store until React's
+  update-depth guard tripped. **Fix:** the worker throttles progress messages
+  to at most once per whole percent (`Math.floor(progress*100)` change).
 
 ## Current state
 
-- Deepgram proxy route now streams instead of buffers, and the proxy body
-  cap is 8GB. **Not yet re-tested end to end** — needs a dev server restart
-  (config changes don't hot-reload) and a fresh upload through the tunnel URL
-  to confirm `idle → processing → ready` completes without error.
-- Dead `/api/transcribe/init` route removed; whisper route remains as the
-  token-saving local/dev transcription path, Deepgram is the production path.
-- All of today's changes are uncommitted in the working tree.
+- Export is implemented and passes all static checks: `tsc --noEmit`,
+  eslint, 40/40 vitest, and a full `next build` (Turbopack) that bundles the
+  worker without error.
+- **Confirmed working end-to-end pre-fix already produced a complete,
+  playable MP4** (user played the 71MB output — perfect). The only issue was
+  the false "failed" toast from the double-close, now fixed.
+- Both fixes are in the working tree but **NOT yet re-verified after a clean
+  dev-server restart** — worker code and next.config.ts do NOT reliably
+  hot-reload (same gotcha as the Deepgram session). The dev server on
+  :3000 was killed at end of session for the user to restart.
+- All Phase-5 changes are uncommitted (git status: new src/lib/export/*,
+  src/workers/export-worker.ts, modified dashboard/[id]/page.tsx,
+  package.json/lock).
 
 ## Next session starts with
 
-1. Restart the dev server (`next dev --webpack`) so `next.config.ts` changes
-   take effect.
-2. Re-upload a large video through the tunnel URL and confirm the full
-   round-trip: status goes `idle → processing → ready`, transcript populates,
-   editor shows words + auto rough cut, no EPROTO/500.
-3. If it works end to end, commit this fix + cleanup and open a PR (gh still
-   not authenticated as of last session — check before assuming `gh pr
-   create` will work).
-4. Surface the R2/storage scalability tradeoff to the client (user's action
-   item, not a coding task) — revisit only if the client wants object storage
-   added back in.
-5. Then continue toward **Phase 5 (WebCodecs MP4 export)** — still the big
-   missing pillar per prior session's notes.
+1. Restart `npm run dev`, hard-refresh the editor tab (Ctrl+Shift+R) so the
+   new worker bundle loads, and re-run an export. Expect: smooth progress,
+   green "Export complete" toast, no "Maximum update depth" error, playable
+   MP4 with cuts landing correctly.
+2. Spot-check a cut boundary or two for A/V sync in the output.
+3. If good, commit the Phase-5 work and open a PR (check `gh auth status`
+   first — gh was not authenticated in earlier sessions).
+4. Then Phase 6 polish: cancel button wired to `ExportHandle.cancel`,
+   HEVC/MOV (iPhone) + VP9/WebM source testing, browser-support gating UI.
 
 ## Open questions
 
-- Whether 8GB is actually sufficient for the client's real video sizes, or
-  needs to go higher / be made configurable.
-- Whether the client wants to reintroduce R2 (or similar) for scalability
-  once they're past solo testing — pending discussion.
-- Serverless deploy compatibility of the current buffer-in-memory proxy
-  design has not been evaluated (relevant if/when moving off local dev).
-- Still deferred from prior sessions: Phase 5 export, filler-word detection,
-  semantic/rambling trim, preset value tuning against real footage.
+- Does export hold up on non-H.264 sources (HEVC/MOV from iPhone, VP9/WebM
+  screen recordings)? Only tested on the one 71MB file so far.
+- Export decodes the *whole* source even for heavily-cut timelines (only
+  encode is skipped for cut spans) — acceptable for MVP, but may be slow on
+  long footage. Lower-level keyframe-seek skipping is the follow-up if so.
+- Still deferred from prior sessions: filler-word detection,
+  semantic/rambling trim, preset tuning against real footage; and the
+  R2/object-storage scalability decision pending the client conversation
+  (see project_r2_storage_decision.md in cross-session memory).
