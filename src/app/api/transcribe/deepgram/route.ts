@@ -126,7 +126,8 @@ export async function POST(request: Request) {
       .where(eq(projects.id, projectId));
 
     return NextResponse.json(
-      { error: "Failed to start transcription." },
+      // TEMP: surface the real cause to the browser while debugging the test.
+      { error: "Failed to start transcription.", detail: String(error) },
       { status: 500 }
     );
   }

@@ -1,107 +1,116 @@
-# Memory — Rough Cut App — Detection Quality Upgrade (silence/retakes) + Turbopack fix
+# Memory — protectedKeeps review fixes + Deepgram integration (NOT yet working) + dashboard status UX
 
 Last updated: 2026-07-01
 
 ## What was built
 
-Session focused on making the auto rough cut actually cut silences and repetitive
-phrases, plus fixing why the app/scrollbar looked broken. All changes are **staged
-but NOT committed** (working tree). 25 tests pass, tsc + eslint clean.
+All changes this session are **UNCOMMITTED** in the working tree (25→28 vitest
+pass, tsc + eslint clean). Two threads: (A) applied the /review fixes to last
+session's rough-cut upgrade, (B) wired up the real Deepgram transcription path.
 
-**1. Detection-quality upgrade (pure logic).**
-- `src/lib/edl.ts`: silence threshold went from a flat 2s to tunable presets
-  (Balanced 0.7s) with inward edge padding (0.1s) that does NOT pad the file's own
-  start/end. Added `DetectionSettings`, `SENSITIVITY_PRESETS`
-  (aggressive/balanced/light → silenceGap+pad+retakeSimilarity),
-  `DEFAULT_SENSITIVITY="balanced"`.
-- `src/lib/retake-detection.ts`: replaced exact-string retake matching with
-  **fuzzy** clustering — order-aware LCS ratio (`2·LCS/(|a|+|b|)`), threshold from
-  settings (0.8 balanced). Keeps the LAST take in a chain; length-ratio prune
-  before LCS.
+**A. Review fixes to the detection upgrade (edl.ts, retake-detection.ts stack).**
+- **Narrowed trim protection.** `pinTrimmedBoundary(edl, leftIndex, originalBoundary)`
+  now takes the pre-trim boundary and protects ONLY the revealed sliver
+  (between old/new boundary) when the kept side grows — not the whole clip.
+  `timeline-bar.tsx` snapshots the boundary at pointer-down
+  (`dragOrigBoundaryRef`) and passes it via `onTrimEnd(leftIndex, originalBoundary)`;
+  editor `page.tsx` `handleTrimEnd` forwards it.
+- **Un-protect on manual cut.** New `subtractProtectedRange` in `edl.ts`;
+  `setRangeStatus` drops the cut span from `protectedKeeps` when
+  `status==="cut" && reason==="manual"` (escape hatch + no stale growth). Auto
+  cuts / restores leave protection intact.
+- **Re-run false-success guard.** Editor `reRunRoughCut` detects `reRoughCut`
+  returning the same EDL (transcript not ready) → "Nothing to re-run" toast,
+  no no-op undo entry.
+- Tests updated in `edl.test.ts` (now 28 total): revealed-sliver vs shrink,
+  un-protect partial/full, auto-cut leaves protection intact.
 
-**2. `reRoughCut` + "Re-run rough cut"** — regenerates silence+retake at chosen
-sensitivity while preserving manual edits. Manual layer = manual cuts
-(`reason:"manual"`), razor splits (`split` flag), and **protected keeps** (new
-out-of-band `EDL.protectedKeeps: {start,end}[]` range list).
+**B. Deepgram integration (new/changed files):**
+- `src/app/api/transcribe/deepgram/route.ts` **(NEW)** — server-side proxy:
+  browser POSTs raw media to `/api/transcribe/deepgram?projectId=…`, route
+  forwards it to `api.deepgram.com/v1/listen?model=nova-3&smart_format=true&punctuate=true&callback=…`
+  with the permanent key. Buffers upload via `arrayBuffer()` (flagged temp).
+  Sets project `failed` if Deepgram rejects. Has a **TEMP `detail` field** on the
+  500 response for debugging (remove later).
+- `src/app/api/transcribe/callback/route.ts` — added `normalizeDeepgram()`:
+  flattens `results.channels[0].alternatives[0].words[]` + `metadata.duration`
+  into the flat `{words:[{word,start,end,confidence}], text, duration, language}`
+  the editor expects (same shape whisper emits). Prefers `punctuated_word` so
+  retake sentence-splitting sees terminal punctuation.
+- `src/app/(app)/dashboard/page.tsx` — provider switch
+  (`NEXT_PUBLIC_TRANSCRIBE_PROVIDER==="deepgram"` else whisper);
+  `startDeepgramTranscription` (now points at the proxy route, not browser-direct),
+  `startWhisperTranscription`, shared `readErrorReason`.
 
-**3. Review fixes (all 4 from /review addressed).**
-- #1 Restore no longer fragments timeline: `restoreSegment` writes `reason:null`
-  (seamless merge) + records the range in `protectedKeeps`. Transforms
-  (`setRangeStatus`/`splitAt`/`trimBoundary`) now return `{...edl, segments}` so
-  top-level fields (protectedKeeps, sensitivity) ride through edits + undo/redo.
-- #2 Trims survive re-run: new `pinTrimmedBoundary(edl, leftIndex)` — cut side →
-  `reason:"manual"`, kept side → protectedKeeps. Wired via new `onTrimEnd` prop on
-  `timeline-bar.tsx` (fires on boundary pointer-up if the drag moved) →
-  `handleTrimEnd` in page (bare setEdl, no extra undo push).
-- #3 Aggressive can cut deep: extracted floor-free `buildAutoLayer`; keep-all
-  safety floor now guards ONLY the first build; `reRoughCut` bypasses it
-  (applyEdl empty-guard is the net).
-- #4 Perf: length-ratio prune in retake clustering.
-
-**4. UI (`src/app/(app)/dashboard/[id]/page.tsx`):** Sensitivity segmented control
-(Light/Balanced/Aggressive) + "Re-run rough cut" button in the bottom status bar.
-Sensitivity persisted into saved EDL (autosave merges `{...edl, sensitivity}`),
-restored on load.
-
-**5. package.json:** `"dev"` script changed to `next dev --webpack`.
+**C. Dashboard transcription-status UX (dashboard/page.tsx).** Upload now shows
+a loading→success/error toast (error includes the server's real reason) and flips
+the row to `failed` immediately on error instead of spinning "Transcribing…"
+forever. Mounted a `<Toaster>` on the dashboard (editor already had its own).
 
 ## Decisions made
 
-- **Deepgram is the LIVE transcription path** (confirmed by user), NOT
-  faster-whisper — prior memory was stale. So the detection fix is purely
-  algorithmic; no acoustic silence / ASR work needed.
-- Scope of "repetitive phrases" = re-recorded TAKES (fuzzy), not fillers/rambling.
-  Filler-word removal + semantic trimming explicitly deferred.
-- Protected keeps stored as an out-of-band range list (NOT a keep segment reason)
-  specifically so restores merge cleanly AND survive re-run — this is why a
-  keep-reason approach was rejected.
-- Sensitivity is tunable NOW via UI (not hard-coded).
+- **Deepgram must be proxied through our server, NOT uploaded browser→Deepgram.**
+  The pre-recorded REST endpoint (`/v1/listen`) is not CORS-enabled, so a
+  cross-origin browser fetch with an Authorization header fails preflight
+  ("Failed to fetch"). The temp-key/browser-direct design in the old
+  `/api/transcribe/init` route only works for Deepgram's streaming/WebSocket API.
+  → `/api/transcribe/init` is now **dead code** (delete once Deepgram confirmed).
+- Whisper stays the local default token-saver; provider is env-switchable.
+- protectedKeeps protection is minimal (revealed sliver) and un-doable (manual cut).
 
 ## Problems solved
 
-- **Scrollbar "reverted" mystery:** the slim violet scrollbar CSS was never lost —
-  it's in `globals.css` `.transcript-scroll`. The running dev server had been
-  launched with plain `next dev` = **Turbopack** (the Next 16 default), under which
-  this project's global CSS renders as the native OS bar. Fix = run with
-  `--webpack`. Killed the Turbopack server, restarted webpack, and changed the
-  `dev` script so it can't recur. THIS is why the project's rule is "dev server
-  MUST be `npx next dev --webpack`."
-- **Clerk black-screen / redirect loop:** confirmed root cause = Windows clock
-  skew. Was **+7.6s** ahead. `w32tm /resync` needs admin (Access denied from the
-  tool shell) → ran elevated via `Start-Process -Verb RunAs` (UAC prompt), now
-  within ms of real time.
+- **`/init` 500 root cause:** `.env.local` `DEEPGRAM_PROJECT_ID` was wrong
+  (`0da49bd7-…`, not on the key's account). Deepgram 404'd. Fixed to
+  `5959aa16-80e9-4083-88e9-74e5b25878db` ("contact@thesubi.shop's Project" — the
+  only project the API key can see). NOTE: the proxy route doesn't use the project
+  ID at all (only the key); it mattered only for the old init temp-key minting.
+- **CORS wall** on browser→Deepgram (see decision above) → built the proxy route.
+- Verified with a synthetic WAV that the **server→Deepgram call itself works**
+  (HTTP 200 + request_id, even with a `callback` param) — so Deepgram is not the
+  blocker; the proxy 500 is upstream of the Deepgram fetch.
+- DB status is checkable directly via a throwaway node script using the neon
+  driver: `node -r dotenv/config script.cjs dotenv_config_path=.env.local`.
+  Used it to mark a stuck `processing` project `failed`.
 
 ## Current state
 
-- Dev server RUNNING under webpack on http://localhost:3000 (background task,
-  banner reads `Next.js 16.2.9 (webpack)`).
-- All rough-cut work **staged, not committed**. 25/25 vitest, tsc clean, eslint
-  clean.
-- **No live browser verification yet** of the new Sensitivity/Re-run/trim-pin/
-  restore-heal behavior — verified via tests only.
-- Deepgram live; no secrets stored here.
+- Review fixes: DONE, tested (28 pass), tsc+eslint clean — **uncommitted**.
+- Deepgram: **NOT working end to end yet.** Upload to the proxy route returns a
+  generic 500 `{"error":"Failed to start transcription."}` **without** the new
+  `detail` field — which proves the running **dev server is serving a STALE
+  compile** (my route edits aren't live). Real cause still unknown.
+- Leading suspect for the proxy 500: `await request.arrayBuffer()` buffering a
+  large video into memory. Fix if confirmed: stream `request.body` straight to
+  Deepgram (`duplex:"half"`) instead of buffering.
+- `.env.local` now has `NEXT_PUBLIC_TRANSCRIBE_PROVIDER=deepgram` (+ corrected
+  project id). Both need a dev-server restart to take effect.
+- Earlier successful transcript on `0502.mov` (ready) was via whisper.
 
 ## Next session starts with
 
-1. Hard-reload http://localhost:3000, open a project, and VISUALLY VERIFY:
-   Sensitivity (Light/Balanced/Aggressive) + "Re-run rough cut" cuts more silence
-   & fuzzy retakes; a manual cut survives re-run; restore heals to ONE clip AND
-   survives re-run; a timeline boundary trim survives re-run; the slim violet
-   transcript scrollbar is back.
-2. **Commit** the whole upgrade (edl.ts, retake-detection.ts,
-   retake-detection.test.ts, edl.test.ts, timeline-bar.tsx, page.tsx,
-   package.json) on a branch + open PR. (Note: the earlier `62b21ec`
-   select-and-delete follow-up PR was still never opened; `gh` still not
-   authenticated.)
+1. **Restart the dev server** (`next dev --webpack`) — mandatory; it's on stale
+   code. Re-upload via the **tunnel URL** (not localhost).
+2. Read the failure toast's `detail` (or terminal `Error starting Deepgram
+   transcription:`) to get the real proxy-500 cause. If it's memory/arrayBuffer,
+   switch the route to stream `request.body` → Deepgram.
+3. Confirm the round-trip: status `idle→processing→ready`, transcript populated,
+   editor shows words + auto rough cut. Watch that `allowedDevOrigins` in
+   `next.config.ts` (pinned to `bidding-bend-pockets-gif.trycloudflare.com`)
+   matches the live tunnel host.
+4. Clean up: remove the TEMP `detail` field from the proxy route; delete the
+   unused `/api/transcribe/init` route.
+5. **Commit everything** (review fixes + Deepgram + dashboard UX) on a branch +
+   open PR. `gh` still not authenticated.
+6. Then proceed to **Phase 5 (WebCodecs MP4 export)** — the big missing pillar.
 
 ## Open questions
 
-- Relabel the tool-rail "Silence" badge (currently counts ALL cut segments, not
-  just silence)? Offered, not decided.
-- Preset values (0.7s silence / 0.8 similarity, etc.) are first-guess — may need
-  tuning after reviewing real footage.
-- Still deferred: filler-word detection, semantic/rambling trim, Deepgram-specific
-  tuning, and Phase 5 WebCodecs export (the big missing pillar — the app can
-  preview a cut but cannot render an MP4 yet).
-- (carried) Follow-up PR for `62b21ec`; `gh auth login` still pending (user-run,
-  interactive).
+- Real cause of the proxy-route 500 (pending restart to see `detail`).
+- Stream vs buffer the upload to Deepgram.
+- Keep `allowedDevOrigins` in sync with whatever tunnel host is live.
+- Are the Deepgram params (nova-3 / smart_format / punctuate) the right defaults?
+- User asked to surface operational state in UI (done for transcription) — offered
+  to save that as a standing preference; not yet answered.
+- Still deferred: Phase 5 export, filler-word detection, semantic/rambling trim,
+  preset value tuning against real footage.

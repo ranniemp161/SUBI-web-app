@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
+import { Toaster, toast } from "sonner";
 import FilePicker, { type VideoMetadata } from "@/components/file-picker";
 import { formatDuration, formatDate } from "@/lib/utils";
 
@@ -36,6 +37,16 @@ function startTranscription(projectId: string, file: File) {
     : startWhisperTranscription(projectId, file);
 }
 
+/** Pull the most useful human-readable reason out of a failed API response. */
+async function readErrorReason(response: Response): Promise<string> {
+  try {
+    const data = await response.json();
+    return data.detail || data.error || `Request failed (${response.status})`;
+  } catch {
+    return `Request failed (${response.status})`;
+  }
+}
+
 /**
  * Deepgram path: upload the media to our own server, which forwards it to
  * Deepgram with a callback URL. We proxy (rather than upload straight from the
@@ -54,7 +65,7 @@ async function startDeepgramTranscription(projectId: string, file: File) {
   );
 
   if (!response.ok) {
-    throw new Error(`Deepgram transcription failed: ${await response.text()}`);
+    throw new Error(await readErrorReason(response));
   }
 }
 
@@ -73,7 +84,7 @@ async function startWhisperTranscription(projectId: string, file: File) {
   });
 
   if (!response.ok) {
-    throw new Error(`Whisper transcription failed: ${await response.text()}`);
+    throw new Error(await readErrorReason(response));
   }
 }
 
@@ -136,10 +147,32 @@ export default function DashboardPage() {
           ...prev,
         ]);
 
-        // Fire-and-forget — status updates arrive via polling below.
-        startTranscription(project.id, file).catch((error) => {
-          console.error("Failed to start transcription:", error);
+        // Fire-and-forget — status updates arrive via polling below, but we
+        // surface start/failure explicitly so the user isn't left guessing
+        // whether anything is happening.
+        toast.loading("Uploading & starting transcription…", {
+          id: `transcribe-${project.id}`,
         });
+        startTranscription(project.id, file)
+          .then(() => {
+            toast.success("Transcription started", {
+              id: `transcribe-${project.id}`,
+              description: "This can take a minute — the status updates here when it's ready.",
+            });
+          })
+          .catch((error) => {
+            console.error("Failed to start transcription:", error);
+            toast.error("Transcription didn't start", {
+              id: `transcribe-${project.id}`,
+              description: error instanceof Error ? error.message : String(error),
+            });
+            // Don't leave the row spinning "Transcribing…" — reflect the failure now.
+            setProjects((prev) =>
+              prev.map((p) =>
+                p.id === project.id ? { ...p, transcriptStatus: "failed" } : p
+              )
+            );
+          });
       } catch (error) {
         console.error("Failed to create project:", error);
       } finally {
@@ -352,6 +385,20 @@ export default function DashboardPage() {
           </div>
         )}
       </div>
+
+      <Toaster
+        position="bottom-center"
+        gap={8}
+        toastOptions={{
+          classNames: {
+            toast:
+              "!rounded-lg !border !border-foreground/10 !bg-background !text-foreground !shadow-2xl",
+            description: "!text-foreground/60",
+            error: "!text-red-300",
+            icon: "!text-violet-300",
+          },
+        }}
+      />
     </div>
   );
 }
