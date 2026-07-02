@@ -236,7 +236,7 @@ export default function DashboardPage() {
     const interval = setInterval(async () => {
       for (const id of processingIds) {
         try {
-          const response = await fetch(`/api/projects/${id}`, {
+          const response = await fetch(`/api/projects/${id}/status`, {
             signal: abortController.signal,
           });
           if (!response.ok) continue;

@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { projects, users } from "@/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { hasValidAccessCode } from "@/lib/access-code";
+import { createProjectSchema } from "@/lib/validation";
 
 /**
  * POST /api/projects — Create a new project.
@@ -30,15 +31,18 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
     }
 
-    const body = await request.json();
-    const { fileName, durationMs } = body;
+    const parsed = createProjectSchema.safeParse(
+      await request.json().catch(() => null)
+    );
 
-    if (!fileName) {
+    if (!parsed.success) {
       return NextResponse.json(
-        { error: "fileName is required." },
+        { error: "Invalid request body." },
         { status: 400 }
       );
     }
+
+    const { fileName, durationMs } = parsed.data;
 
     // Upsert user — create if first project, otherwise get existing
     const existingUsers = await db
@@ -70,7 +74,7 @@ export async function POST(request: Request) {
       .values({
         userId: dbUserId,
         fileName,
-        durationMs: durationMs || null,
+        durationMs: durationMs ?? null,
       })
       .returning();
 
@@ -108,8 +112,17 @@ export async function GET() {
       return NextResponse.json([]);
     }
 
+    // List view only needs metadata — omit the transcript + EDL jsonb, which
+    // can be large and aren't rendered on the dashboard grid.
     const userProjects = await db
-      .select()
+      .select({
+        id: projects.id,
+        fileName: projects.fileName,
+        durationMs: projects.durationMs,
+        transcriptStatus: projects.transcriptStatus,
+        createdAt: projects.createdAt,
+        updatedAt: projects.updatedAt,
+      })
       .from(projects)
       .where(eq(projects.userId, userRows[0].id))
       .orderBy(desc(projects.createdAt));

@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { projects } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { getOwnedProject } from "@/lib/projects";
+import { patchProjectSchema } from "@/lib/validation";
 
 /**
  * GET /api/projects/:id — Get a single project with full details.
@@ -66,17 +67,27 @@ export async function PATCH(
       );
     }
 
-    const body = await request.json();
+    const parsed = patchProjectSchema.safeParse(
+      await request.json().catch(() => null)
+    );
 
-    // Only allow updating specific fields
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: "Invalid request body." },
+        { status: 400 }
+      );
+    }
+
+    // Only apply the fields that were actually provided.
+    const { edl, transcript, durationMs, fileName } = parsed.data;
     const updateData: Record<string, unknown> = {
       updatedAt: new Date(),
     };
 
-    if (body.edl !== undefined) updateData.edl = body.edl;
-    if (body.transcript !== undefined) updateData.transcript = body.transcript;
-    if (body.durationMs !== undefined) updateData.durationMs = body.durationMs;
-    if (body.fileName !== undefined) updateData.fileName = body.fileName;
+    if (edl !== undefined) updateData.edl = edl;
+    if (transcript !== undefined) updateData.transcript = transcript;
+    if (durationMs !== undefined) updateData.durationMs = durationMs;
+    if (fileName !== undefined) updateData.fileName = fileName;
 
     const [updated] = await db
       .update(projects)
