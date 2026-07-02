@@ -5,6 +5,11 @@ import { projects, users } from "@/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { hasValidAccessCode } from "@/lib/access-code";
 import { createProjectSchema } from "@/lib/validation";
+import { rateLimit } from "@/lib/rate-limit";
+
+// Guards against a runaway client spraying project rows.
+const CREATE_LIMIT = 60;
+const CREATE_WINDOW_SECONDS = 3600;
 
 /**
  * POST /api/projects — Create a new project.
@@ -29,6 +34,14 @@ export async function POST(request: Request) {
 
     if (!hasValidAccessCode(clerkUser?.unsafeMetadata)) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
+    }
+
+    const limit = await rateLimit(`create:${clerkId}`, CREATE_LIMIT, CREATE_WINDOW_SECONDS);
+    if (!limit.allowed) {
+      return NextResponse.json(
+        { error: "You're creating projects too quickly. Please wait a bit and try again." },
+        { status: 429 }
+      );
     }
 
     const parsed = createProjectSchema.safeParse(

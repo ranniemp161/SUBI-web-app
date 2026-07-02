@@ -1,11 +1,20 @@
 import {
   pgTable,
+  pgEnum,
   uuid,
   text,
   integer,
   timestamp,
   jsonb,
 } from "drizzle-orm/pg-core";
+
+/** Transcript pipeline states — a DB enum so an invalid status can't be stored. */
+export const transcriptStatusEnum = pgEnum("transcript_status", [
+  "idle",
+  "processing",
+  "ready",
+  "failed",
+]);
 
 /**
  * Users table — linked to Clerk via clerk_id.
@@ -37,8 +46,9 @@ export const projects = pgTable("projects", {
   fileName: text("file_name").notNull(),
   durationMs: integer("duration_ms"),
   transcript: jsonb("transcript"),
-  /** "idle" | "processing" | "ready" | "failed" */
-  transcriptStatus: text("transcript_status").notNull().default("idle"),
+  transcriptStatus: transcriptStatusEnum("transcript_status")
+    .notNull()
+    .default("idle"),
   /** Random per-request secret checked on the Deepgram callback — Deepgram callbacks aren't signed. */
   transcriptCallbackToken: text("transcript_callback_token"),
   edl: jsonb("edl"),
@@ -46,6 +56,19 @@ export const projects = pgTable("projects", {
     .defaultNow()
     .notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+});
+
+/**
+ * Fixed-window rate-limit counters, one row per (bucket + user) key. Kept in
+ * Postgres rather than an external store so it needs no extra infra and works
+ * regardless of how many app instances run. See `lib/rate-limit.ts`.
+ */
+export const rateLimits = pgTable("rate_limits", {
+  key: text("key").primaryKey(),
+  count: integer("count").notNull().default(0),
+  windowStart: timestamp("window_start", { withTimezone: true })
     .defaultNow()
     .notNull(),
 });

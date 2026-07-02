@@ -12,6 +12,12 @@ import { projects } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { getOwnedProject } from "@/lib/projects";
 import { hasValidAccessCode } from "@/lib/access-code";
+import { rateLimit } from "@/lib/rate-limit";
+
+// Shares the "transcribe" budget with the Deepgram path — both kick off a
+// transcription, so a user can't dodge the cap by switching providers.
+const TRANSCRIBE_LIMIT = 30;
+const TRANSCRIBE_WINDOW_SECONDS = 3600;
 
 /**
  * POST /api/transcribe/whisper
@@ -37,6 +43,18 @@ export async function POST(request: Request) {
 
   if (!hasValidAccessCode(clerkUser?.unsafeMetadata)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
+  }
+
+  const limit = await rateLimit(
+    `transcribe:${clerkId}`,
+    TRANSCRIBE_LIMIT,
+    TRANSCRIBE_WINDOW_SECONDS
+  );
+  if (!limit.allowed) {
+    return NextResponse.json(
+      { error: "You're transcribing too frequently. Please wait a bit and try again." },
+      { status: 429 }
+    );
   }
 
   const formData = await request.formData();
