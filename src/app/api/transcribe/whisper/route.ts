@@ -13,6 +13,7 @@ import { eq } from "drizzle-orm";
 import { getOwnedProject } from "@/lib/projects";
 import { hasValidAccessCode } from "@/lib/access-code";
 import { rateLimit } from "@/lib/rate-limit";
+import { reportError } from "@/lib/observability";
 
 // Shares the "transcribe" budget with the Deepgram path — both kick off a
 // transcription, so a user can't dodge the cap by switching providers.
@@ -93,7 +94,7 @@ export async function POST(request: Request) {
       createWriteStream(mediaPath)
     );
   } catch (error) {
-    console.error("Error saving upload for whisper transcription:", error);
+    reportError("Error saving upload for whisper transcription", error);
 
     await db
       .update(projects)
@@ -116,7 +117,7 @@ export async function POST(request: Request) {
         .where(eq(projects.id, projectId))
     )
     .catch((error) => {
-      console.error("Error running local whisper transcription:", error);
+      reportError("Error running local whisper transcription", error);
       return db
         .update(projects)
         .set({ transcriptStatus: "failed", updatedAt: new Date() })

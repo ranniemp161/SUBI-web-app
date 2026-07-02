@@ -1,6 +1,7 @@
 import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import { getOwnedProjectStatus } from "@/lib/projects";
+import { reportError } from "@/lib/observability";
 
 /**
  * GET /api/projects/:id/status — just the transcript status.
@@ -29,7 +30,7 @@ export async function GET(
 
     return NextResponse.json({ transcriptStatus });
   } catch (error) {
-    console.error("Error fetching project status:", error);
+    reportError("Error fetching project status", error);
     return NextResponse.json(
       { error: "Failed to fetch project status." },
       { status: 500 }

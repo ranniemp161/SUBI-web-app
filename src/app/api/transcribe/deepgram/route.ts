@@ -7,6 +7,7 @@ import { eq } from "drizzle-orm";
 import { getOwnedProject } from "@/lib/projects";
 import { hasValidAccessCode } from "@/lib/access-code";
 import { rateLimit } from "@/lib/rate-limit";
+import { reportError } from "@/lib/observability";
 import {
   extractDeepgramError,
   normalizeDeepgram,
@@ -193,7 +194,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ received: true });
   } catch (error) {
-    console.error("Error starting Deepgram transcription:", error);
+    reportError("Error starting Deepgram transcription", error);
     await db
       .update(projects)
       .set({

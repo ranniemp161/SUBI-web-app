@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { projects } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { normalizeDeepgram } from "@/lib/deepgram";
+import { reportError } from "@/lib/observability";
 
 /**
  * POST /api/transcribe/callback
@@ -75,7 +76,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ received: true });
   } catch (error) {
-    console.error("Error processing transcribe callback:", error);
+    reportError("Error processing transcribe callback", error);
     await db
       .update(projects)
       .set({

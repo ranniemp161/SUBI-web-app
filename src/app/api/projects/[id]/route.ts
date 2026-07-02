@@ -5,6 +5,7 @@ import { projects } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { getOwnedProject } from "@/lib/projects";
 import { patchProjectSchema } from "@/lib/validation";
+import { reportError } from "@/lib/observability";
 
 /**
  * GET /api/projects/:id — Get a single project with full details.
@@ -32,7 +33,7 @@ export async function GET(
 
     return NextResponse.json(project);
   } catch (error) {
-    console.error("Error fetching project:", error);
+    reportError("Error fetching project", error);
     return NextResponse.json(
       { error: "Failed to fetch project." },
       { status: 500 }
@@ -97,7 +98,7 @@ export async function PATCH(
 
     return NextResponse.json(updated);
   } catch (error) {
-    console.error("Error updating project:", error);
+    reportError("Error updating project", error);
     return NextResponse.json(
       { error: "Failed to update project." },
       { status: 500 }
@@ -133,7 +134,7 @@ export async function DELETE(
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error("Error deleting project:", error);
+    reportError("Error deleting project", error);
     return NextResponse.json(
       { error: "Failed to delete project." },
       { status: 500 }

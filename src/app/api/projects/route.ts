@@ -6,6 +6,7 @@ import { eq, desc } from "drizzle-orm";
 import { hasValidAccessCode } from "@/lib/access-code";
 import { createProjectSchema } from "@/lib/validation";
 import { rateLimit } from "@/lib/rate-limit";
+import { reportError } from "@/lib/observability";
 
 // Guards against a runaway client spraying project rows.
 const CREATE_LIMIT = 60;
@@ -93,7 +94,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json(project, { status: 201 });
   } catch (error) {
-    console.error("Error creating project:", error);
+    reportError("Error creating project", error);
     return NextResponse.json(
       { error: "Failed to create project." },
       { status: 500 }
@@ -142,7 +143,7 @@ export async function GET() {
 
     return NextResponse.json(userProjects);
   } catch (error) {
-    console.error("Error listing projects:", error);
+    reportError("Error listing projects", error);
     return NextResponse.json(
       { error: "Failed to list projects." },
       { status: 500 }

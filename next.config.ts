@@ -14,4 +14,18 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+// Wrap with the Sentry build plugin (source-map upload, etc.) only when Sentry
+// is configured. The import is dynamic + env-gated so that when Sentry is off,
+// @sentry/nextjs never enters next.config's module trace — otherwise Turbopack
+// flags it as unintentionally tracing the whole project — and default builds
+// stay completely Sentry-free.
+export default async (): Promise<NextConfig> => {
+  if (!process.env.SENTRY_DSN) return nextConfig;
+  const { withSentryConfig } = await import("@sentry/nextjs");
+  return withSentryConfig(nextConfig, {
+    org: process.env.SENTRY_ORG,
+    project: process.env.SENTRY_PROJECT,
+    silent: !process.env.CI,
+    disableLogger: true,
+  });
+};
