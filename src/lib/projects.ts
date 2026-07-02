@@ -1,4 +1,4 @@
-import { db } from "@/db";
+import { db, withDbRetry } from "@/db";
 import { projects, users } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 
@@ -7,15 +7,17 @@ import { eq, and } from "drizzle-orm";
  * Returns the project if the authenticated user owns it, null otherwise.
  */
 export async function getOwnedProject(projectId: string, clerkId: string) {
-  const result = await db
-    .select({
-      project: projects,
-      user: users,
-    })
-    .from(projects)
-    .innerJoin(users, eq(projects.userId, users.id))
-    .where(and(eq(projects.id, projectId), eq(users.clerkId, clerkId)))
-    .limit(1);
+  const result = await withDbRetry(() =>
+    db
+      .select({
+        project: projects,
+        user: users,
+      })
+      .from(projects)
+      .innerJoin(users, eq(projects.userId, users.id))
+      .where(and(eq(projects.id, projectId), eq(users.clerkId, clerkId)))
+      .limit(1)
+  );
 
   return result.length > 0 ? result[0].project : null;
 }
@@ -27,12 +29,14 @@ export async function getOwnedProject(projectId: string, clerkId: string) {
  * doesn't exist or isn't owned by the caller.
  */
 export async function getOwnedProjectStatus(projectId: string, clerkId: string) {
-  const result = await db
-    .select({ transcriptStatus: projects.transcriptStatus })
-    .from(projects)
-    .innerJoin(users, eq(projects.userId, users.id))
-    .where(and(eq(projects.id, projectId), eq(users.clerkId, clerkId)))
-    .limit(1);
+  const result = await withDbRetry(() =>
+    db
+      .select({ transcriptStatus: projects.transcriptStatus })
+      .from(projects)
+      .innerJoin(users, eq(projects.userId, users.id))
+      .where(and(eq(projects.id, projectId), eq(users.clerkId, clerkId)))
+      .limit(1)
+  );
 
   return result.length > 0 ? result[0].transcriptStatus : null;
 }

@@ -1,6 +1,6 @@
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
-import { db } from "@/db";
+import { db, withDbRetry } from "@/db";
 import { projects, users } from "@/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { hasValidAccessCode } from "@/lib/access-code";
@@ -59,11 +59,13 @@ export async function POST(request: Request) {
     const { fileName, durationMs } = parsed.data;
 
     // Upsert user — create if first project, otherwise get existing
-    const existingUsers = await db
-      .select()
-      .from(users)
-      .where(eq(users.clerkId, clerkId))
-      .limit(1);
+    const existingUsers = await withDbRetry(() =>
+      db
+        .select()
+        .from(users)
+        .where(eq(users.clerkId, clerkId))
+        .limit(1)
+    );
 
     let dbUserId: string;
 
@@ -115,11 +117,13 @@ export async function GET() {
   }
 
   try {
-    const userRows = await db
-      .select()
-      .from(users)
-      .where(eq(users.clerkId, clerkId))
-      .limit(1);
+    const userRows = await withDbRetry(() =>
+      db
+        .select()
+        .from(users)
+        .where(eq(users.clerkId, clerkId))
+        .limit(1)
+    );
 
     if (userRows.length === 0) {
       // User hasn't created any projects yet
@@ -128,18 +132,20 @@ export async function GET() {
 
     // List view only needs metadata — omit the transcript + EDL jsonb, which
     // can be large and aren't rendered on the dashboard grid.
-    const userProjects = await db
-      .select({
-        id: projects.id,
-        fileName: projects.fileName,
-        durationMs: projects.durationMs,
-        transcriptStatus: projects.transcriptStatus,
-        createdAt: projects.createdAt,
-        updatedAt: projects.updatedAt,
-      })
-      .from(projects)
-      .where(eq(projects.userId, userRows[0].id))
-      .orderBy(desc(projects.createdAt));
+    const userProjects = await withDbRetry(() =>
+      db
+        .select({
+          id: projects.id,
+          fileName: projects.fileName,
+          durationMs: projects.durationMs,
+          transcriptStatus: projects.transcriptStatus,
+          createdAt: projects.createdAt,
+          updatedAt: projects.updatedAt,
+        })
+        .from(projects)
+        .where(eq(projects.userId, userRows[0].id))
+        .orderBy(desc(projects.createdAt))
+    );
 
     return NextResponse.json(userProjects);
   } catch (error) {
