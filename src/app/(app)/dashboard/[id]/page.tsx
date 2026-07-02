@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import {
@@ -43,7 +43,12 @@ import VideoPlayer, {
 import TranscriptPanel from "@/components/transcript-panel";
 import TimelineBar, { type TimelineHandle } from "@/components/timeline-bar";
 import { formatDuration } from "@/lib/utils";
-import { isExportSupported, startExport, type ExportHandle } from "@/lib/export/export-trigger";
+import {
+  isExportSupported,
+  startExport,
+  type ExportHandle,
+  type ExportSupport,
+} from "@/lib/export/export-trigger";
 import {
   cutWords as cutWordsInEdl,
   restoreSegment as restoreSegmentInEdl,
@@ -77,6 +82,18 @@ const AUTOSAVE_DELAY_MS = 800;
 const MIN_TRANSCRIPT_W = 300;
 const MAX_TRANSCRIPT_W = 640;
 
+// Export support is a fixed property of the browser, so probe it once and cache
+// the (stable-reference) result — useSyncExternalStore compares snapshots by
+// identity, so it must not recompute per render.
+let cachedExportSupport: ExportSupport | null = null;
+const exportSupportSnapshot = (): ExportSupport =>
+  (cachedExportSupport ??= isExportSupported());
+// Probing touches window/VideoEncoder, so the server can't answer — report null
+// on the server and during hydration (button ungated), then swap to the real
+// answer on the client. No effect, no hydration mismatch.
+const exportSupportServerSnapshot = (): ExportSupport | null => null;
+const exportSupportSubscribe = () => () => {};
+
 export default function EditorPage() {
   const { id } = useParams<{ id: string }>();
 
@@ -101,8 +118,23 @@ export default function EditorPage() {
   const [sensitivity, setSensitivity] = useState<SensitivityLevel>(DEFAULT_SENSITIVITY);
   const [videoMeta, setVideoMeta] = useState<VideoMeta | null>(null);
   const [savedAt, setSavedAt] = useState<"saved" | "saving">("saved");
-  const [exportState, setExportState] = useState<"idle" | "exporting">("idle");
+  // "starting" = save dialog open, no cancellable handle yet; "exporting" =
+  // worker is encoding and can be cancelled; "cancelling" = cancel requested.
+  const [exportState, setExportState] = useState<
+    "idle" | "starting" | "exporting" | "cancelling"
+  >("idle");
+  // null until the client has probed WebCodecs + File System Access; ungated
+  // until then to avoid a flash of "unsupported" during hydration.
+  const exportSupport = useSyncExternalStore(
+    exportSupportSubscribe,
+    exportSupportSnapshot,
+    exportSupportServerSnapshot
+  );
   const exportHandleRef = useRef<ExportHandle | null>(null);
+  // Mirrors the "cancelling" state for the onProgress closure (which captures a
+  // stale exportState) so late progress events don't clobber the "Cancelling…"
+  // toast.
+  const cancellingRef = useRef(false);
   const resizingRef = useRef(false);
   const transcriptRef = useRef<HTMLDivElement>(null);
 
@@ -527,6 +559,18 @@ export default function EditorPage() {
       action: { label: "Undo", onClick: () => undo() },
     });
   }, [edl, words, durationSeconds, sensitivity, applyEdl, undo]);
+  // Signal the in-flight export to stop. Only reachable once a handle exists
+  // (the Cancel control is shown only in "exporting"/"cancelling"); the guard
+  // is belt-and-suspenders. The worker throws ExportError("cancelled"), which
+  // lands in onError below and settles the state back to idle.
+  const handleCancelExport = useCallback(() => {
+    if (!exportHandleRef.current) return;
+    cancellingRef.current = true;
+    setExportState("cancelling");
+    toast.loading("Cancelling…", { id: "export" });
+    exportHandleRef.current.cancel();
+  }, []);
+
   // Kick off a WebCodecs export of the current EDL, streaming the result
   // straight to a file the user picks via the native save dialog.
   const handleExport = useCallback(async () => {
@@ -538,12 +582,23 @@ export default function EditorPage() {
       return;
     }
 
-    setExportState("exporting");
+    // Drop any handle from a previous export so a cancel during this run's save
+    // dialog can't act on a terminated worker. "starting" keeps the Cancel
+    // control hidden until startExport resolves with a real, cancellable handle.
+    exportHandleRef.current = null;
+    cancellingRef.current = false;
+    setExportState("starting");
     try {
-      exportHandleRef.current = await startExport(sourceFile, edl, project.fileName, {
+      const handle = await startExport(sourceFile, edl, project.fileName, {
         onProgress: (processedSeconds, totalSeconds) => {
+          // A cancel already landed — don't clobber the "Cancelling…" toast with
+          // a late progress tick.
+          if (cancellingRef.current) return;
           const pct = totalSeconds > 0 ? Math.round((processedSeconds / totalSeconds) * 100) : 0;
-          toast.loading(`Exporting… ${pct}%`, { id: "export" });
+          toast.loading(`Exporting… ${pct}%`, {
+            id: "export",
+            action: { label: "Cancel", onClick: () => handleCancelExport() },
+          });
         },
         onDone: () => {
           setExportState("idle");
@@ -559,6 +614,11 @@ export default function EditorPage() {
           toast.error("Export failed", { id: "export", description: message });
         },
       });
+      // startExport has resolved: the worker is running and the handle can now
+      // be cancelled. (This runs before any queued worker message, so no
+      // progress/done/error callback can fire while state is still "starting".)
+      exportHandleRef.current = handle;
+      setExportState("exporting");
     } catch (error) {
       setExportState("idle");
       // The user closing the native save dialog isn't a real error.
@@ -566,9 +626,11 @@ export default function EditorPage() {
         toast.error("Couldn't start export");
       }
     }
-  }, [sourceFile, edl, project]);
+  }, [sourceFile, edl, project, handleCancelExport]);
 
-  // Warn on tab close/reload while a render is in flight — closing loses it.
+  // Warn on tab close/reload only while an export is actively encoding — that's
+  // the one state with work worth losing. "starting" has nothing yet, and
+  // "cancelling" is discarding its output on purpose, so neither warns.
   useEffect(() => {
     if (exportState !== "exporting") return;
     const handler = (e: BeforeUnloadEvent) => {
@@ -753,7 +815,14 @@ export default function EditorPage() {
         onUndo={undo}
         onRedo={redo}
         onExport={handleExport}
-        exportDisabled={!sourceFile || exportState === "exporting"}
+        onCancelExport={handleCancelExport}
+        exportBlockedReason={
+          exportSupport && !exportSupport.supported
+            ? exportSupport.reason
+            : !sourceFile
+              ? "Select your source video first"
+              : undefined
+        }
         exportState={exportState}
       />
 
@@ -1119,8 +1188,9 @@ function TopBar({
   onRedo,
   disabled,
   onExport,
-  exportDisabled,
-  exportState,
+  onCancelExport,
+  exportBlockedReason,
+  exportState = "idle",
 }: {
   fileName: string;
   savedAt: "saved" | "saving";
@@ -1128,11 +1198,19 @@ function TopBar({
   onRedo?: () => void;
   disabled?: boolean;
   onExport?: () => void;
-  exportDisabled?: boolean;
-  exportState?: "idle" | "exporting";
+  onCancelExport?: () => void;
+  // Non-empty when the Export button should be disabled in the idle state (no
+  // source re-selected, or the browser can't export); doubles as the tooltip.
+  exportBlockedReason?: string;
+  exportState?: "idle" | "starting" | "exporting" | "cancelling";
 }) {
   const iconBtn =
     "flex h-8 w-8 items-center justify-center rounded-md text-foreground/60 hover:bg-foreground/10 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40";
+  const busy = exportState !== "idle";
+  const exportDisabled = busy || Boolean(exportBlockedReason);
+  // Cancel is offered only once a cancellable handle exists — not during
+  // "starting" (save dialog open, nothing to cancel yet).
+  const showCancel = exportState === "exporting" || exportState === "cancelling";
   return (
     <div className="flex shrink-0 items-center justify-between border-b border-foreground/10 px-3 py-2">
       <div className="flex items-center gap-3">
@@ -1182,19 +1260,31 @@ function TopBar({
         >
           <Share2 className="h-4 w-4" /> Share
         </button>
+        {showCancel && (
+          <button
+            type="button"
+            onClick={onCancelExport}
+            disabled={exportState === "cancelling"}
+            title="Cancel export"
+            className="flex items-center gap-1.5 rounded-lg border border-foreground/10 px-3 py-1.5 text-sm text-foreground/70 transition-colors hover:bg-foreground/10 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <X className="h-4 w-4" />
+            {exportState === "cancelling" ? "Cancelling…" : "Cancel"}
+          </button>
+        )}
         <button
           type="button"
           onClick={onExport}
           disabled={exportDisabled}
-          title={exportDisabled ? "Select your source video first" : "Export to MP4"}
+          title={exportBlockedReason ?? "Export to MP4"}
           className="flex items-center gap-1.5 rounded-lg bg-violet-600 px-4 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-violet-500 disabled:cursor-not-allowed disabled:bg-violet-600/60 disabled:text-white/70 disabled:hover:bg-violet-600/60"
         >
-          {exportState === "exporting" ? (
+          {busy ? (
             <Loader2 className="h-4 w-4 motion-safe:animate-spin" />
           ) : (
             <Download className="h-4 w-4" />
           )}
-          {exportState === "exporting" ? "Exporting…" : "Export"}
+          {busy ? "Exporting…" : "Export"}
         </button>
       </div>
     </div>
