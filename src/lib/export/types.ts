@@ -13,6 +13,12 @@ export type ExportRequestMessage =
        * abort lifecycle end to end.
        */
       handle: FileSystemFileHandle;
+      /**
+       * Cap the output video height (px), preserving aspect ratio — e.g. 1080
+       * to downscale a 4K source to 1080p. Omitted / undefined keeps the source
+       * resolution. The worker never upscales.
+       */
+      maxHeight?: number;
     }
   | { type: "cancel" };
 
@@ -24,6 +30,7 @@ export type ExportResponseMessage =
 
 export type ExportErrorCode =
   | "unsupported-codec"
+  | "unsupported-resolution"
   | "empty-timeline"
   | "decode-failed"
   | "encode-failed"

@@ -42,7 +42,8 @@ export async function startExport(
   file: File,
   edl: EDL,
   suggestedName: string,
-  callbacks: ExportCallbacks
+  callbacks: ExportCallbacks,
+  options: { maxHeight?: number } = {}
 ): Promise<ExportHandle> {
   const baseName = suggestedName.replace(/\.[^./\\]+$/, "");
 
@@ -78,7 +79,13 @@ export async function startExport(
     finish(() => callbacks.onError(event.message || "Export failed unexpectedly.", "unknown"));
   };
 
-  const startMessage: ExportRequestMessage = { type: "start", file, edl, handle };
+  const startMessage: ExportRequestMessage = {
+    type: "start",
+    file,
+    edl,
+    handle,
+    maxHeight: options.maxHeight,
+  };
   worker.postMessage(startMessage);
 
   return {

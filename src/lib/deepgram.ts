@@ -5,6 +5,13 @@
  * means both paths produce the identical editor-ready shape.
  */
 
+/**
+ * Deepgram's documented max size for a pre-recorded direct file upload (~2 GB).
+ * We stream the raw file to Deepgram, so this limit applies. Confirm against
+ * your current Deepgram plan/docs before relying on the exact value.
+ */
+export const DEEPGRAM_MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024;
+
 /** The subset of Deepgram's pre-recorded response we read. */
 export interface DeepgramWord {
   word: string;

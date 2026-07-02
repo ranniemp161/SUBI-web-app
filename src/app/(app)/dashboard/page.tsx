@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Toaster, toast } from "sonner";
 import FilePicker, { type VideoMetadata } from "@/components/file-picker";
 import { formatDuration, formatDate } from "@/lib/utils";
+import { DEEPGRAM_MAX_UPLOAD_BYTES } from "@/lib/deepgram";
 
 interface Project {
   id: string;
@@ -162,6 +163,18 @@ export default function DashboardPage() {
   /** Handle file selection — create a new project, then kick off transcription. */
   const handleFileSelected = useCallback(
     async (file: File, metadata: VideoMetadata) => {
+      // Deepgram rejects uploads past its size limit — catch it here so we don't
+      // create an orphan project and waste a multi-GB upload. (The local whisper
+      // path has no such limit.)
+      if (TRANSCRIBE_PROVIDER === "deepgram" && file.size > DEEPGRAM_MAX_UPLOAD_BYTES) {
+        toast.error("File too large to transcribe", {
+          description: `Deepgram accepts files up to ${Math.floor(
+            DEEPGRAM_MAX_UPLOAD_BYTES / (1024 * 1024 * 1024)
+          )} GB. Try a shorter clip or a smaller file.`,
+        });
+        return;
+      }
+
       setIsCreating(true);
 
       try {

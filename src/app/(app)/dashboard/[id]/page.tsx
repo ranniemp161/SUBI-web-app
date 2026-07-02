@@ -130,6 +130,8 @@ export default function EditorPage() {
     exportSupportSnapshot,
     exportSupportServerSnapshot
   );
+  // Export output resolution cap (px height); null = keep the source resolution.
+  const [exportMaxHeight, setExportMaxHeight] = useState<number | null>(null);
   const exportHandleRef = useRef<ExportHandle | null>(null);
   // Mirrors the "cancelling" state for the onProgress closure (which captures a
   // stale exportState) so late progress events don't clobber the "Cancelling…"
@@ -611,9 +613,13 @@ export default function EditorPage() {
             toast.dismiss("export");
             return;
           }
+          if (code === "unsupported-resolution") {
+            toast.error("Resolution too high", { id: "export", description: message });
+            return;
+          }
           toast.error("Export failed", { id: "export", description: message });
         },
-      });
+      }, { maxHeight: exportMaxHeight ?? undefined });
       // startExport has resolved: the worker is running and the handle can now
       // be cancelled. (This runs before any queued worker message, so no
       // progress/done/error callback can fire while state is still "starting".)
@@ -626,7 +632,7 @@ export default function EditorPage() {
         toast.error("Couldn't start export");
       }
     }
-  }, [sourceFile, edl, project, handleCancelExport]);
+  }, [sourceFile, edl, project, handleCancelExport, exportMaxHeight]);
 
   // Warn on tab close/reload only while an export is actively encoding — that's
   // the one state with work worth losing. "starting" has nothing yet, and
@@ -824,6 +830,8 @@ export default function EditorPage() {
               : undefined
         }
         exportState={exportState}
+        exportMaxHeight={exportMaxHeight}
+        onExportMaxHeightChange={setExportMaxHeight}
       />
 
       {/* Middle band: rail + preview + transcript */}
@@ -1191,6 +1199,8 @@ function TopBar({
   onCancelExport,
   exportBlockedReason,
   exportState = "idle",
+  exportMaxHeight = null,
+  onExportMaxHeightChange,
 }: {
   fileName: string;
   savedAt: "saved" | "saving";
@@ -1203,6 +1213,9 @@ function TopBar({
   // source re-selected, or the browser can't export); doubles as the tooltip.
   exportBlockedReason?: string;
   exportState?: "idle" | "starting" | "exporting" | "cancelling";
+  // Output resolution cap for export; null = source resolution.
+  exportMaxHeight?: number | null;
+  onExportMaxHeightChange?: (height: number | null) => void;
 }) {
   const iconBtn =
     "flex h-8 w-8 items-center justify-center rounded-md text-foreground/60 hover:bg-foreground/10 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40";
@@ -1260,6 +1273,25 @@ function TopBar({
         >
           <Share2 className="h-4 w-4" /> Share
         </button>
+        <label htmlFor="export-quality" className="sr-only">
+          Export resolution
+        </label>
+        <select
+          id="export-quality"
+          value={exportMaxHeight ?? "source"}
+          onChange={(e) =>
+            onExportMaxHeightChange?.(
+              e.target.value === "source" ? null : Number(e.target.value)
+            )
+          }
+          disabled={busy}
+          title="Export resolution — downscales larger sources, never upscales"
+          className="rounded-lg border border-foreground/10 bg-transparent px-2 py-1.5 text-sm text-foreground/70 transition-colors hover:bg-foreground/10 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <option value="source">Source</option>
+          <option value="1080">1080p</option>
+          <option value="720">720p</option>
+        </select>
         {showCancel && (
           <button
             type="button"

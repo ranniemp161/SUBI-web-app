@@ -1,6 +1,7 @@
 import {
   ALL_FORMATS,
   BlobSource,
+  canEncodeVideo,
   Conversion,
   ConversionCanceledError,
   Input,
@@ -8,6 +9,7 @@ import {
   Output,
   StreamTarget,
   type AudioSample,
+  type ConversionVideoOptions,
   type StreamTargetChunk,
   type VideoSample,
 } from "mediabunny";
@@ -54,7 +56,7 @@ self.onmessage = async (event: MessageEvent<ExportRequestMessage>) => {
   let writable: FileSystemWritableFileStream | null = null;
   try {
     writable = await message.handle.createWritable();
-    await runExport(message.file, message.edl, writable);
+    await runExport(message.file, message.edl, writable, message.maxHeight);
     await writable.close();
     post({ type: "done" });
   } catch (error) {
@@ -65,7 +67,12 @@ self.onmessage = async (event: MessageEvent<ExportRequestMessage>) => {
   }
 };
 
-async function runExport(file: File, edl: EDL, writable: FileSystemWritableFileStream) {
+async function runExport(
+  file: File,
+  edl: EDL,
+  writable: FileSystemWritableFileStream,
+  maxHeight?: number
+) {
   const keepRanges = getKeepRanges(edl);
   const totalSeconds = totalKeptSeconds(keepRanges);
   if (keepRanges.length === 0 || totalSeconds <= 0) {
@@ -100,12 +107,41 @@ async function runExport(file: File, edl: EDL, writable: FileSystemWritableFileS
   const input = new Input({ source: new BlobSource(file), formats: ALL_FORMATS });
   const output = new Output({ format: new Mp4OutputFormat(), target: new StreamTarget(sink) });
 
+  // Resolve output video sizing and verify the device can actually encode it,
+  // before committing to the (expensive) conversion. Skipped for audio-only
+  // sources, which have no primary video track.
+  const videoOptions: ConversionVideoOptions = { process: remapProcess };
+  const videoTrack = await input.getPrimaryVideoTrack();
+  if (videoTrack) {
+    const srcW = videoTrack.displayWidth;
+    const srcH = videoTrack.displayHeight;
+    let outW = srcW;
+    let outH = srcH;
+    // Downscale (never upscale) to the requested height cap, on even dimensions.
+    if (maxHeight && srcH > maxHeight) {
+      outH = maxHeight - (maxHeight % 2);
+      outW = Math.round(srcW * (outH / srcH));
+      outW -= outW % 2;
+      // Only the height is set; mediabunny derives width to preserve aspect.
+      videoOptions.height = outH;
+    }
+    // The MP4 output encodes to H.264/AVC; a 4K encode can exceed what a given
+    // device's encoder supports. Fail fast with an actionable message rather
+    // than deep inside execute().
+    if (!(await canEncodeVideo("avc", { width: outW, height: outH }))) {
+      throw new ExportError(
+        "unsupported-resolution",
+        `Your device can't export video at ${outW}×${outH}. Try a lower export resolution.`
+      );
+    }
+  }
+
   let conversion: Conversion;
   try {
     conversion = await Conversion.init({
       input,
       output,
-      video: { process: remapProcess },
+      video: videoOptions,
       audio: { process: remapProcess },
     });
   } catch (error) {

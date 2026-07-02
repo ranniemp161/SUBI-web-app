@@ -1,109 +1,92 @@
-# Memory — Deepgram Local (Sync Mode) + Phase-5 Export Fixes
+# Memory — Production-Hardening Pass (Phases 0–4)
 
 Last updated: 2026-07-02
 
 ## What was built
 
-Two threads this session, both uncommitted.
+A multi-phase production-readiness pass. All work is **committed to `main`**
+(6 commits, listed below). Started from an architecture review that flagged
+improvement areas; the client is handling the R2/object-storage + deploy-target
+decision separately (see Open questions), so that was excluded.
 
-### Deepgram transcription now works on localhost with NO tunnel
-
-Root cause found: the deepgram route built the callback URL from the request
-origin (`localhost:3000`), and Deepgram rejects a localhost callback as
-`"Invalid callback URL."` (err surfaced only in server logs). The user had only
-ever used local faster-whisper before, so this was first exposure, not a
-regression.
-
-- **`src/lib/deepgram.ts`** (NEW) — extracted shared `normalizeDeepgram`,
-  `extractDeepgramError`, and the Deepgram response types out of the callback
-  route so both the sync and callback paths produce the identical editor-ready
-  transcript shape.
-- **`src/app/api/transcribe/callback/route.ts`** — now imports from
-  `@/lib/deepgram` (removed its local copies).
-- **`src/app/api/transcribe/deepgram/route.ts`** — reworked to two auto-selected
-  modes:
-  - **Synchronous (localhost):** omit the `callback` param; read the transcript
-    straight from Deepgram's HTTP response, normalize, store it (status→ready),
-    then return. No tunnel needed. Chosen when the resolved callback host is
-    localhost/127.0.0.1/::1/*.local (`isLocalHostname`).
-  - **Callback (public host):** unchanged scalable flow — token + `callback`
-    param, Deepgram POSTs to /api/transcribe/callback which flips status→ready.
-  - Added `PUBLIC_APP_URL` env override for the callback base (use a tunnel's
-    https origin to force/test the callback path locally). Trailing slashes
-    trimmed.
-  - The 502 error body now includes `detail: extractDeepgramError(...)`, so the
-    client toast shows Deepgram's real reason (client `readErrorReason` reads
-    `detail` first) instead of the generic "Deepgram rejected the request."
-
-### Phase-5 export: cancel-path correctness fixes (from a /review earlier)
-
-- **`src/workers/export-worker.ts`** — `cancelRequested` flag closes a
-  cancel-before-init race: set on any cancel, reset each start, checked right
-  before `execute()` (no await between check and execute), throwing
-  `ExportError("cancelled", …)` if a cancel landed during `Conversion.init`.
-- **`src/app/(app)/dashboard/[id]/page.tsx`** — `handleExport`'s `onError` now
-  takes `(message, code)` and, on `code === "cancelled"`, calls
-  `toast.dismiss("export")` instead of a red "Export failed" toast.
+**Commits (newest last):**
+- `4eaf0b4` — Phase 6 export controls: cancel wiring + up-front browser-support
+  gating (this was uncommitted from the prior session; committed as the
+  baseline). Added `starting`/`cancelling` export states so Cancel only shows
+  once a real handle exists; `useSyncExternalStore` gates the Export button
+  without a hydration mismatch. Files: `dashboard/[id]/page.tsx`.
+- `39200e4` — Phase 1 API hardening: **zod input validation** (`src/lib/validation.ts`)
+  on POST/PATCH `/api/projects` bodies (EDL/transcript/create, strictObject,
+  size caps); **trimmed `GET /api/projects`** to metadata-only columns; new
+  lightweight **`GET /api/projects/[id]/status`** (`getOwnedProjectStatus` in
+  `lib/projects.ts`) with the dashboard 4s poll repointed to it.
+- `48567e3` — Phase 2: **Postgres fixed-window rate limiter** (`src/lib/rate-limit.ts`,
+  `rate_limits` table) — one atomic upsert; applied to create (60/hr) and
+  transcribe (30/hr, shared Deepgram+whisper); **`transcript_status` text→enum**
+  (Drizzle `pgEnum`). Migration SQL at `drizzle/manual/0001_*.sql`. Added
+  `db:generate`/`db:push` scripts.
+- `88276e4` — Phase 3 #6: **env-gated Sentry** (`@sentry/nextjs`). `sentry.server/
+  edge.config.ts`, `instrumentation.ts`, `instrumentation-client.ts`,
+  `lib/observability.ts` `reportError()`. API route catch blocks now call
+  `reportError` (they swallow errors + return 5xx, so Next's `onRequestError`
+  never sees them). `next.config.ts` wraps with `withSentryConfig` only when
+  `SENTRY_DSN` set (dynamic import).
+- `3b30680` — Phase 3 #7: **route tests** + `vitest.config.ts` (`@/` alias).
+  Callback token auth matrix, project ownership (401/404, GET+DELETE), deepgram
+  guard ordering (401→403→429). 55 tests total pass.
+- `eaf4087` — Phase 4 docs: **`LIMITATIONS.md`**.
 
 ## Decisions made
 
-- **Deepgram sync-on-localhost is automatic, not a manual flag** — keeps local
-  dev zero-config (works like whisper did) while production (public origin)
-  keeps the scalable callback flow untouched. `PUBLIC_APP_URL` is the escape
-  hatch to force callback mode locally via a tunnel.
-- **Export finding #3 (boundary fuzz) intentionally NOT fixed** — inherent to
-  whole-sample cutting, bounded per-cut, no drift. Verify by ear, only invest
-  (frame-accurate re-slicing) if a real cut edge sounds/looks wrong.
-- Export cancel fixes #1/#2 are preventive/latent — no UI triggers cancel until
-  the Phase-6 button is wired to `exportHandleRef.current.cancel()`.
+- **Rate-limit backend = Postgres** (not Redis/in-memory): no new infra, correct
+  under concurrency (single atomic upsert), instance-count agnostic — safe
+  before the deploy-topology decision is made.
+- **Error tracking = Sentry, fully env-gated**: a complete no-op until
+  `SENTRY_DSN`/`NEXT_PUBLIC_SENTRY_DSN` are set. Chosen over structured-logging-
+  only.
+- **API catch blocks route through `reportError`** because handlers return 5xx
+  without rethrowing, so `onRequestError` can't capture them.
+- **DB enum conversion applied via a reviewed manual SQL** (in-place `USING`
+  cast), NOT `db:push`, since push may drop/recreate the column and lose data.
 
 ## Problems solved
 
-- **"Invalid callback URL" on Deepgram** — solved via sync mode (above).
-- **Cancel would have shown "Export failed"** and **cancel-during-init was a
-  no-op** — both fixed (above).
-- (Already committed in 44a68e2 from prior sessions: export double-close +
-  progress-throttle.)
+- **Turbopack "whole project traced" build warning** — investigated by stashing
+  Phase-3 and building at `48567e3`: it is **pre-existing**, from the whisper
+  route's `join(process.cwd(), "scripts", …)` dynamic path — NOT caused by the
+  Sentry work. Documented in LIMITATIONS.md; non-fatal on a Node host.
+- **setState-in-effect lint** on the export-support probe (prior session's
+  carryover) — solved with `useSyncExternalStore` (null server snapshot).
 
 ## Current state
 
-- Deepgram sync mode **confirmed working end-to-end** on localhost:
-  `POST /api/transcribe/deepgram ... 200 in 94s` — held the connection ~84s of
-  app code while Deepgram transcribed, stored transcript, status→ready. Project
-  `bbdc4763-8f9b-417a-9d5d-12470e831037` transcribed successfully.
-- All this session's changes pass `tsc --noEmit` + eslint clean. Export tests
-  still 12/12 (not re-run this session but untouched).
-- Everything this session is **UNCOMMITTED**: src/lib/deepgram.ts (new),
-  callback/route.ts, deepgram/route.ts, export-worker.ts, dashboard/[id]/page.tsx.
-- Phase-5 export feature code itself is already committed (44a68e2); the
-  cancel-path fixes on top are not.
-- Export was still **never re-verified in-browser after a clean restart** (the
-  restore-step re-test kept getting superseded — first by /review, then by the
-  Deepgram bug).
-- Dev server running on :3000 (Next.js 16.2.9, webpack) — bg task bhpijcfh2.
-- `gh` NOT authenticated (`gh auth login` needed before any PR).
+- `tsc` clean, eslint clean, **`next build` passes** (only the pre-existing
+  whisper trace warning), **55/55 vitest tests pass**.
+- **DB migration is APPLIED** to the Neon branch referenced by `.env.local`
+  (dev). Ran via a temp Node script (Neon WebSocket Pool, atomic txn, since
+  `psql` isn't installed) — `transcript_status` is now the enum, `rate_limits`
+  table exists. Temp runner deleted; tree clean.
+- Rate-limiting endpoints now work (table exists). Sentry dormant (no DSN set).
 
 ## Next session starts with
 
-1. Commit this session's work. Sensible split: (a) Deepgram sync mode
-   (lib/deepgram.ts + both routes), (b) export cancel-path fixes (worker +
-   dashboard). Or one commit — user's call.
-2. Still-owed: re-verify the MP4 export in-browser after a clean restart
-   (smooth progress → green "Export complete", playable MP4, correct cuts,
-   spot-check a cut boundary for A/V sync — also covers un-fixed finding #3).
-3. Phase 6: wire the cancel button to `exportHandleRef.current.cancel()` (path
-   is ready), HEVC/MOV + VP9/WebM source testing, browser-support gating UI.
+1. **Phase 4 manual verification (with the user, needs real files + dev server):**
+   re-verify MP4 export (smooth progress → green "Export complete" → playable
+   MP4 → correct cuts → A/V sync spot-check), the new Cancel button +
+   browser-support gating, and HEVC/MOV + VP9/WebM source testing. Run
+   `npm run dev` (Next 16, `--webpack`) on :3000.
+2. If deploying: **apply `drizzle/manual/0001_*.sql` to the PRODUCTION Neon
+   branch** — the migration so far only hit the dev branch in `.env.local`.
 
 ## Open questions
 
-- **Deepgram sync-mode timeout on long files.** The 94s hold worked, but a much
-  longer video could hit the proxy/Next timeout in sync mode. Tunnel + callback
-  (PUBLIC_APP_URL) is the fallback if that happens. Untested past the one file.
-- iPhone/non-H.264 export sources (HEVC/MOV, VP9/WebM) — user deferred. Only one
-  71MB H.264 file tested.
-- Export decodes the whole source even for heavily-cut timelines (encode skipped
-  for cuts) — fine for MVP; keyframe-seek skipping is the follow-up if slow.
-- Deferred long-term: filler-word detection, semantic/rambling trim, preset
-  tuning on real footage; and the R2/object-storage scalability decision pending
-  the client conversation (see project_r2_storage_decision.md in cross-session
-  memory).
+- **R2/object-storage + deploy-target decision** — user is raising the storage
+  cost/scalability tradeoff (browser+server-memory proxy, ~8GB body, single
+  long-running Node process, not serverless-friendly) with their client. Do NOT
+  re-add R2 or change the deploy assumption without that sign-off. See
+  cross-session memory `project_r2_storage_decision.md`.
+- **HEVC/VP9 export** still unverified (only one H.264 file tested).
+- **Sentry** not yet enabled (needs the user's account + DSN env vars; see
+  LIMITATIONS.md).
+- Deferred long-term (unchanged): filler-word detection, semantic/rambling trim,
+  preset tuning on real footage; export keyframe-seek skipping if slow.

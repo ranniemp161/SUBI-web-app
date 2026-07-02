@@ -9,6 +9,7 @@ import { hasValidAccessCode } from "@/lib/access-code";
 import { rateLimit } from "@/lib/rate-limit";
 import { reportError } from "@/lib/observability";
 import {
+  DEEPGRAM_MAX_UPLOAD_BYTES,
   extractDeepgramError,
   normalizeDeepgram,
   type DeepgramResponse,
@@ -101,6 +102,21 @@ export async function POST(request: Request) {
 
   if (!request.body) {
     return NextResponse.json({ error: "No media in request body." }, { status: 400 });
+  }
+
+  // Reject oversized uploads before streaming a multi-GB body to Deepgram only
+  // to have it rejected. The browser sets Content-Length for a File body; if
+  // it's absent we let Deepgram be the backstop.
+  const contentLength = Number(request.headers.get("content-length"));
+  if (Number.isFinite(contentLength) && contentLength > DEEPGRAM_MAX_UPLOAD_BYTES) {
+    return NextResponse.json(
+      {
+        error: `This file is too large to transcribe (max ${Math.floor(
+          DEEPGRAM_MAX_UPLOAD_BYTES / (1024 * 1024 * 1024)
+        )} GB). Try a shorter clip or a smaller file.`,
+      },
+      { status: 413 }
+    );
   }
 
   // The base Deepgram's callback must POST back to. PUBLIC_APP_URL (a tunnel's

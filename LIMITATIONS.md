@@ -13,6 +13,12 @@ pass. These are known and mostly intentional — not bugs. Grouped by area.
 - **Verified formats.** Only **H.264 MP4** sources have been verified end to end.
   HEVC/MOV and VP9/WebM sources are expected to work (mediabunny supports them)
   but are **untested** — pending manual verification.
+- **Resolution / 4K.** Export re-encodes at the source resolution by default. A
+  pre-flight `canEncodeVideo` check (in the worker) fails fast with a clear
+  message if the device can't encode the target size, and an **export-quality
+  selector** (Source / 1080p / 720p) lets the user downscale a large/4K source
+  for weaker devices or smaller files (never upscales). 4K encode is still heavy
+  and device-dependent, and **not yet verified end to end**.
 - **Whole-source decode.** Export decodes the entire source even for heavily-cut
   timelines (only the encode is skipped for cut spans). Fine for typical clips;
   a keyframe-seek optimization is the follow-up if it proves slow on long,
@@ -41,6 +47,11 @@ pass. These are known and mostly intentional — not bugs. Grouped by area.
   significant RAM on the one process (`proxyClientMaxBodySize: "8gb"` in
   `next.config.ts`). Fine at current low-concurrency scale; a known ceiling to
   revisit before real concurrent traffic.
+- **Deepgram upload size limit.** Deepgram caps direct file uploads (~2 GB,
+  `DEEPGRAM_MAX_UPLOAD_BYTES` — confirm against your plan). Guarded both
+  client-side (the picker rejects an over-limit file before creating a project
+  or uploading) and server-side (the route returns 413 before proxying). The
+  local whisper path has no such limit.
 - **Sync-mode transcription timeout.** On localhost (no public callback URL) the
   Deepgram path reads the transcript synchronously, holding the request for the
   whole job. A long enough video can hit a proxy/platform timeout. Production
