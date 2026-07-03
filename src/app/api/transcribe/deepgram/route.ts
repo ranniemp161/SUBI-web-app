@@ -131,6 +131,9 @@ export async function POST(request: Request) {
     model: "nova-3",
     smart_format: "true",
     punctuate: "true",
+    // Transcribe disfluencies ("um", "uh") so the editor's filler-word removal
+    // has something to find — Deepgram omits them by default.
+    filler_words: "true",
   });
 
   // Callback mode needs a one-time token so the (unsigned) callback can be

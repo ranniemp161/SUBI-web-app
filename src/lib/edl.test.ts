@@ -9,6 +9,9 @@ import {
   pinTrimmedBoundary,
   trimBoundary,
   keptDuration,
+  isFillerWord,
+  findFillerWords,
+  groupWordsIntoParagraphs,
   type EDL,
   type TranscriptWord,
 } from "./edl";
@@ -248,5 +251,94 @@ describe("pinTrimmedBoundary", () => {
     expect(
       rerun.segments.some((s) => s.status === "cut" && s.start < 2.0 && s.end > 1.1)
     ).toBe(false);
+  });
+});
+
+describe("isFillerWord", () => {
+  it("matches common disfluencies regardless of case and punctuation", () => {
+    expect(isFillerWord("um")).toBe(true);
+    expect(isFillerWord("Um,")).toBe(true);
+    expect(isFillerWord("UH.")).toBe(true);
+    expect(isFillerWord("uh-huh")).toBe(true);
+    expect(isFillerWord("Hmm...")).toBe(true);
+  });
+
+  it("does not match real words or meaningful interjections", () => {
+    expect(isFillerWord("umbrella")).toBe(false);
+    expect(isFillerWord("like")).toBe(false);
+    expect(isFillerWord("oh")).toBe(false);
+    expect(isFillerWord("huh?")).toBe(false);
+    expect(isFillerWord("so")).toBe(false);
+  });
+});
+
+describe("findFillerWords", () => {
+  it("returns only fillers inside kept segments", () => {
+    const words: TranscriptWord[] = [
+      { word: "um,", start: 0.5, end: 0.8, confidence: 1 },
+      { word: "hello", start: 1, end: 1.4, confidence: 1 },
+      { word: "uh", start: 5.5, end: 5.7, confidence: 1 },
+    ];
+    const edl: EDL = {
+      segments: [
+        { start: 0, end: 5, status: "keep", reason: null },
+        { start: 5, end: 10, status: "cut", reason: "manual" },
+      ],
+    };
+    // "uh" sits in the cut span, so only "um," qualifies.
+    expect(findFillerWords(edl, words)).toEqual([words[0]]);
+  });
+});
+
+describe("groupWordsIntoParagraphs", () => {
+  const w = (start: number, end: number, text = "x"): TranscriptWord => ({
+    word: text,
+    start,
+    end,
+    confidence: 1,
+  });
+
+  it("returns no paragraphs for an empty transcript", () => {
+    expect(groupWordsIntoParagraphs([])).toEqual([]);
+  });
+
+  it("keeps continuous speech in a single paragraph", () => {
+    const words = [w(0, 0.4), w(0.5, 0.9), w(1.0, 1.4)];
+    expect(groupWordsIntoParagraphs(words)).toEqual([{ startIndex: 0, endIndex: 2 }]);
+  });
+
+  it("breaks on a long spoken pause", () => {
+    const words = [w(0, 0.4), w(0.5, 0.9), w(2.5, 2.9), w(3.0, 3.4)];
+    expect(groupWordsIntoParagraphs(words)).toEqual([
+      { startIndex: 0, endIndex: 1 },
+      { startIndex: 2, endIndex: 3 },
+    ]);
+  });
+
+  it("breaks at a sentence end once the paragraph is long", () => {
+    // 60 words with a sentence end at index 54, no pauses anywhere.
+    const words = Array.from({ length: 60 }, (_, i) =>
+      w(i * 0.5, i * 0.5 + 0.4, i === 54 ? "done." : "x")
+    );
+    expect(groupWordsIntoParagraphs(words)).toEqual([
+      { startIndex: 0, endIndex: 54 },
+      { startIndex: 55, endIndex: 59 },
+    ]);
+  });
+
+  it("force-breaks unpunctuated speech at the hard word limit", () => {
+    const words = Array.from({ length: 130 }, (_, i) => w(i * 0.5, i * 0.5 + 0.4));
+    const paragraphs = groupWordsIntoParagraphs(words);
+    expect(paragraphs[0]).toEqual({ startIndex: 0, endIndex: 99 });
+    expect(paragraphs[1]).toEqual({ startIndex: 100, endIndex: 129 });
+  });
+
+  it("covers every word exactly once", () => {
+    const words = [w(0, 0.4), w(2, 2.4), w(2.5, 2.9), w(6, 6.4)];
+    const paragraphs = groupWordsIntoParagraphs(words);
+    const covered = paragraphs.flatMap((p) =>
+      Array.from({ length: p.endIndex - p.startIndex + 1 }, (_, k) => p.startIndex + k)
+    );
+    expect(covered).toEqual([0, 1, 2, 3]);
   });
 });

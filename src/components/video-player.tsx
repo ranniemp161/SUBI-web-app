@@ -93,26 +93,51 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       const video = videoRef.current;
       if (!video) return;
 
-      function handleTimeUpdate() {
+      // While playing, drive time updates from a requestAnimationFrame loop
+      // instead of the ~4 Hz `timeupdate` event: the playhead and active-word
+      // highlight glide at display refresh rate, and a cut segment is skipped
+      // within a frame instead of playing up to a quarter second of deleted
+      // content first. The `timeupdate` listener stays for paused seeks.
+      let frame = 0;
+      let lastReported = -1;
+
+      function syncTime() {
         if (!video) return;
         const skipTo = nextPlaybackTime(edlRef.current, video.currentTime);
         if (skipTo !== null) {
           video.currentTime = skipTo;
         }
-        onTimeUpdate?.(video.currentTime);
+        if (video.currentTime !== lastReported) {
+          lastReported = video.currentTime;
+          onTimeUpdate?.(video.currentTime);
+        }
       }
 
-      const handlePlay = () => onPlayingChange?.(true);
-      const handlePause = () => onPlayingChange?.(false);
+      function tick() {
+        frame = requestAnimationFrame(tick);
+        syncTime();
+      }
+
+      const handlePlay = () => {
+        cancelAnimationFrame(frame);
+        frame = requestAnimationFrame(tick);
+        onPlayingChange?.(true);
+      };
+      const handlePause = () => {
+        cancelAnimationFrame(frame);
+        onPlayingChange?.(false);
+      };
       const handleMeta = () =>
         onLoadedMetadata?.({ width: video.videoWidth, height: video.videoHeight });
 
-      video.addEventListener("timeupdate", handleTimeUpdate);
+      video.addEventListener("timeupdate", syncTime);
       video.addEventListener("play", handlePlay);
       video.addEventListener("pause", handlePause);
       video.addEventListener("loadedmetadata", handleMeta);
+      if (!video.paused) handlePlay();
       return () => {
-        video.removeEventListener("timeupdate", handleTimeUpdate);
+        cancelAnimationFrame(frame);
+        video.removeEventListener("timeupdate", syncTime);
         video.removeEventListener("play", handlePlay);
         video.removeEventListener("pause", handlePause);
         video.removeEventListener("loadedmetadata", handleMeta);

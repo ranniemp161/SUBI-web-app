@@ -28,6 +28,7 @@ import {
   type EDLSegment,
 } from "@/lib/edl";
 import { extractWaveform, type Waveform } from "@/lib/waveform";
+import { extractFilmstrip, type Filmstrip } from "@/lib/thumbnails";
 import { formatDuration } from "@/lib/utils";
 
 export interface TimelineHandle {
@@ -129,12 +130,14 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
   const [pxPerSec, setPxPerSec] = useState(DEFAULT_PX_PER_SEC);
   const [waveform, setWaveform] = useState<Waveform | null>(null);
   const [isDecodingWaveform, setIsDecodingWaveform] = useState(false);
+  const [filmstrip, setFilmstrip] = useState<Filmstrip | null>(null);
   const [snapEnabled, setSnapEnabled] = useState(true);
   const [view, setView] = useState({ scrollLeft: 0, width: 0 });
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const filmstripCanvasRef = useRef<HTMLCanvasElement>(null);
   const dragLeftIndexRef = useRef<number | null>(null);
   const dragMovedRef = useRef(false);
   // Boundary position at drag start, so the pinned trim knows how far it moved.
@@ -180,6 +183,25 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
     decode();
     return () => {
       cancelled = true;
+    };
+  }, [sourceFile]);
+
+  // Extract the filmstrip once per source file (independent of the waveform —
+  // whichever finishes first shows first).
+  useEffect(() => {
+    const controller = new AbortController();
+    let cancelled = false;
+    async function decode() {
+      const result = sourceFile
+        ? await extractFilmstrip(sourceFile, { signal: controller.signal })
+        : null;
+      if (!cancelled) setFilmstrip(result);
+    }
+    setFilmstrip(null);
+    decode();
+    return () => {
+      cancelled = true;
+      controller.abort();
     };
   }, [sourceFile]);
 
@@ -277,6 +299,41 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
     }
   }, [waveform, pxPerSec, view]);
 
+  // Tile the visible slice of the filmstrip across the video track. Tiles are
+  // anchored to absolute timeline positions (not the viewport) so they don't
+  // shimmer sideways while scrolling.
+  useEffect(() => {
+    const canvas = filmstripCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (!filmstrip || filmstrip.duration <= 0) return;
+
+    const { strip, count, thumbWidth, thumbHeight, duration } = filmstrip;
+    const drawH = canvas.height;
+    const drawW = Math.max(1, Math.round((thumbWidth / thumbHeight) * drawH));
+    const firstTile = Math.floor(view.scrollLeft / drawW);
+
+    for (let k = firstTile; k * drawW < view.scrollLeft + canvas.width; k++) {
+      const globalX = k * drawW;
+      const t = (globalX + drawW / 2) / pxPerSec;
+      if (t > duration) break;
+      const index = Math.min(count - 1, Math.floor((t / duration) * count));
+      ctx.drawImage(
+        strip,
+        index * thumbWidth,
+        0,
+        thumbWidth,
+        thumbHeight,
+        globalX - view.scrollLeft,
+        0,
+        drawW,
+        drawH
+      );
+    }
+  }, [filmstrip, pxPerSec, view]);
+
   // Keep the playhead in view during playback.
   useEffect(() => {
     if (!isPlaying) return;
@@ -299,6 +356,28 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
     },
     [pxPerSec, total]
   );
+
+  // --- Hover scrub preview (ghost playhead + timestamp) ---
+  // Updated imperatively on the DOM node: a state update per mousemove would
+  // re-render every clip block just to move a 1px line.
+  const hoverRef = useRef<HTMLDivElement>(null);
+  const hoverTimeRef = useRef<HTMLSpanElement>(null);
+  const handleHoverMove = useCallback(
+    (e: React.PointerEvent) => {
+      const ghost = hoverRef.current;
+      if (!ghost || e.pointerType !== "mouse") return;
+      const t = timeFromClientX(e.clientX);
+      ghost.style.transform = `translateX(${t * pxPerSec}px)`;
+      ghost.style.opacity = "1";
+      if (hoverTimeRef.current) {
+        hoverTimeRef.current.textContent = formatDuration(t * 1000);
+      }
+    },
+    [timeFromClientX, pxPerSec]
+  );
+  const handleHoverLeave = useCallback(() => {
+    if (hoverRef.current) hoverRef.current.style.opacity = "0";
+  }, []);
 
   // --- Scrubbing ---
   const handleScrubPointerDown = useCallback(
@@ -523,6 +602,8 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
         <div ref={scrollRef} className="timeline-scroll flex-1 overflow-x-auto overflow-y-hidden">
           <div
             ref={contentRef}
+            onPointerMove={handleHoverMove}
+            onPointerLeave={handleHoverLeave}
             style={{ width: widthPx, height: TOTAL_H }}
             className="relative select-none"
           >
@@ -552,6 +633,14 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
               style={{ height: VIDEO_H }}
               className="relative border-b border-foreground/5 bg-foreground/[0.02]"
             >
+              {/* Filmstrip behind the clip blocks — aligned to the clips' inset. */}
+              <canvas
+                ref={filmstripCanvasRef}
+                width={Math.max(1, view.width)}
+                height={VIDEO_H - 16}
+                style={{ left: view.scrollLeft, top: 8 }}
+                className="pointer-events-none absolute rounded-md"
+              />
               {edl.segments.map((segment, index) => {
                 const isCut = segment.status === "cut";
                 const isRetake = isCut && segment.reason === "retake";
@@ -580,14 +669,26 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
                     }}
                     className={`absolute top-2 bottom-2 flex items-center overflow-hidden rounded-md border ${
                       isRetake
-                        ? "border-amber-400/30 bg-amber-950/40"
+                        ? filmstrip
+                          ? "border-amber-400/40 bg-amber-950/70"
+                          : "border-amber-400/30 bg-amber-950/40"
                         : isCut
-                          ? "border-foreground/10 bg-black/40"
-                          : "border-violet-400/40 bg-gradient-to-b from-violet-500/85 to-violet-600/85 hover:from-violet-500 hover:to-violet-600"
+                          ? filmstrip
+                            ? "border-foreground/10 bg-black/70"
+                            : "border-foreground/10 bg-black/40"
+                          : filmstrip
+                            ? // Frames show through kept clips; the violet wash keeps
+                              // them reading as "kept" against the darkened cuts.
+                              "border-violet-400/50 bg-violet-500/15 hover:bg-violet-400/20"
+                            : "border-violet-400/40 bg-gradient-to-b from-violet-500/85 to-violet-600/85 hover:from-violet-500 hover:to-violet-600"
                     } ${isSelected ? "ring-2 ring-inset ring-white/90" : ""}`}
                   >
                     {!isCut && index === firstKeepIndex && (
-                      <span className="truncate px-2 text-[11px] font-medium text-white/90">
+                      <span
+                        className={`truncate text-[11px] font-medium text-white/90 ${
+                          filmstrip ? "mx-1 rounded bg-black/50 px-1.5 py-px" : "px-2"
+                        }`}
+                      >
                         {fileName}
                       </span>
                     )}
@@ -644,6 +745,20 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
                 height={AUDIO_H}
                 style={{ left: view.scrollLeft, height: AUDIO_H }}
                 className="absolute top-0"
+              />
+            </div>
+
+            {/* Hover ghost playhead — position driven imperatively in
+                handleHoverMove; opacity 0 until the mouse enters. */}
+            <div
+              ref={hoverRef}
+              style={{ height: TOTAL_H, opacity: 0 }}
+              className="pointer-events-none absolute left-0 top-0 z-10 motion-safe:transition-opacity motion-safe:duration-100"
+            >
+              <div className="w-px bg-foreground/30" style={{ height: TOTAL_H }} />
+              <span
+                ref={hoverTimeRef}
+                className="absolute left-1.5 top-0.5 whitespace-nowrap rounded bg-background/95 px-1 py-px font-mono text-[10px] text-foreground/70 shadow-sm"
               />
             </div>
 

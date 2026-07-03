@@ -1,9 +1,10 @@
 "use client";
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { MoreVertical, Search, Sparkles, RotateCcw, Scissors, Play } from "lucide-react";
+import type { ReactNode } from "react";
+import { EyeOff, Eye, Search, Sparkles, RotateCcw, Scissors, Play } from "lucide-react";
 import type { EDLSegment, TranscriptWord } from "@/lib/edl";
-import { findSegmentAt, type EDL } from "@/lib/edl";
+import { findSegmentAt, groupWordsIntoParagraphs, type EDL } from "@/lib/edl";
 import { formatDuration } from "@/lib/utils";
 
 interface TranscriptPanelProps {
@@ -102,6 +103,19 @@ export default function TranscriptPanel({
   const [query, setQuery] = useState("");
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
   const [dragging, setDragging] = useState(false);
+  // Descript-style "hide removed text": cut words collapse to a restorable "···"
+  // pill. Starts false on both server and client, then restores the saved
+  // preference after mount (no SSR hydration mismatch).
+  const [hideCut, setHideCut] = useState(false);
+  useEffect(() => {
+    setHideCut(localStorage.getItem("rc:hideCutWords") === "1");
+  }, []);
+  const toggleHideCut = useCallback(() => {
+    setHideCut((h) => {
+      localStorage.setItem("rc:hideCutWords", h ? "0" : "1");
+      return !h;
+    });
+  }, []);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const activeWordRef = useRef<HTMLSpanElement>(null);
@@ -123,6 +137,8 @@ export default function TranscriptPanel({
     () => words.map((word) => findSegmentAt(edl, word.start)),
     [words, edl]
   );
+
+  const paragraphs = useMemo(() => groupWordsIntoParagraphs(words), [words]);
 
   const activeIndex = useMemo(
     () => words.findIndex((w) => currentTime >= w.start && currentTime < w.end),
@@ -348,11 +364,16 @@ export default function TranscriptPanel({
         </h2>
         <button
           type="button"
-          disabled
-          title="More options (coming soon)"
-          className="cursor-not-allowed rounded-md p-1.5 text-foreground/30"
+          onClick={toggleHideCut}
+          aria-pressed={hideCut}
+          title={hideCut ? "Show removed text" : "Hide removed text"}
+          className={`rounded-md p-1.5 transition-colors ${
+            hideCut
+              ? "bg-violet-500/15 text-violet-300"
+              : "text-foreground/40 hover:bg-foreground/10 hover:text-foreground/70"
+          }`}
         >
-          <MoreVertical className="h-4 w-4" />
+          {hideCut ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
         </button>
       </div>
 
@@ -423,35 +444,85 @@ export default function TranscriptPanel({
           {words.length === 0 ? (
             <p className="text-foreground/30">No transcript available.</p>
           ) : (
-            words.map((word, index) => {
-              const segment = segmentForWord[index];
-              const isCut = segment?.status === "cut";
-              const isRetake = isCut && segment?.reason === "retake";
-              const isSelected = selection.has(index);
-              const isActive = index === activeIndex;
-              const isMatch = matches.has(index);
+            paragraphs.map((paragraph) => {
+              const nodes: ReactNode[] = [];
+              for (let index = paragraph.startIndex; index <= paragraph.endIndex; index++) {
+                const segment = segmentForWord[index];
+                const isCut = segment?.status === "cut";
+
+                // With "hide removed text" on, collapse each run of cut words
+                // into one restorable pill instead of rendering strikethrough.
+                if (hideCut && isCut) {
+                  if (index > paragraph.startIndex && segmentForWord[index - 1]?.status === "cut") {
+                    continue; // interior of a run already covered by its pill
+                  }
+                  let runEnd = index;
+                  while (
+                    runEnd < paragraph.endIndex &&
+                    segmentForWord[runEnd + 1]?.status === "cut"
+                  ) {
+                    runEnd++;
+                  }
+                  const count = runEnd - index + 1;
+                  const start = words[index].start;
+                  const end = words[runEnd].end;
+                  nodes.push(
+                    <button
+                      key={`hidden-${index}`}
+                      type="button"
+                      onClick={() =>
+                        onRestoreSegment({ start, end, status: "cut", reason: null })
+                      }
+                      title={`${count} removed word${count === 1 ? "" : "s"} — click to restore`}
+                      className="mx-0.5 inline-flex translate-y-px items-center rounded-md bg-foreground/[0.07] px-1.5 text-xs leading-5 text-foreground/40 transition-colors hover:bg-emerald-500/20 hover:text-emerald-300"
+                    >
+                      ···
+                    </button>
+                  );
+                  nodes.push(" ");
+                  continue;
+                }
+
+                const isRetake = isCut && segment?.reason === "retake";
+                const isSelected = selection.has(index);
+                const isActive = index === activeIndex;
+                const isMatch = matches.has(index);
+                nodes.push(
+                  <WordSpan
+                    key={`${words[index].start}-${index}`}
+                    index={index}
+                    word={words[index].word}
+                    isCut={isCut}
+                    isRetake={isRetake}
+                    isSelected={isSelected}
+                    isActive={isActive}
+                    isMatch={isMatch}
+                    innerRef={
+                      isActive
+                        ? activeWordRef
+                        : index === firstMatchIndex
+                          ? firstMatchRef
+                          : undefined
+                    }
+                    onMouseDown={handleWordMouseDown}
+                    onMouseEnter={handleWordMouseEnter}
+                    onContextMenu={handleContextMenu}
+                  />
+                );
+              }
 
               return (
-                <WordSpan
-                  key={`${word.start}-${index}`}
-                  index={index}
-                  word={word.word}
-                  isCut={isCut}
-                  isRetake={isRetake}
-                  isSelected={isSelected}
-                  isActive={isActive}
-                  isMatch={isMatch}
-                  innerRef={
-                    isActive
-                      ? activeWordRef
-                      : index === firstMatchIndex
-                        ? firstMatchRef
-                        : undefined
-                  }
-                  onMouseDown={handleWordMouseDown}
-                  onMouseEnter={handleWordMouseEnter}
-                  onContextMenu={handleContextMenu}
-                />
+                <div key={paragraph.startIndex} className="mb-4">
+                  <button
+                    type="button"
+                    onClick={() => onSeek(words[paragraph.startIndex].start)}
+                    title="Jump to this paragraph"
+                    className="mb-0.5 block select-none font-mono text-[10px] text-foreground/30 transition-colors hover:text-violet-400"
+                  >
+                    {formatDuration(words[paragraph.startIndex].start * 1000)}
+                  </button>
+                  <p>{nodes}</p>
+                </div>
               );
             })
           )}

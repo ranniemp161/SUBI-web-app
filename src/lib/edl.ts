@@ -511,6 +511,83 @@ export function trimBoundary(edl: EDL, leftIndex: number, newBoundaryTime: numbe
 }
 
 /** Find the EDL segment containing a given time, if any. */
+// The filler tokens Deepgram emits with filler_words enabled, plus common
+// spelling variants. Deliberately excludes real words ("like", "well", "so")
+// and meaningful interjections ("ah", "oh", "huh") — a false cut is worse
+// than a missed filler.
+const FILLER_WORDS = new Set([
+  "uh",
+  "uhh",
+  "um",
+  "umm",
+  "uhm",
+  "er",
+  "erm",
+  "hm",
+  "hmm",
+  "mm",
+  "mmm",
+  "mhm",
+  "mhmm",
+  "mm-mm",
+  "uh-uh",
+  "uh-huh",
+  "nuh-uh",
+]);
+
+/** Whether a transcript word is a disfluency ("um", "uh", …), ignoring case and punctuation. */
+export function isFillerWord(word: string): boolean {
+  const normalized = word.toLowerCase().replace(/^[^a-z]+|[^a-z-]+$/g, "");
+  return FILLER_WORDS.has(normalized);
+}
+
+/** All transcript words that are fillers and currently inside kept segments. */
+export function findFillerWords(edl: EDL, words: TranscriptWord[]): TranscriptWord[] {
+  return words.filter(
+    (w) => isFillerWord(w.word) && findSegmentAt(edl, w.start)?.status === "keep"
+  );
+}
+
+/** A paragraph of consecutive transcript words: [startIndex, endIndex] inclusive. */
+export interface WordParagraph {
+  startIndex: number;
+  endIndex: number;
+}
+
+// Paragraph breaks: a spoken pause this long starts a new paragraph…
+const PARAGRAPH_GAP_SECONDS = 1.0;
+// …or, past this many words, the next sentence end does…
+const PARAGRAPH_SOFT_WORD_LIMIT = 50;
+// …or, with no punctuation at all, force a break here.
+const PARAGRAPH_HARD_WORD_LIMIT = 100;
+
+const SENTENCE_END_RE = /[.!?]["'”’)]?$/;
+
+/**
+ * Group transcript words into readable paragraphs (Descript-style) instead of
+ * one wall of text. Breaks on long spoken pauses, and on sentence ends once a
+ * paragraph gets long. Returns inclusive index ranges into `words`.
+ */
+export function groupWordsIntoParagraphs(words: TranscriptWord[]): WordParagraph[] {
+  const paragraphs: WordParagraph[] = [];
+  let start = 0;
+  for (let i = 1; i < words.length; i++) {
+    const count = i - start;
+    const gap = words[i].start - words[i - 1].end;
+    const sentenceEnded = SENTENCE_END_RE.test(words[i - 1].word);
+    const shouldBreak =
+      gap >= PARAGRAPH_GAP_SECONDS ||
+      (count >= PARAGRAPH_SOFT_WORD_LIMIT && sentenceEnded) ||
+      count >= PARAGRAPH_HARD_WORD_LIMIT;
+    if (shouldBreak) {
+      paragraphs.push({ startIndex: start, endIndex: i - 1 });
+      start = i;
+    }
+  }
+  if (words.length > 0) paragraphs.push({ startIndex: start, endIndex: words.length - 1 });
+  return paragraphs;
+}
+
 export function findSegmentAt(edl: EDL, timeSec: number): EDLSegment | undefined {
   return edl.segments.find((seg) => timeSec >= seg.start && timeSec < seg.end);
 }

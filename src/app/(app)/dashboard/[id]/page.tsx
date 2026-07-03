@@ -58,6 +58,7 @@ import {
   reRoughCut as reRoughCutInEdl,
   pinTrimmedBoundary as pinTrimmedBoundaryInEdl,
   findSegmentAt,
+  findFillerWords,
   buildInitialEDL,
   keptDuration,
   SENSITIVITY_PRESETS,
@@ -647,6 +648,22 @@ export default function EditorPage() {
     return () => window.removeEventListener("beforeunload", handler);
   }, [exportState]);
 
+  // Filler words ("um", "uh", …) still inside kept segments — one click on the
+  // Filler rail tool cuts them all (Descript-style).
+  const fillerWords = useMemo(
+    () => (edl ? findFillerWords(edl, words) : []),
+    [edl, words]
+  );
+
+  const removeFillerWords = useCallback(() => {
+    if (!edl || fillerWords.length === 0) return;
+    if (!applyEdl(cutWordsInEdl(edl, fillerWords))) return;
+    toast(`Removed ${fillerWords.length} filler word${fillerWords.length === 1 ? "" : "s"}`, {
+      description: "Every “um” and “uh” is gone — undo if one carried meaning.",
+      action: { label: "Undo", onClick: () => undo() },
+    });
+  }, [edl, fillerWords, applyEdl, undo]);
+
   // Sorted, de-duped word edges that timeline trim drags snap to.
   const snapTimes = useMemo(() => {
     const edges = new Set<number>();
@@ -799,10 +816,27 @@ export default function EditorPage() {
     );
   }
 
-  const railTools: { Icon: LucideIcon; label: string; badge?: number; active?: boolean }[] = [
+  const railTools: {
+    Icon: LucideIcon;
+    label: string;
+    badge?: number;
+    active?: boolean;
+    title?: string;
+    onClick?: () => void;
+  }[] = [
     { Icon: MousePointer2, label: "Select", active: true },
     { Icon: Scissors, label: "Trim" },
-    { Icon: Sparkles, label: "Filler" },
+    {
+      Icon: Sparkles,
+      label: "Filler",
+      active: fillerWords.length > 0,
+      badge: fillerWords.length,
+      title:
+        fillerWords.length > 0
+          ? `Remove ${fillerWords.length} filler word${fillerWords.length === 1 ? "" : "s"} (um, uh, …)`
+          : "No filler words detected",
+      onClick: removeFillerWords,
+    },
     { Icon: AudioLines, label: "Silence", badge: stats.removedCount },
     { Icon: Captions, label: "Captions" },
     { Icon: SlidersHorizontal, label: "Audio" },
@@ -844,10 +878,15 @@ export default function EditorPage() {
               type="button"
               disabled={!tool.active}
               aria-pressed={tool.active}
-              title={tool.active ? tool.label : `${tool.label} (coming soon)`}
+              onClick={tool.onClick}
+              title={
+                tool.title ?? (tool.active ? tool.label : `${tool.label} (coming soon)`)
+              }
               className={`relative flex w-14 flex-col items-center gap-1 rounded-lg py-2 text-[10px] ${
                 tool.active
-                  ? "bg-violet-500/15 text-violet-300"
+                  ? tool.onClick
+                    ? "bg-violet-500/15 text-violet-300 transition-colors hover:bg-violet-500/25"
+                    : "bg-violet-500/15 text-violet-300"
                   : "cursor-not-allowed text-foreground/30"
               }`}
             >
