@@ -7,6 +7,7 @@ import { upload } from "@vercel/blob/client";
 import FilePicker, { type VideoMetadata } from "@/components/file-picker";
 import { formatDuration, formatDate } from "@/lib/utils";
 import { extractAudioForTranscription } from "@/lib/audio-extract";
+import { uploadPathnameForProject } from "@/lib/blob";
 
 interface Project {
   id: string;
@@ -98,7 +99,9 @@ async function startDeepgramTranscription(
   contentType: string,
   onUploadProgress: (fraction: number) => void
 ) {
-  const blob = await upload(`projects/${projectId}/${crypto.randomUUID()}`, media, {
+  // Uniqueness comes from the store's addRandomSuffix (set at token issuance),
+  // so the pathname is the fixed per-project value the token route enforces.
+  const blob = await upload(uploadPathnameForProject(projectId), media, {
     access: "public",
     handleUploadUrl: "/api/transcribe/blob-token",
     clientPayload: JSON.stringify({ projectId }),
@@ -106,17 +109,31 @@ async function startDeepgramTranscription(
     onUploadProgress: ({ percentage }) => onUploadProgress(percentage / 100),
   });
 
-  const response = await fetch(
-    `/api/transcribe/deepgram?projectId=${encodeURIComponent(projectId)}`,
-    {
+  try {
+    const response = await fetch(
+      `/api/transcribe/deepgram?projectId=${encodeURIComponent(projectId)}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ blobUrl: blob.url }),
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(await readErrorReason(response));
+    }
+  } catch (error) {
+    // The bytes are already in Blob but the server never learned about them —
+    // without this, the blob would sit orphaned until the daily sweep. Best
+    // effort only (keepalive lets it outlive a page navigation); the sweep
+    // remains the backstop if this request is lost too.
+    fetch("/api/transcribe/blob-cleanup", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ blobUrl: blob.url }),
-    }
-  );
-
-  if (!response.ok) {
-    throw new Error(await readErrorReason(response));
+      keepalive: true,
+    }).catch(() => {});
+    throw error;
   }
 }
 

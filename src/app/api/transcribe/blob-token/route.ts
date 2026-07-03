@@ -5,6 +5,7 @@ import { getOwnedProject } from "@/lib/projects";
 import { hasValidAccessCode } from "@/lib/access-code";
 import { rateLimit } from "@/lib/rate-limit";
 import { DEEPGRAM_MAX_UPLOAD_BYTES } from "@/lib/deepgram";
+import { uploadPathnameForProject } from "@/lib/blob";
 import { reportError } from "@/lib/observability";
 
 // Minting a token costs nothing on its own — no Deepgram call happens until
@@ -60,6 +61,14 @@ export async function POST(request: Request): Promise<NextResponse> {
 
         const project = await getOwnedProject(projectId, clerkId);
         if (!project) throw new Error("Project not found.");
+
+        // Pin the pathname so every upload lands under `projects/` — the
+        // orphan sweep only lists that prefix, and a freely chosen pathname
+        // would let a client stash blobs where the sweep never finds them.
+        // Uniqueness comes from `addRandomSuffix` below, not the pathname.
+        if (pathname !== uploadPathnameForProject(projectId)) {
+          throw new Error("Unexpected upload pathname.");
+        }
 
         return {
           access: "public",

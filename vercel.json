@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/blob-sweep",
+      "schedule": "0 4 * * *"
+    }
+  ]
+}

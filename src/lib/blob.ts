@@ -34,3 +34,31 @@ export function isOwnBlobUrl(url: string): boolean {
   if (expectedBlobHostname) return hostname === expectedBlobHostname;
   return hostname.endsWith(".public.blob.vercel-storage.com");
 }
+
+/**
+ * The canonical pathname a project's transcription audio is uploaded under.
+ *
+ * The blob-token route enforces this exact value (uniqueness comes from the
+ * store's `addRandomSuffix`, not the pathname), which guarantees every upload
+ * lands under the `projects/` prefix — the orphan sweep
+ * (/api/cron/blob-sweep) lists that prefix, so a client that could pick its
+ * own pathname could park blobs where the sweep never looks.
+ */
+export function uploadPathnameForProject(projectId: string): string {
+  return `projects/${projectId}/audio`;
+}
+
+/**
+ * Recover the owning projectId from one of our blob URLs
+ * (`.../projects/<projectId>/<file>`), so routes acting on a client-supplied
+ * blob URL (e.g. blob-cleanup) can verify the caller owns that project.
+ * Returns null if the URL doesn't parse or doesn't follow the convention.
+ */
+export function projectIdFromBlobUrl(url: string): string | null {
+  try {
+    const match = new URL(url).pathname.match(/^\/projects\/([^/]+)\//);
+    return match ? decodeURIComponent(match[1]) : null;
+  } catch {
+    return null;
+  }
+}

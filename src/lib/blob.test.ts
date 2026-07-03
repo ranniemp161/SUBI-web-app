@@ -40,3 +40,27 @@ describe("isOwnBlobUrl", () => {
     expect(isOwnBlobUrl("not-a-url")).toBe(false);
   });
 });
+
+describe("upload pathname convention", () => {
+  it("uploadPathnameForProject pins uploads under the sweep's projects/ prefix", async () => {
+    const { uploadPathnameForProject } = await import("./blob");
+    expect(uploadPathnameForProject("abc-123")).toBe("projects/abc-123/audio");
+  });
+
+  it("projectIdFromBlobUrl round-trips the id out of a stored blob URL", async () => {
+    const { projectIdFromBlobUrl } = await import("./blob");
+    // addRandomSuffix appends `-<rand>` to the final path segment.
+    expect(
+      projectIdFromBlobUrl(
+        "https://abc123.public.blob.vercel-storage.com/projects/abc-123/audio-xYz9"
+      )
+    ).toBe("abc-123");
+  });
+
+  it("projectIdFromBlobUrl rejects URLs outside the convention", async () => {
+    const { projectIdFromBlobUrl } = await import("./blob");
+    expect(projectIdFromBlobUrl("https://abc123.public.blob.vercel-storage.com/other/a")).toBe(null);
+    expect(projectIdFromBlobUrl("https://abc123.public.blob.vercel-storage.com/projects/")).toBe(null);
+    expect(projectIdFromBlobUrl("not-a-url")).toBe(null);
+  });
+});
