@@ -1,3 +1,5 @@
+import { timingSafeEqual } from "crypto";
+
 /**
  * Shared access-code check, used both by the Clerk `user.created` webhook
  * (the real gate — deletes the account if invalid) and by write routes like
@@ -10,9 +12,10 @@ export function hasValidAccessCode(
   const providedCode = unsafeMetadata?.accessCode;
   const validCode = process.env.ACCESS_CODE;
 
-  return (
-    !!validCode &&
-    typeof providedCode === "string" &&
-    providedCode.trim() === validCode.trim()
-  );
+  if (!validCode || typeof providedCode !== "string") return false;
+
+  const expected = Buffer.from(validCode.trim());
+  const provided = Buffer.from(providedCode.trim());
+
+  return expected.length === provided.length && timingSafeEqual(expected, provided);
 }

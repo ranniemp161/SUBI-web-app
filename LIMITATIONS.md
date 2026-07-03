@@ -68,6 +68,24 @@ Per-user fixed-window limits (Postgres-backed, `src/lib/rate-limit.ts`):
 
 Exceeding a limit returns `429`. Tune the constants in the respective routes.
 
+Per-IP fixed-window limits on the 3 routes that bypass Clerk middleware
+(`src/proxy.ts`'s public-route list — no session to key on, so these are
+IP-based via `src/lib/ip-rate-limit.ts`):
+
+- **Transcription callback** (`/api/transcribe/callback`): 60 / 10 min.
+  Deepgram's servers call this; the per-project random token (checked after
+  the rate limit) is the real gate — this is a cost/DB-read cap, not the
+  primary defense.
+- **Access-code verification** (`/api/auth/verify-code`): 10 / 5 min.
+- **Clerk webhook** (`/api/webhooks/clerk`): 120 / 1 min. Verified by a svix
+  signature (checked after the rate limit is passed) — this is a volume cap,
+  not the primary defense.
+
+`getClientIp()` trusts the first `x-forwarded-for` entry, which is only safe
+because these routes are only ever reached through Vercel's edge (which sets
+it correctly and isn't attacker-spoofable there). If this app is ever moved
+off Vercel, that trust assumption needs re-checking before it's reused as-is.
+
 ## Operational setup
 
 ### Error tracking (Sentry) — off until configured

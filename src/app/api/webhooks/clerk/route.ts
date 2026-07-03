@@ -4,6 +4,16 @@ import { clerkClient } from "@clerk/nextjs/server";
 import { db } from "@/db";
 import { users } from "@/db/schema";
 import { hasValidAccessCode } from "@/lib/access-code";
+import { ipRateLimit } from "@/lib/ip-rate-limit";
+
+// No Clerk session on this request (Clerk itself is calling us), so it's
+// exempt from src/proxy.ts's middleware and per-user limits. The svix
+// signature below is the real gate; this is just a volume/cost ceiling, kept
+// high since Clerk's own infra may proxy through few IPs and can burst
+// during real signup spikes — a dropped legitimate webhook (meaning the
+// access-code gate never runs) is worse than a temporarily loose limit.
+const WEBHOOK_LIMIT = 120;
+const WEBHOOK_WINDOW_SECONDS = 60;
 
 /**
  * POST /api/webhooks/clerk
@@ -35,6 +45,14 @@ export async function POST(request: Request) {
     return NextResponse.json(
       { error: "Missing svix headers." },
       { status: 400 }
+    );
+  }
+
+  const limit = await ipRateLimit(request, "webhook-clerk", WEBHOOK_LIMIT, WEBHOOK_WINDOW_SECONDS);
+  if (!limit.allowed) {
+    return NextResponse.json(
+      { error: "Too many webhook requests." },
+      { status: 429 }
     );
   }
 

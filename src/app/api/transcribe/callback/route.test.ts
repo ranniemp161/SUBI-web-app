@@ -6,6 +6,7 @@ const state = vi.hoisted(() => ({
   selectRows: [] as Record<string, unknown>[],
   updates: [] as Record<string, unknown>[],
   deletedUrls: [] as string[],
+  rateAllowed: true,
 }));
 
 vi.mock("@vercel/blob", () => ({
@@ -44,19 +45,31 @@ vi.mock("@/db", () => {
   };
 });
 
+// Route's own rate limit — mocked at the same layer as every other route
+// test (@/lib/rate-limit), so the real getClientIp()/ipRateLimit() key
+// construction still runs and can be asserted against.
+vi.mock("@/lib/rate-limit", () => ({
+  rateLimit: vi.fn(async () => ({
+    allowed: state.rateAllowed,
+    remaining: state.rateAllowed ? 59 : 0,
+    limit: 60,
+  })),
+}));
+
 vi.mock("@/lib/deepgram", () => ({
   normalizeDeepgram: vi.fn(() => ({ words: [], text: "hello", duration: 1 })),
 }));
 
 import { POST } from "./route";
+import { rateLimit } from "@/lib/rate-limit";
 
 const VALID_ID = "12345678-1234-1234-1234-123456789abc";
 const TOKEN = "a".repeat(64);
 
-function callbackRequest(query: string, body: unknown = { results: {} }) {
+function callbackRequest(query: string, body: unknown = { results: {} }, ip = "203.0.113.1") {
   return new Request(`http://localhost/api/transcribe/callback${query}`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", "x-forwarded-for": ip },
     body: JSON.stringify(body),
   });
 }
@@ -65,20 +78,51 @@ beforeEach(() => {
   state.selectRows = [];
   state.updates = [];
   state.deletedUrls = [];
+  state.rateAllowed = true;
+  vi.clearAllMocks();
 });
 
-describe("POST /api/transcribe/callback — token auth", () => {
-  it("rejects a non-UUID projectId with 400", async () => {
+describe("POST /api/transcribe/callback — request shape guards", () => {
+  it("rejects a non-UUID projectId with 400 (never touches the rate limiter or DB)", async () => {
     const res = await POST(callbackRequest(`?projectId=not-a-uuid&token=${TOKEN}`));
     expect(res.status).toBe(400);
+    expect(rateLimit).not.toHaveBeenCalled();
     expect(state.updates).toHaveLength(0);
   });
 
-  it("rejects a missing token with 400", async () => {
+  it("rejects a missing token with 400 (never touches the rate limiter)", async () => {
     const res = await POST(callbackRequest(`?projectId=${VALID_ID}`));
     expect(res.status).toBe(400);
+    expect(rateLimit).not.toHaveBeenCalled();
   });
 
+  it("rejects a token that isn't 64 hex chars with 400 (never touches the rate limiter or DB)", async () => {
+    const res = await POST(callbackRequest(`?projectId=${VALID_ID}&token=not-hex-shaped`));
+    expect(res.status).toBe(400);
+    expect(rateLimit).not.toHaveBeenCalled();
+    expect(state.updates).toHaveLength(0);
+  });
+});
+
+describe("POST /api/transcribe/callback — IP rate limit", () => {
+  it("429s once the per-IP limit is exceeded, before the project lookup", async () => {
+    state.rateAllowed = false;
+    const res = await POST(callbackRequest(`?projectId=${VALID_ID}&token=${TOKEN}`, undefined, "198.51.100.9"));
+    expect(res.status).toBe(429);
+    expect(rateLimit).toHaveBeenCalledWith("transcribe-callback:198.51.100.9", 60, 600);
+    // selectRows defaults to [] anyway, but this proves the lookup never ran.
+    expect(state.updates).toHaveLength(0);
+  });
+
+  it("allows the request through and reaches the project lookup when under the limit", async () => {
+    state.selectRows = [{ id: VALID_ID, transcriptCallbackToken: TOKEN }];
+    const res = await POST(callbackRequest(`?projectId=${VALID_ID}&token=${TOKEN}`));
+    expect(res.status).toBe(200);
+    expect(rateLimit).toHaveBeenCalledWith("transcribe-callback:203.0.113.1", 60, 600);
+  });
+});
+
+describe("POST /api/transcribe/callback — token auth", () => {
   it("returns 401 when the project has no stored callback token", async () => {
     state.selectRows = [{ id: VALID_ID, transcriptCallbackToken: null }];
     const res = await POST(callbackRequest(`?projectId=${VALID_ID}&token=${TOKEN}`));
@@ -91,12 +135,6 @@ describe("POST /api/transcribe/callback — token auth", () => {
     const res = await POST(callbackRequest(`?projectId=${VALID_ID}&token=${"b".repeat(64)}`));
     expect(res.status).toBe(401);
     expect(state.updates).toHaveLength(0);
-  });
-
-  it("returns 401 when the provided token differs in length (no timing-safe crash)", async () => {
-    state.selectRows = [{ id: VALID_ID, transcriptCallbackToken: TOKEN }];
-    const res = await POST(callbackRequest(`?projectId=${VALID_ID}&token=short`));
-    expect(res.status).toBe(401);
   });
 
   it("accepts a matching token, stores the transcript, and clears the token", async () => {

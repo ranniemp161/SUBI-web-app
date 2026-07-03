@@ -6,6 +6,22 @@ import { projects } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { normalizeDeepgram } from "@/lib/deepgram";
 import { reportError } from "@/lib/observability";
+import { ipRateLimit } from "@/lib/ip-rate-limit";
+
+// This route has no Clerk session (Deepgram calls it directly), so it's
+// exempt from src/proxy.ts's middleware and from the per-user limits used
+// elsewhere. The per-project token below is the real gate; this cap just
+// bounds the DB read below to a fixed cost per IP regardless of how many
+// well-formed-but-wrong requests someone sends. 60/10min gives headroom for
+// Deepgram's callback infra, which may share egress IPs across many
+// customers' concurrent jobs.
+const CALLBACK_LIMIT = 60;
+const CALLBACK_WINDOW_SECONDS = 600;
+
+// Matches randomBytes(32).toString("hex") from the deepgram route exactly —
+// rejecting anything else here costs nothing (no DB, no rate limiter) and
+// filters out the vast majority of garbage before either.
+const TOKEN_SHAPE = /^[0-9a-f]{64}$/i;
 
 /** Best-effort blob cleanup — a failed delete shouldn't mask the real result. */
 async function deleteBlobQuietly(blobUrl: string) {
@@ -40,10 +56,18 @@ export async function POST(request: Request) {
       projectId
     );
 
-  if (!isValidUuid || !token) {
+  if (!isValidUuid || !token || !TOKEN_SHAPE.test(token)) {
     return NextResponse.json(
       { error: "Missing projectId or token." },
       { status: 400 }
+    );
+  }
+
+  const limit = await ipRateLimit(request, "transcribe-callback", CALLBACK_LIMIT, CALLBACK_WINDOW_SECONDS);
+  if (!limit.allowed) {
+    return NextResponse.json(
+      { error: "Too many callback requests." },
+      { status: 429 }
     );
   }
 
