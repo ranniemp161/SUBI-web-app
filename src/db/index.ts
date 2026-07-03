@@ -1,6 +1,21 @@
-import { neon } from "@neondatabase/serverless";
+import { neon, neonConfig } from "@neondatabase/serverless";
 import { drizzle } from "drizzle-orm/neon-http";
+import { AsyncLocalStorage } from "node:async_hooks";
 import * as schema from "./schema";
+
+/**
+ * Carries the current `withDbRetry` attempt's abort signal into the Neon
+ * driver's fetch. Without this, a timed-out attempt leaves its stalled fetch
+ * (and socket) in flight while the retry opens a new one — under sustained
+ * network starvation the retries would stack concurrent connections and
+ * worsen the very contention they're trying to escape.
+ */
+const attemptSignal = new AsyncLocalStorage<AbortSignal>();
+
+neonConfig.fetchFunction = (input: RequestInfo | URL, init?: RequestInit) => {
+  const signal = attemptSignal.getStore();
+  return fetch(input, signal ? { ...init, signal } : init);
+};
 
 /**
  * Creates a Neon HTTP database connection with Drizzle ORM.
@@ -42,6 +57,8 @@ function isRetryable(err: unknown): boolean {
   let e: unknown = err;
   // Walk the cause/sourceError chain the Neon driver nests errors under.
   for (let i = 0; i < 6 && e; i++) {
+    // Our own timeout may come back wrapped in a NeonDbError.
+    if (e instanceof DbTimeoutError) return true;
     const msg = e instanceof Error ? e.message : String(e);
     if (RETRYABLE.test(msg)) return true;
     e = (e as { cause?: unknown; sourceError?: unknown })?.cause
@@ -50,9 +67,13 @@ function isRetryable(err: unknown): boolean {
   return false;
 }
 
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+function withTimeout<T>(promise: Promise<T>, ms: number, onTimeout: () => void): Promise<T> {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new DbTimeoutError(ms)), ms);
+    const timer = setTimeout(() => {
+      // Tear down the in-flight fetch too, not just the race — see attemptSignal.
+      onTimeout();
+      reject(new DbTimeoutError(ms));
+    }, ms);
     promise.then(
       (value) => { clearTimeout(timer); resolve(value); },
       (error) => { clearTimeout(timer); reject(error); }
@@ -67,9 +88,10 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
  *
  * The Neon HTTP driver opens a fresh fetch per query and does no retrying, so a
  * momentarily starved process (e.g. under a large in-memory upload) can turn one
- * stalled TLS handshake into a hard 500. Each attempt gets its own timeout — we
- * abandon a stuck connection early rather than waiting out undici's ~10s connect
- * timeout — and calls the thunk again to build a brand-new query.
+ * stalled TLS handshake into a hard 500. Each attempt gets its own timeout and
+ * abort signal — on timeout we abort the stuck fetch (tearing down its socket)
+ * rather than waiting out undici's ~10s connect timeout or leaving it in flight
+ * alongside the retry — and calls the thunk again to build a brand-new query.
  *
  * Only use this for SELECTs. Do NOT wrap writes: a timed-out INSERT may have
  * committed server-side, so retrying it could duplicate rows.
@@ -84,11 +106,18 @@ export async function withDbRetry<T>(
 ): Promise<T> {
   let lastError: unknown;
   for (let attempt = 1; attempt <= attempts; attempt++) {
+    const controller = new AbortController();
     try {
-      return await withTimeout(query(), timeoutMs);
+      // The async wrapper makes the drizzle thenable execute inside the ALS
+      // context, so the driver's fetch picks up this attempt's abort signal.
+      return await withTimeout(
+        attemptSignal.run(controller.signal, async () => query()),
+        timeoutMs,
+        () => controller.abort()
+      );
     } catch (error) {
       lastError = error;
-      const retryable = error instanceof DbTimeoutError || isRetryable(error);
+      const retryable = isRetryable(error);
       if (!retryable || attempt === attempts) break;
       // A transient DB connection stall — worth a breadcrumb since it usually
       // means the process was momentarily starved (e.g. a large upload in flight).

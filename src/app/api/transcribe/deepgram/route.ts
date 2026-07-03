@@ -152,18 +152,6 @@ export async function POST(request: Request) {
     })
     .where(eq(projects.id, projectId));
 
-  // [DIAGNOSTIC] Count bytes we actually forward to Deepgram so we can compare
-  // against the declared Content-Length and detect a truncated upload.
-  const declaredBytes = Number(request.headers.get("content-length")) || null;
-  let forwardedBytes = 0;
-  const counter = new TransformStream<Uint8Array, Uint8Array>({
-    transform(chunk, controller) {
-      forwardedBytes += chunk.byteLength;
-      controller.enqueue(chunk);
-    },
-  });
-  const countedBody = request.body.pipeThrough(counter);
-
   try {
     // Stream the upload straight through to Deepgram instead of buffering the
     // whole file into memory with arrayBuffer() — a multi-GB Buffer + single
@@ -176,14 +164,9 @@ export async function POST(request: Request) {
         "Content-Type":
           request.headers.get("content-type") || "application/octet-stream",
       },
-      body: countedBody,
+      body: request.body,
       duplex: "half",
     } as RequestInit & { duplex: "half" });
-
-    // [DIAGNOSTIC] Log the byte accounting the moment Deepgram responds.
-    console.warn(
-      `[dg-diag] status=${dgResponse.status} contentType=${request.headers.get("content-type")} declaredBytes=${declaredBytes} forwardedBytes=${forwardedBytes} truncated=${declaredBytes !== null && forwardedBytes < declaredBytes}`
-    );
 
     if (!dgResponse.ok) {
       const detail = await dgResponse.text();

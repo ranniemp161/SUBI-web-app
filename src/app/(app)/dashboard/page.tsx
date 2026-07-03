@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import { Toaster, toast } from "sonner";
 import FilePicker, { type VideoMetadata } from "@/components/file-picker";
 import { formatDuration, formatDate } from "@/lib/utils";
 import { DEEPGRAM_MAX_UPLOAD_BYTES } from "@/lib/deepgram";
+import { extractAudioForTranscription } from "@/lib/audio-extract";
 
 interface Project {
   id: string;
@@ -72,13 +73,6 @@ function posterFor(id: string): string {
 const TRANSCRIBE_PROVIDER =
   process.env.NEXT_PUBLIC_TRANSCRIBE_PROVIDER === "deepgram" ? "deepgram" : "whisper";
 
-/** Kick off transcription for a project, dispatching to the active provider. */
-function startTranscription(projectId: string, file: File) {
-  return TRANSCRIBE_PROVIDER === "deepgram"
-    ? startDeepgramTranscription(projectId, file)
-    : startWhisperTranscription(projectId, file);
-}
-
 /** Pull the most useful human-readable reason out of a failed API response. */
 async function readErrorReason(response: Response): Promise<string> {
   try {
@@ -96,13 +90,17 @@ async function readErrorReason(response: Response): Promise<string> {
  * Deepgram posts the finished transcript to /api/transcribe/callback, which the
  * dashboard's polling picks up.
  */
-async function startDeepgramTranscription(projectId: string, file: File) {
+async function startDeepgramTranscription(
+  projectId: string,
+  media: Blob,
+  contentType: string
+) {
   const response = await fetch(
     `/api/transcribe/deepgram?projectId=${encodeURIComponent(projectId)}`,
     {
       method: "POST",
-      headers: { "Content-Type": file.type || "application/octet-stream" },
-      body: file,
+      headers: { "Content-Type": contentType || "application/octet-stream" },
+      body: media,
     }
   );
 
@@ -160,21 +158,96 @@ export default function DashboardPage() {
     fetchProjects();
   }, []);
 
+  /**
+   * Prepare the media, upload it, and start transcription, narrating progress
+   * via toasts. Shared by the create-project flow and the retry flow on
+   * failed cards. Fire-and-forget — status updates arrive via polling, but we
+   * surface each stage explicitly so the user isn't left guessing.
+   *
+   * For the Deepgram path we first extract the audio track in the browser
+   * (~50-100x smaller than the video), so the upload through our proxy takes
+   * seconds instead of saturating the uplink for minutes. If extraction isn't
+   * possible we fall back to uploading the original file, as before.
+   */
+  const kickOffTranscription = useCallback(async (projectId: string, file: File) => {
+    const toastId = `transcribe-${projectId}`;
+    // Don't leave the row spinning "Transcribing…" on failure — reflect it now.
+    const fail = (message: string, description?: string) => {
+      toast.error(message, { id: toastId, description });
+      setProjects((prev) =>
+        prev.map((p) =>
+          p.id === projectId ? { ...p, transcriptStatus: "failed" } : p
+        )
+      );
+    };
+
+    try {
+      let payload: Blob = file;
+      let contentType = file.type || "application/octet-stream";
+
+      if (TRANSCRIBE_PROVIDER === "deepgram") {
+        toast.loading("Extracting audio…", { id: toastId });
+        let lastPercent = -1;
+        const extracted = await extractAudioForTranscription(file, (fraction) => {
+          const percent = Math.round(fraction * 100);
+          if (percent === lastPercent) return; // don't spam toast re-renders
+          lastPercent = percent;
+          toast.loading("Extracting audio…", {
+            id: toastId,
+            description: `${percent}% — only the audio track is uploaded, not the video`,
+          });
+        });
+
+        if (extracted.kind === "no-audio") {
+          fail(
+            "No audio track found",
+            "This video has no audio, so there's nothing to transcribe."
+          );
+          return;
+        }
+        if (extracted.kind === "audio") {
+          payload = extracted.blob;
+          contentType = extracted.mimeType;
+        }
+        // "unsupported" → fall through and upload the original file.
+
+        if (payload.size > DEEPGRAM_MAX_UPLOAD_BYTES) {
+          fail(
+            "File too large to transcribe",
+            `Deepgram accepts files up to ${Math.floor(
+              DEEPGRAM_MAX_UPLOAD_BYTES / (1024 * 1024 * 1024)
+            )} GB. Try a shorter clip or a smaller file.`
+          );
+          return;
+        }
+      }
+
+      toast.loading("Uploading & starting transcription…", { id: toastId });
+      if (TRANSCRIBE_PROVIDER === "deepgram") {
+        await startDeepgramTranscription(projectId, payload, contentType);
+      } else {
+        await startWhisperTranscription(projectId, file);
+      }
+
+      toast.success("Transcription started", {
+        id: toastId,
+        description: "This can take a minute — the status updates here when it's ready.",
+      });
+    } catch (error) {
+      console.error("Failed to start transcription:", error);
+      fail(
+        "Transcription didn't start",
+        error instanceof Error ? error.message : String(error)
+      );
+    }
+  }, []);
+
   /** Handle file selection — create a new project, then kick off transcription. */
   const handleFileSelected = useCallback(
     async (file: File, metadata: VideoMetadata) => {
-      // Deepgram rejects uploads past its size limit — catch it here so we don't
-      // create an orphan project and waste a multi-GB upload. (The local whisper
-      // path has no such limit.)
-      if (TRANSCRIBE_PROVIDER === "deepgram" && file.size > DEEPGRAM_MAX_UPLOAD_BYTES) {
-        toast.error("File too large to transcribe", {
-          description: `Deepgram accepts files up to ${Math.floor(
-            DEEPGRAM_MAX_UPLOAD_BYTES / (1024 * 1024 * 1024)
-          )} GB. Try a shorter clip or a smaller file.`,
-        });
-        return;
-      }
-
+      // Note: no up-front size gate on the video itself — what's uploaded is
+      // the extracted audio track, which kickOffTranscription size-checks
+      // against the Deepgram cap after extraction.
       setIsCreating(true);
 
       try {
@@ -201,40 +274,60 @@ export default function DashboardPage() {
           ...prev,
         ]);
 
-        // Fire-and-forget — status updates arrive via polling below, but we
-        // surface start/failure explicitly so the user isn't left guessing
-        // whether anything is happening.
-        toast.loading("Uploading & starting transcription…", {
-          id: `transcribe-${project.id}`,
-        });
-        startTranscription(project.id, file)
-          .then(() => {
-            toast.success("Transcription started", {
-              id: `transcribe-${project.id}`,
-              description: "This can take a minute — the status updates here when it's ready.",
-            });
-          })
-          .catch((error) => {
-            console.error("Failed to start transcription:", error);
-            toast.error("Transcription didn't start", {
-              id: `transcribe-${project.id}`,
-              description: error instanceof Error ? error.message : String(error),
-            });
-            // Don't leave the row spinning "Transcribing…" — reflect the failure now.
-            setProjects((prev) =>
-              prev.map((p) =>
-                p.id === project.id ? { ...p, transcriptStatus: "failed" } : p
-              )
-            );
-          });
+        kickOffTranscription(project.id, file);
       } catch (error) {
         console.error("Failed to create project:", error);
       } finally {
         setIsCreating(false);
       }
     },
-    []
+    [kickOffTranscription]
   );
+
+  // Retry flow: the media only ever lives in the browser (nothing is stored
+  // server-side), so retranscribing a failed project means asking the user to
+  // re-select the file from disk, then re-running the same upload against the
+  // existing project id.
+  const retryInputRef = useRef<HTMLInputElement>(null);
+  const retryProjectRef = useRef<Project | null>(null);
+
+  function handleRetryClick(e: React.MouseEvent, project: Project) {
+    e.preventDefault();
+    retryProjectRef.current = project;
+    if (retryInputRef.current) {
+      // Reset so picking the same file as last time still fires onChange.
+      retryInputRef.current.value = "";
+      retryInputRef.current.click();
+    }
+  }
+
+  function handleRetryFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    const project = retryProjectRef.current;
+    retryProjectRef.current = null;
+    if (!file || !project) return;
+
+    if (!file.type.startsWith("video/")) {
+      toast.error("Please select a video file.");
+      return;
+    }
+
+    // Picking a different file than the project was created from is probably a
+    // mistake (the transcript would describe the wrong video) — flag it, but
+    // don't block: the user may simply have renamed the file.
+    if (file.name !== project.fileName) {
+      toast.message("Different file name", {
+        description: `This project was created from "${project.fileName}" but you picked "${file.name}". The transcript will be for the file you just picked.`,
+      });
+    }
+
+    setProjects((prev) =>
+      prev.map((p) =>
+        p.id === project.id ? { ...p, transcriptStatus: "processing" } : p
+      )
+    );
+    kickOffTranscription(project.id, file);
+  }
 
   /** Poll any project still transcribing until it's ready or failed. */
   useEffect(() => {
@@ -474,6 +567,35 @@ export default function DashboardPage() {
                     </div>
                   </Link>
 
+                  {/* Retry / start transcription — the media isn't stored
+                      server-side, so this re-prompts for the file. */}
+                  {(project.transcriptStatus === "failed" ||
+                    project.transcriptStatus === "idle") && (
+                    <div className="px-4 pb-4">
+                      <button
+                        onClick={(e) => handleRetryClick(e, project)}
+                        className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-foreground/[0.04] px-3 py-2 text-xs font-medium text-foreground/70 ring-1 ring-inset ring-foreground/10 transition-colors hover:bg-blue-500/15 hover:text-blue-200 hover:ring-blue-400/25"
+                      >
+                        <svg
+                          className="h-3.5 w-3.5"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                          />
+                        </svg>
+                        {project.transcriptStatus === "failed"
+                          ? "Retry transcription"
+                          : "Start transcription"}
+                      </button>
+                    </div>
+                  )}
+
                   {/* Delete */}
                   <button
                     onClick={(e) => handleDeleteProject(e, project.id)}
@@ -500,6 +622,17 @@ export default function DashboardPage() {
           </div>
         )}
       </div>
+
+      {/* Hidden input backing the per-card retry buttons. */}
+      <input
+        ref={retryInputRef}
+        type="file"
+        accept="video/*"
+        onChange={handleRetryFileSelected}
+        className="hidden"
+        aria-hidden
+        tabIndex={-1}
+      />
 
       <Toaster
         position="bottom-center"

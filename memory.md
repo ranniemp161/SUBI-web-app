@@ -1,104 +1,94 @@
-# Memory — Production-Hardening + 4K-Readiness
+# Memory — DB-retry fix + Deepgram "corrupt audio" investigation
 
 Last updated: 2026-07-02
 
 ## What was built
 
-Two bodies of work this session, all **committed to `main`** (8 commits total).
+All changes this session are **uncommitted** (working tree only — nothing pushed to `main`).
 
-### A) Production-hardening pass (Phases 0–4 docs)
-- `4eaf0b4` — Phase 6 export controls: cancel wiring + up-front browser-support
-  gating. `starting`/`cancelling` states so Cancel only shows once a real handle
-  exists; `useSyncExternalStore` gates the Export button (no hydration mismatch).
-  File: `dashboard/[id]/page.tsx`.
-- `39200e4` — Phase 1: **zod validation** (`src/lib/validation.ts`) on POST/PATCH
-  `/api/projects`; **trimmed `GET /api/projects`** to metadata columns; new
-  **`GET /api/projects/[id]/status`** (`getOwnedProjectStatus`) with the
-  dashboard poll repointed to it.
-- `48567e3` — Phase 2: **Postgres rate limiter** (`src/lib/rate-limit.ts`,
-  `rate_limits` table, atomic upsert) — create 60/hr, transcribe 30/hr (shared
-  Deepgram+whisper); **`transcript_status` text→enum** (`pgEnum`). Migration:
-  `drizzle/manual/0001_*.sql`. Added `db:generate`/`db:push` scripts.
-- `88276e4` — Phase 3 #6: **env-gated Sentry** (`@sentry/nextjs`).
-  `sentry.server/edge.config.ts`, `instrumentation.ts`,
-  `instrumentation-client.ts`, `lib/observability.ts` `reportError()` (API
-  catches route through it since they return 5xx without rethrowing).
-  `next.config.ts` wraps with `withSentryConfig` only when `SENTRY_DSN` set,
-  via dynamic import.
-- `3b30680` — Phase 3 #7: **route tests** + `vitest.config.ts` (`@/` alias).
-  Callback token auth, ownership (401/404), deepgram guard order (401→403→429).
-- `eaf4087` — **`LIMITATIONS.md`**.
+### A) Create-project 500 fix — DONE & verified
+- **`src/db/index.ts`** — new `withDbRetry(query, {attempts=3, timeoutMs=4000, baseDelayMs=150})`
+  helper + `DbTimeoutError`. Retries an **idempotent read** on transient connection
+  failures only (regex over `fetch failed`/`ECONNRESET`/DNS/etc., walking the
+  Neon driver's nested `cause`/`sourceError`). Each attempt has its own timeout
+  (abandons a stuck fetch early instead of waiting undici's ~10s). Emits a
+  `console.warn("[db] transient query failure (attempt n/3), retrying: …")`
+  breadcrumb on each retry. **Writes are deliberately NOT wrapped** (a timed-out
+  INSERT may have committed → duplicate rows).
+- **`src/lib/projects.ts`** — wrapped `getOwnedProject` + `getOwnedProjectStatus`.
+- **`src/app/api/projects/route.ts`** — wrapped the POST `users` SELECT (the exact
+  query that 500'd) and both GET reads.
 
-### B) 4K-readiness (answering "can it handle 4K?")
-- `5181a1d` — three improvements:
-  1. **Export encode pre-flight** — `export-worker.ts` reads the source video
-     track and runs `canEncodeVideo('avc', {width,height})` at the output size
-     before conversion; throws `"unsupported-resolution"` (new error code) with
-     an actionable message instead of failing inside `execute()`.
-  2. **Downscale on export** — Source/1080p/720p `<select>` in the editor top
-     bar, threaded `startExport` → worker as `maxHeight`; mediabunny caps output
-     height (aspect preserved, never upscales). New "Resolution too high" toast.
-  3. **Deepgram large-file guard** — `DEEPGRAM_MAX_UPLOAD_BYTES` (~2 GB) in
-     `src/lib/deepgram.ts`; rejected client-side (picker, before project/upload)
-     and server-side (413 before proxying). Whisper path exempt.
+### B) Deepgram "corrupt audio" — DIAGNOSTIC ONLY (temporary, must be removed)
+- **`src/app/api/transcribe/deepgram/route.ts`** — added a `[DIAGNOSTIC]`
+  `TransformStream` byte-counter around the streamed upload to Deepgram. Logs
+  `[dg-diag] status=… declaredBytes=<Content-Length> forwardedBytes=<counted>
+  truncated=<bool>` right when Deepgram responds. **This is instrumentation, not
+  a fix — delete it once the truncated-vs-not question is answered.**
 
 ## Decisions made
 
-- **Rate-limit backend = Postgres**, **error tracking = Sentry (env-gated)** —
-  both chosen deliberately (see prior rationale; safe before deploy topology is
-  known).
-- **4K / export is device-bound by design.** Export is 100% client-side
-  (WebCodecs in a worker), so the architecture is resolution-**agnostic** (no
-  cap, passes source through) but the real ceiling is the user's device. The
-  guarantee is "no artificial ceiling + graceful degradation (pre-flight +
-  downscale fallback)", NOT "every device can do 4K". Making 4K
-  device-independent would require server-side/GPU encoding — a different
-  architecture, not to be bolted on.
-- **Docker is NOT required.** Prod server is pure Node (Neon/Clerk/Deepgram are
-  external HTTP; export is client-side). The only system dep is the whisper
-  path's Python — and whisper is the local-dev stand-in; **prod uses Deepgram**.
-  Docker only becomes attractive for a container host (Fly), reproducibility, or
-  running whisper in prod. Decision deferred to the deploy-target choice.
+- **DB resilience = read-only retry** (user chose this scope explicitly over
+  "reads + guarded writes" or "no code change"). Symptom mitigation, not a root fix.
+- The two errors this session are **separate problems**: (A) create 500 is fixed;
+  (B) Deepgram corrupt-audio is unrelated and still open.
 
 ## Problems solved
 
-- **Turbopack "whole project traced" build warning** — proven **pre-existing**
-  (present at `48567e3` before Sentry) by stashing + building; caused by the
-  whisper route's `join(process.cwd(), …)` dynamic path, NOT Sentry. Documented
-  in LIMITATIONS.md; harmless on a Node host.
-- **`psql` not installed** — applied the Phase-2 DB migration via a temp Node
-  script using Neon's WebSocket Pool (atomic txn); script deleted after.
+- **Create 500 `fetch failed` to Neon** — root cause is NOT a bad query and NOT a
+  Neon outage (direct probe: 79–1093ms healthy). It's the single Node process
+  getting **network/event-loop-starved mid-request** while a large file streams
+  over the uplink, stalling the outbound Neon TLS handshake; the Neon HTTP driver
+  does zero retries so one blip = 500. Fixed by `withDbRetry`. **Verified live**:
+  log showed `[db] transient query failure (attempt 1/3) … DB query exceeded
+  4000ms` followed by success (project row created, no 500).
+- **Disproved my own first theory** that the transcribe route buffers the whole
+  file in memory — it already **streams** (`body: request.body, duplex:"half"`,
+  see the EPROTO comment). So the pressure is uplink bandwidth, not RAM.
+- **Dev JSON log ≠ request log**: `.next/dev/logs/next-development.log` captures
+  console + compile events only; per-request `POST … in Nms` timing lines go to
+  the **terminal stdout** (not that file). Don't infer "route never hit" from it —
+  use DB `transcript_status` as the source of truth.
 
 ## Current state
 
-- `tsc` clean, eslint clean, **`next build` passes** (only the pre-existing
-  whisper trace warning), **55/55 vitest tests pass**.
-- **DB migration APPLIED** to the Neon branch in `.env.local` (dev): enum +
-  `rate_limits` live. Rate-limit endpoints work. Sentry dormant (no DSN).
-- Working tree clean; everything committed.
+- `tsc` clean, **55/55 vitest pass**. Create flow works (retry confirmed absorbing
+  a real stall).
+- **Deepgram transcription is BROKEN for the test file**: `0615.mp4`, **23:32**
+  duration, user confirms codec is the same as previously-working files (`0502.mov`
+  transcribed fine). Fails with Deepgram 400 **"failed to process audio: corrupt
+  or unsupported data"** → project card shows **Failed**. File is valid on disk
+  (app read its duration client-side), so the leading hypothesis is **truncation
+  in transit** of the streamed upload (only long/large files fail).
+- Config: `NEXT_PUBLIC_TRANSCRIBE_PROVIDER=deepgram`, **no `PUBLIC_APP_URL`** →
+  deepgram route runs in **SYNC mode** on localhost (reads transcript from the
+  response; no callback). Dev server already running on **:3000** (PID 11588,
+  `next dev --webpack`, Next 16.2.9). A 2nd `npm run dev` will just grab :3001 and
+  exit — reuse :3000.
 
 ## Next session starts with
 
-1. **Phase 4 manual verification (with user; needs dev server + real files):**
-   `npm run dev` (Next 16, `--webpack`, :3000). Re-verify MP4 export (progress →
-   green complete → playable MP4 → correct cuts → A/V spot-check), the Cancel
-   button + support gating, the **new Source/1080p/720p downscale**, and **4K +
-   HEVC/MOV + VP9/WebM** sources.
-2. If deploying: **apply `drizzle/manual/0001_*.sql` to the PRODUCTION Neon
-   branch** (only the dev branch has it so far).
-3. Optional, offered but not started: a **Dockerfile + `output: "standalone"`**
-   (Deepgram-only, no Python) — only if the deploy target wants a container.
+1. **Read the `[dg-diag]` line** from `.next/dev/logs/next-development.log` (or ask
+   user to retry importing `0615.mp4` to regenerate it). Decision fork:
+   - `truncated=true` (forwardedBytes < declaredBytes) → upload cut off in transit;
+     fix is our side (investigate why the browser→server stream ends early under a
+     saturated uplink; consider buffering-with-Content-Length or chunked handling).
+   - `truncated=false` → full file reached Deepgram and it still rejected →
+     Deepgram-side decode issue (send a real `Content-Length` instead of chunked,
+     or route large/long files through callback mode instead of sync).
+2. **Remove the `[DIAGNOSTIC]` byte-counter** from the deepgram route once answered.
+3. **Commit** the `withDbRetry` fix (A) — it's verified and worth landing
+   independently of the Deepgram investigation.
 
 ## Open questions
 
-- **R2/object-storage + deploy-target decision** — user is raising the storage
-  cost/scalability tradeoff (browser+server-memory proxy, ~8GB body, single
-  long-running Node process, not serverless-friendly) with their client. Do NOT
-  re-add R2 or change the deploy assumption without sign-off. Docker + prod DB
-  migration both hinge on this. See `project_r2_storage_decision.md`.
-- **Deepgram's exact upload limit** — `DEEPGRAM_MAX_UPLOAD_BYTES` set to ~2 GB
-  from best knowledge; confirm against the current Deepgram plan/docs.
-- **4K/HEVC/VP9 export unverified end to end** (only one ~71MB H.264 file tested).
-- **Sentry** not enabled (needs user's account + DSN env vars; see LIMITATIONS.md).
-- Deferred long-term (unchanged): filler-word detection, semantic/rambling trim,
-  preset tuning on real footage; export keyframe-seek skipping if slow.
+- **Truncation vs Deepgram decode** — unresolved; the `[dg-diag]` log answers it.
+- Does Deepgram's **sync (non-callback) endpoint** have a lower size/duration
+  ceiling than callback mode? A 23-min file in sync mode may be the trigger.
+- The `withDbRetry` mitigation can't cure **sustained** uplink contention (all 3
+  retries fail if saturation lasts the whole upload). True fix is the upload
+  **topology** — e.g. browser→R2 then hand Deepgram a URL (Deepgram fetches it,
+  no proxy, no contention). This is the R2 decision still parked with the client
+  (see `project_r2_storage_decision.md`) — do NOT act on it without sign-off.
+- Prior session's items still open: Phase-4 manual verification (export/downscale/
+  4K-HEVC-VP9), prod Neon migration if deploying, optional Dockerfile.
