@@ -51,7 +51,7 @@ export default function AppLayout({
               </svg>
             </div>
             <span className="text-lg font-bold text-foreground">
-              Rough Cut
+              Ruff Cut
             </span>
           </Link>
           <UserButton

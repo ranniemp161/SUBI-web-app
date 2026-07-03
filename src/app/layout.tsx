@@ -14,9 +14,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Rough Cut — Automated Video Editing",
+  title: "Ruff Cut — Automated Video Editing",
   description:
-    "Turn raw footage into a clean rough cut. Remove silence, retakes, and dead air, then edit like a document instead of a timeline.",
+    "Turn raw footage into a clean rough cut. Remove silence, retakes, and dead air, then edit like a document instead of a timeline. Your video never leaves your computer.",
 };
 
 export default function RootLayout({
