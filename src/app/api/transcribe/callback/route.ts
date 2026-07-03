@@ -1,10 +1,20 @@
 import { timingSafeEqual } from "crypto";
 import { NextResponse } from "next/server";
+import { del } from "@vercel/blob";
 import { db } from "@/db";
 import { projects } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { normalizeDeepgram } from "@/lib/deepgram";
 import { reportError } from "@/lib/observability";
+
+/** Best-effort blob cleanup — a failed delete shouldn't mask the real result. */
+async function deleteBlobQuietly(blobUrl: string) {
+  try {
+    await del(blobUrl);
+  } catch (error) {
+    reportError("Failed to delete transcription blob", error);
+  }
+}
 
 /**
  * POST /api/transcribe/callback
@@ -19,6 +29,10 @@ export async function POST(request: Request) {
   const url = new URL(request.url);
   const projectId = url.searchParams.get("projectId");
   const token = url.searchParams.get("token");
+  // The blob URL the deepgram route embedded in this callback URL when it
+  // kicked off the job — this is the only record of it, since nothing is
+  // persisted to the DB while the job is in flight (see deepgram/route.ts).
+  const blobUrl = url.searchParams.get("blobUrl");
 
   const isValidUuid =
     !!projectId &&
@@ -74,6 +88,8 @@ export async function POST(request: Request) {
       })
       .where(eq(projects.id, projectId));
 
+    if (blobUrl) await deleteBlobQuietly(blobUrl);
+
     return NextResponse.json({ received: true });
   } catch (error) {
     reportError("Error processing transcribe callback", error);
@@ -85,6 +101,8 @@ export async function POST(request: Request) {
         updatedAt: new Date(),
       })
       .where(eq(projects.id, projectId));
+
+    if (blobUrl) await deleteBlobQuietly(blobUrl);
 
     return NextResponse.json(
       { error: "Failed to process callback." },

@@ -5,6 +5,13 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const state = vi.hoisted(() => ({
   selectRows: [] as Record<string, unknown>[],
   updates: [] as Record<string, unknown>[],
+  deletedUrls: [] as string[],
+}));
+
+vi.mock("@vercel/blob", () => ({
+  del: vi.fn(async (url: string) => {
+    state.deletedUrls.push(url);
+  }),
 }));
 
 // Minimal chainable + thenable Drizzle stand-in: every builder method returns
@@ -57,6 +64,7 @@ function callbackRequest(query: string, body: unknown = { results: {} }) {
 beforeEach(() => {
   state.selectRows = [];
   state.updates = [];
+  state.deletedUrls = [];
 });
 
 describe("POST /api/transcribe/callback — token auth", () => {
@@ -112,5 +120,37 @@ describe("POST /api/transcribe/callback — token auth", () => {
     expect(update.transcriptStatus).toBe("failed");
     expect(update.transcript).toBeUndefined();
     expect(update.transcriptCallbackToken).toBeNull();
+  });
+});
+
+describe("POST /api/transcribe/callback — blob cleanup", () => {
+  const BLOB_URL = "https://abc123.public.blob.vercel-storage.com/projects/x/audio.m4a";
+
+  it("deletes the blob after a successful transcript is stored", async () => {
+    state.selectRows = [{ id: VALID_ID, transcriptCallbackToken: TOKEN }];
+    const res = await POST(
+      callbackRequest(`?projectId=${VALID_ID}&token=${TOKEN}&blobUrl=${encodeURIComponent(BLOB_URL)}`)
+    );
+    expect(res.status).toBe(200);
+    expect(state.deletedUrls).toEqual([BLOB_URL]);
+  });
+
+  it("still deletes the blob when Deepgram reports an error", async () => {
+    state.selectRows = [{ id: VALID_ID, transcriptCallbackToken: TOKEN }];
+    const res = await POST(
+      callbackRequest(
+        `?projectId=${VALID_ID}&token=${TOKEN}&blobUrl=${encodeURIComponent(BLOB_URL)}`,
+        { err_code: "SOME_ERROR" }
+      )
+    );
+    expect(res.status).toBe(200);
+    expect(state.deletedUrls).toEqual([BLOB_URL]);
+  });
+
+  it("doesn't attempt a delete when no blobUrl was provided", async () => {
+    state.selectRows = [{ id: VALID_ID, transcriptCallbackToken: TOKEN }];
+    const res = await POST(callbackRequest(`?projectId=${VALID_ID}&token=${TOKEN}`));
+    expect(res.status).toBe(200);
+    expect(state.deletedUrls).toEqual([]);
   });
 });

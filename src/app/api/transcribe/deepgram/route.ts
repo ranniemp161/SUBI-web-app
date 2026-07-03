@@ -1,6 +1,7 @@
 import { randomBytes } from "crypto";
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
+import { del } from "@vercel/blob";
 import { db } from "@/db";
 import { projects } from "@/db/schema";
 import { eq } from "drizzle-orm";
@@ -8,27 +9,27 @@ import { getOwnedProject } from "@/lib/projects";
 import { hasValidAccessCode } from "@/lib/access-code";
 import { rateLimit } from "@/lib/rate-limit";
 import { reportError } from "@/lib/observability";
+import { isOwnBlobUrl } from "@/lib/blob";
 import {
-  DEEPGRAM_MAX_UPLOAD_BYTES,
   extractDeepgramError,
   normalizeDeepgram,
   type DeepgramResponse,
 } from "@/lib/deepgram";
 
-// Transcription is the expensive path (Deepgram cost + a large in-memory proxy
-// pass), so cap how often a single user can kick it off.
+// Transcription is the expensive path (Deepgram cost), so cap how often a
+// single user can kick it off.
 const TRANSCRIBE_LIMIT = 30;
 const TRANSCRIBE_WINDOW_SECONDS = 3600;
 
 /**
  * POST /api/transcribe/deepgram?projectId=<id>
  *
- * Kicks off Deepgram transcription by proxying the media through our own
- * server. The browser can't upload straight to api.deepgram.com — the
- * pre-recorded REST endpoint doesn't send CORS headers, so a cross-origin
- * fetch with an Authorization header is blocked at preflight. So the browser
- * POSTs the raw media here (Content-Type = the file's type) and we forward it
- * to Deepgram with our key.
+ * Kicks off Deepgram transcription. The browser has already uploaded the
+ * extracted audio straight to Vercel Blob (see /api/transcribe/blob-token) —
+ * this route just receives that blob's URL as a small JSON body and tells
+ * Deepgram to fetch it directly, so our server never touches the audio bytes.
+ * This also sidesteps Vercel serverless Functions' ~4.5MB request body cap,
+ * which the old raw-body-proxy design would have hit on any real recording.
  *
  * Two completion modes, chosen by whether we can hand Deepgram a publicly
  * reachable callback URL:
@@ -36,12 +37,15 @@ const TRANSCRIBE_WINDOW_SECONDS = 3600;
  * - **Callback (public host):** we pass a `callback` URL; Deepgram accepts the
  *   job immediately and POSTs the finished transcript to
  *   /api/transcribe/callback. This route returns as soon as the job is
- *   accepted — the connection isn't held for the whole transcription.
+ *   accepted — the connection isn't held for the whole transcription. The
+ *   blob can't be deleted yet (Deepgram fetches it asynchronously after we
+ *   return), so its URL rides along in the callback URL's query string for
+ *   the callback route to clean up once the job actually finishes.
  * - **Synchronous (localhost):** Deepgram can't reach a localhost callback
  *   (it rejects it as "Invalid callback URL"), so instead we omit the callback
  *   and read the transcript straight out of Deepgram's HTTP response, storing
- *   it here before returning. No tunnel needed for local dev — mirrors how the
- *   local faster-whisper path works.
+ *   it here before returning — and deleting the blob immediately after, since
+ *   nothing else needs it once the transcript is captured.
  */
 function isLocalHostname(hostname: string): boolean {
   return (
@@ -51,6 +55,15 @@ function isLocalHostname(hostname: string): boolean {
     hostname === "[::1]" ||
     hostname.endsWith(".local")
   );
+}
+
+/** Best-effort blob cleanup — a failed delete shouldn't mask the real result. */
+async function deleteBlobQuietly(blobUrl: string) {
+  try {
+    await del(blobUrl);
+  } catch (error) {
+    reportError("Failed to delete transcription blob", error);
+  }
 }
 
 export async function POST(request: Request) {
@@ -100,23 +113,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Project not found." }, { status: 404 });
   }
 
-  if (!request.body) {
-    return NextResponse.json({ error: "No media in request body." }, { status: 400 });
-  }
+  const { blobUrl } = await request.json().catch(() => ({ blobUrl: null }));
 
-  // Reject oversized uploads before streaming a multi-GB body to Deepgram only
-  // to have it rejected. The browser sets Content-Length for a File body; if
-  // it's absent we let Deepgram be the backstop.
-  const contentLength = Number(request.headers.get("content-length"));
-  if (Number.isFinite(contentLength) && contentLength > DEEPGRAM_MAX_UPLOAD_BYTES) {
-    return NextResponse.json(
-      {
-        error: `This file is too large to transcribe (max ${Math.floor(
-          DEEPGRAM_MAX_UPLOAD_BYTES / (1024 * 1024 * 1024)
-        )} GB). Try a shorter clip or a smaller file.`,
-      },
-      { status: 413 }
-    );
+  if (typeof blobUrl !== "string" || !isOwnBlobUrl(blobUrl)) {
+    return NextResponse.json({ error: "Invalid or missing blobUrl." }, { status: 400 });
   }
 
   // The base Deepgram's callback must POST back to. PUBLIC_APP_URL (a tunnel's
@@ -139,7 +139,7 @@ export async function POST(request: Request) {
   if (!useSync && callbackToken) {
     params.set(
       "callback",
-      `${callbackBase}/api/transcribe/callback?projectId=${projectId}&token=${callbackToken}`
+      `${callbackBase}/api/transcribe/callback?projectId=${projectId}&token=${callbackToken}&blobUrl=${encodeURIComponent(blobUrl)}`
     );
   }
 
@@ -153,20 +153,16 @@ export async function POST(request: Request) {
     .where(eq(projects.id, projectId));
 
   try {
-    // Stream the upload straight through to Deepgram instead of buffering the
-    // whole file into memory with arrayBuffer() — a multi-GB Buffer + single
-    // socket write is what blew up with EPROTO. `duplex: "half"` is required
-    // by Node/undici whenever the fetch body is a stream.
+    // Hand Deepgram a URL instead of streaming bytes — Deepgram fetches the
+    // audio itself, so our request body is tiny regardless of recording length.
     const dgResponse = await fetch(`https://api.deepgram.com/v1/listen?${params}`, {
       method: "POST",
       headers: {
         Authorization: `Token ${deepgramApiKey}`,
-        "Content-Type":
-          request.headers.get("content-type") || "application/octet-stream",
+        "Content-Type": "application/json",
       },
-      body: request.body,
-      duplex: "half",
-    } as RequestInit & { duplex: "half" });
+      body: JSON.stringify({ url: blobUrl }),
+    });
 
     if (!dgResponse.ok) {
       const detail = await dgResponse.text();
@@ -181,6 +177,10 @@ export async function POST(request: Request) {
         })
         .where(eq(projects.id, projectId));
 
+      // Whether sync or callback mode, a rejected initial request means no
+      // callback will ever arrive — safe to clean up now either way.
+      await deleteBlobQuietly(blobUrl);
+
       return NextResponse.json(
         { error: "Deepgram rejected the request.", detail: extractDeepgramError(detail) },
         { status: 502 }
@@ -188,7 +188,8 @@ export async function POST(request: Request) {
     }
 
     // Callback mode: Deepgram only acknowledged the job here — the transcript
-    // arrives later at /api/transcribe/callback, which flips status to ready.
+    // arrives later at /api/transcribe/callback, which flips status to ready
+    // and deletes the blob once Deepgram has actually fetched and used it.
     if (!useSync) {
       return NextResponse.json({ received: true });
     }
@@ -208,6 +209,8 @@ export async function POST(request: Request) {
       })
       .where(eq(projects.id, projectId));
 
+    await deleteBlobQuietly(blobUrl);
+
     return NextResponse.json({ received: true });
   } catch (error) {
     reportError("Error starting Deepgram transcription", error);
@@ -219,6 +222,8 @@ export async function POST(request: Request) {
         updatedAt: new Date(),
       })
       .where(eq(projects.id, projectId));
+
+    await deleteBlobQuietly(blobUrl);
 
     return NextResponse.json(
       { error: "Failed to start transcription." },

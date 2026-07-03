@@ -3,9 +3,9 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import { Toaster, toast } from "sonner";
+import { upload } from "@vercel/blob/client";
 import FilePicker, { type VideoMetadata } from "@/components/file-picker";
 import { formatDuration, formatDate } from "@/lib/utils";
-import { DEEPGRAM_MAX_UPLOAD_BYTES } from "@/lib/deepgram";
 import { extractAudioForTranscription } from "@/lib/audio-extract";
 
 interface Project {
@@ -84,23 +84,34 @@ async function readErrorReason(response: Response): Promise<string> {
 }
 
 /**
- * Deepgram path: upload the media to our own server, which forwards it to
- * Deepgram with a callback URL. We proxy (rather than upload straight from the
- * browser) because Deepgram's pre-recorded REST endpoint isn't CORS-enabled.
- * Deepgram posts the finished transcript to /api/transcribe/callback, which the
+ * Deepgram path: upload the media straight to Vercel Blob from the browser
+ * (bypassing our server for the bytes entirely — Deepgram's pre-recorded REST
+ * endpoint isn't CORS-enabled, so the browser can't hand it to Deepgram
+ * directly, but Blob's client upload works fine), then tell our server to
+ * kick off transcription against that URL. Deepgram fetches the audio itself
+ * and posts the finished transcript to /api/transcribe/callback, which the
  * dashboard's polling picks up.
  */
 async function startDeepgramTranscription(
   projectId: string,
   media: Blob,
-  contentType: string
+  contentType: string,
+  onUploadProgress: (fraction: number) => void
 ) {
+  const blob = await upload(`projects/${projectId}/${crypto.randomUUID()}`, media, {
+    access: "public",
+    handleUploadUrl: "/api/transcribe/blob-token",
+    clientPayload: JSON.stringify({ projectId }),
+    contentType,
+    onUploadProgress: ({ percentage }) => onUploadProgress(percentage / 100),
+  });
+
   const response = await fetch(
     `/api/transcribe/deepgram?projectId=${encodeURIComponent(projectId)}`,
     {
       method: "POST",
-      headers: { "Content-Type": contentType || "application/octet-stream" },
-      body: media,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ blobUrl: blob.url }),
     }
   );
 
@@ -158,6 +169,11 @@ export default function DashboardPage() {
     fetchProjects();
   }, []);
 
+  // Guards against double-submitting the same project (e.g. mashing "Retry")
+  // — the Deepgram route no longer has a DB column to detect that itself,
+  // since the blob URL is now just a request-scoped value, not stored state.
+  const inFlightProjectIds = useRef<Set<string>>(new Set());
+
   /**
    * Prepare the media, upload it, and start transcription, narrating progress
    * via toasts. Shared by the create-project flow and the retry flow on
@@ -165,11 +181,16 @@ export default function DashboardPage() {
    * surface each stage explicitly so the user isn't left guessing.
    *
    * For the Deepgram path we first extract the audio track in the browser
-   * (~50-100x smaller than the video), so the upload through our proxy takes
-   * seconds instead of saturating the uplink for minutes. If extraction isn't
-   * possible we fall back to uploading the original file, as before.
+   * (~50-100x smaller than the video) and upload that straight to Vercel Blob
+   * — our server never sees the bytes, which both keeps uploads fast and
+   * avoids Vercel serverless Functions' ~4.5MB request body cap. If
+   * extraction isn't possible we fall back to uploading the original file,
+   * still via Blob (so even that fallback stays Vercel-compatible).
    */
   const kickOffTranscription = useCallback(async (projectId: string, file: File) => {
+    if (inFlightProjectIds.current.has(projectId)) return;
+    inFlightProjectIds.current.add(projectId);
+
     const toastId = `transcribe-${projectId}`;
     // Don't leave the row spinning "Transcribing…" on failure — reflect it now.
     const fail = (message: string, description?: string) => {
@@ -211,21 +232,16 @@ export default function DashboardPage() {
         }
         // "unsupported" → fall through and upload the original file.
 
-        if (payload.size > DEEPGRAM_MAX_UPLOAD_BYTES) {
-          fail(
-            "File too large to transcribe",
-            `Deepgram accepts files up to ${Math.floor(
-              DEEPGRAM_MAX_UPLOAD_BYTES / (1024 * 1024 * 1024)
-            )} GB. Try a shorter clip or a smaller file.`
-          );
-          return;
-        }
-      }
-
-      toast.loading("Uploading & starting transcription…", { id: toastId });
-      if (TRANSCRIBE_PROVIDER === "deepgram") {
-        await startDeepgramTranscription(projectId, payload, contentType);
+        toast.loading("Uploading…", { id: toastId, description: "0%" });
+        let lastUploadPercent = -1;
+        await startDeepgramTranscription(projectId, payload, contentType, (fraction) => {
+          const percent = Math.round(fraction * 100);
+          if (percent === lastUploadPercent) return;
+          lastUploadPercent = percent;
+          toast.loading("Uploading…", { id: toastId, description: `${percent}%` });
+        });
       } else {
+        toast.loading("Uploading & starting transcription…", { id: toastId });
         await startWhisperTranscription(projectId, file);
       }
 
@@ -239,6 +255,8 @@ export default function DashboardPage() {
         "Transcription didn't start",
         error instanceof Error ? error.message : String(error)
       );
+    } finally {
+      inFlightProjectIds.current.delete(projectId);
     }
   }, []);
 

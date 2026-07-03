@@ -17,6 +17,7 @@
     "@deepgram/sdk": "^5.5.0",
     "@neondatabase/serverless": "^1.1.0",
     "@sentry/nextjs": "^10.63.0",
+    "@vercel/blob": "^2.5.0",
     "clsx": "^2.1.1",
     "drizzle-orm": "^0.45.2",
     "lucide-react": "^1.22.0",
