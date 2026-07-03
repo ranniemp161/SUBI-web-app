@@ -8,7 +8,7 @@
 
 import { detectRetakes } from "./retake-detection";
 
-/** A single transcribed word with timing, matching the Deepgram/whisper response shape. */
+/** A single transcribed word with timing, matching the Deepgram response shape. */
 export interface TranscriptWord {
   word: string;
   start: number;
@@ -97,7 +97,7 @@ const MIN_INITIAL_KEEP_FRACTION = 0.1;
 
 /**
  * Drop transcript words with unusable timing before they reach the EDL math.
- * ASR (faster-whisper especially) can return null/NaN word timestamps; those
+ * ASR output can contain null/NaN word timestamps; those
  * coerce to 0 in arithmetic, which collapses every gap check and leaves
  * `prevEnd` stuck at 0 — so the trailing-gap branch marks the entire clip as
  * one giant "silence" cut. Keep only finite, forward-ordered words.

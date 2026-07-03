@@ -182,8 +182,8 @@ export default function EditorPage() {
 
         if (savedEdl?.sensitivity) setSensitivity(savedEdl.sensitivity);
 
-        // Only auto-build from the transcript once it's actually ready. Whisper
-        // transcribes in the background, so an editor opened mid-processing has
+        // Only auto-build from the transcript once it's actually ready.
+        // Transcription runs in the background, so an editor opened mid-processing has
         // no words yet — building then would derive the EDL from an empty
         // transcript (the original whole-video-deleted bug). When ready we build;
         // otherwise we keep any valid saved EDL and wait for a reload.

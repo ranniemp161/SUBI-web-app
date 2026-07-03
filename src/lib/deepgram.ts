@@ -42,7 +42,7 @@ export interface NormalizedTranscript {
 
 /**
  * Flatten Deepgram's nested response into the flat {words, text, duration}
- * shape the editor expects (identical to what the local whisper script emits).
+ * shape the editor expects.
  * `punctuated_word` is preferred so retake detection's sentence-splitter still
  * sees terminal punctuation.
  */

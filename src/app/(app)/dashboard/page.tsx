@@ -66,14 +66,6 @@ function posterFor(id: string): string {
   return POSTER_GRADIENTS[hash % POSTER_GRADIENTS.length];
 }
 
-// Which transcription backend to use. Deepgram is the real pipeline; local
-// faster-whisper is the token-saving stand-in for local dev. Set
-// NEXT_PUBLIC_TRANSCRIBE_PROVIDER=deepgram to exercise the Deepgram path
-// (requires the app be reached over the public tunnel so Deepgram's callback
-// can land on /api/transcribe/callback).
-const TRANSCRIBE_PROVIDER =
-  process.env.NEXT_PUBLIC_TRANSCRIBE_PROVIDER === "deepgram" ? "deepgram" : "whisper";
-
 /** Pull the most useful human-readable reason out of a failed API response. */
 async function readErrorReason(response: Response): Promise<string> {
   try {
@@ -138,25 +130,6 @@ async function startDeepgramTranscription(
 }
 
 /**
- * Local faster-whisper path: upload the video to our own route, which runs
- * whisper in the background and writes the transcript when it finishes.
- */
-async function startWhisperTranscription(projectId: string, file: File) {
-  const formData = new FormData();
-  formData.set("projectId", projectId);
-  formData.set("file", file);
-
-  const response = await fetch("/api/transcribe/whisper", {
-    method: "POST",
-    body: formData,
-  });
-
-  if (!response.ok) {
-    throw new Error(await readErrorReason(response));
-  }
-}
-
-/**
  * Dashboard page — the user's home screen after login.
  *
  * Shows existing projects and a file picker for creating new ones.
@@ -197,7 +170,7 @@ export default function DashboardPage() {
    * failed cards. Fire-and-forget — status updates arrive via polling, but we
    * surface each stage explicitly so the user isn't left guessing.
    *
-   * For the Deepgram path we first extract the audio track in the browser
+   * We first extract the audio track in the browser
    * (~50-100x smaller than the video) and upload that straight to Vercel Blob
    * — our server never sees the bytes, which both keeps uploads fast and
    * avoids Vercel serverless Functions' ~4.5MB request body cap. If
@@ -223,44 +196,39 @@ export default function DashboardPage() {
       let payload: Blob = file;
       let contentType = file.type || "application/octet-stream";
 
-      if (TRANSCRIBE_PROVIDER === "deepgram") {
-        toast.loading("Extracting audio…", { id: toastId });
-        let lastPercent = -1;
-        const extracted = await extractAudioForTranscription(file, (fraction) => {
-          const percent = Math.round(fraction * 100);
-          if (percent === lastPercent) return; // don't spam toast re-renders
-          lastPercent = percent;
-          toast.loading("Extracting audio…", {
-            id: toastId,
-            description: `${percent}% — only the audio track is uploaded, not the video`,
-          });
+      toast.loading("Extracting audio…", { id: toastId });
+      let lastPercent = -1;
+      const extracted = await extractAudioForTranscription(file, (fraction) => {
+        const percent = Math.round(fraction * 100);
+        if (percent === lastPercent) return; // don't spam toast re-renders
+        lastPercent = percent;
+        toast.loading("Extracting audio…", {
+          id: toastId,
+          description: `${percent}% — only the audio track is uploaded, not the video`,
         });
+      });
 
-        if (extracted.kind === "no-audio") {
-          fail(
-            "No audio track found",
-            "This video has no audio, so there's nothing to transcribe."
-          );
-          return;
-        }
-        if (extracted.kind === "audio") {
-          payload = extracted.blob;
-          contentType = extracted.mimeType;
-        }
-        // "unsupported" → fall through and upload the original file.
-
-        toast.loading("Uploading…", { id: toastId, description: "0%" });
-        let lastUploadPercent = -1;
-        await startDeepgramTranscription(projectId, payload, contentType, (fraction) => {
-          const percent = Math.round(fraction * 100);
-          if (percent === lastUploadPercent) return;
-          lastUploadPercent = percent;
-          toast.loading("Uploading…", { id: toastId, description: `${percent}%` });
-        });
-      } else {
-        toast.loading("Uploading & starting transcription…", { id: toastId });
-        await startWhisperTranscription(projectId, file);
+      if (extracted.kind === "no-audio") {
+        fail(
+          "No audio track found",
+          "This video has no audio, so there's nothing to transcribe."
+        );
+        return;
       }
+      if (extracted.kind === "audio") {
+        payload = extracted.blob;
+        contentType = extracted.mimeType;
+      }
+      // "unsupported" → fall through and upload the original file.
+
+      toast.loading("Uploading…", { id: toastId, description: "0%" });
+      let lastUploadPercent = -1;
+      await startDeepgramTranscription(projectId, payload, contentType, (fraction) => {
+        const percent = Math.round(fraction * 100);
+        if (percent === lastUploadPercent) return;
+        lastUploadPercent = percent;
+        toast.loading("Uploading…", { id: toastId, description: `${percent}%` });
+      });
 
       toast.success("Transcription started", {
         id: toastId,

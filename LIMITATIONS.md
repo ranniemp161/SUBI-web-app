@@ -28,30 +28,26 @@ pass. These are known and mostly intentional — not bugs. Grouped by area.
 
 ## Video storage (product tradeoff)
 
-- **The video is never stored server-side.** It lives in the browser, is proxied
-  through the Next.js server straight to the transcription provider, and is
-  otherwise only in memory for the upload. Consequently, **reopening a project
-  requires re-selecting the source file** from disk.
+- **The video is never stored server-side.** It lives in the browser; only the
+  extracted audio track is uploaded (browser → Vercel Blob directly, our server
+  never sees the bytes), and that blob is deleted as soon as transcription
+  finishes. Consequently, **reopening a project requires re-selecting the
+  source file** from disk.
 - This is a deliberate, cost-driven decision (no object storage). See the
   cross-session note on the R2/object-storage decision — it is **pending a
   client conversation** and should not be reversed without that.
 
 ## Scale & deployment
 
-- **Single long-running Node process is assumed.** The transcription upload
-  proxy streams multi-GB request bodies and can hold a connection for the length
-  of a sync-mode transcription. This is **not serverless-friendly** (Vercel-style
-  function body/memory/time caps) and is the main input to the deploy-target
-  decision that rides along with the storage question above.
-- **Concurrent-upload memory ceiling.** Each concurrent large upload consumes
-  significant RAM on the one process (`proxyClientMaxBodySize: "8gb"` in
-  `next.config.ts`). Fine at current low-concurrency scale; a known ceiling to
-  revisit before real concurrent traffic.
-- **Deepgram upload size limit.** Deepgram caps direct file uploads (~2 GB,
-  `DEEPGRAM_MAX_UPLOAD_BYTES` — confirm against your plan). Guarded both
-  client-side (the picker rejects an over-limit file before creating a project
-  or uploading) and server-side (the route returns 413 before proxying). The
-  local whisper path has no such limit.
+- **Serverless-compatible (Vercel) by design.** Media bytes never pass through
+  the Next.js server: the browser uploads extracted audio directly to Vercel
+  Blob and Deepgram fetches it by URL, so Vercel's ~4.5MB function body cap is
+  never in play. The former local-whisper path (which needed a persistent Node
+  host, local disk, and Python) has been removed.
+- **Deepgram upload size limit.** Deepgram caps fetched files (~2 GB,
+  `DEEPGRAM_MAX_UPLOAD_BYTES` — confirm against your plan). Enforced at Blob
+  token issuance (`maximumSizeInBytes` in the blob-token route), so an
+  over-limit upload is rejected before any bytes land in storage.
 - **Sync-mode transcription timeout.** On localhost (no public callback URL) the
   Deepgram path reads the transcript synchronously, holding the request for the
   whole job. A long enough video can hit a proxy/platform timeout. Production
@@ -63,8 +59,7 @@ pass. These are known and mostly intentional — not bugs. Grouped by area.
 Per-user fixed-window limits (Postgres-backed, `src/lib/rate-limit.ts`):
 
 - **Project creation:** 60 / hour.
-- **Transcription starts:** 30 / hour (shared across the Deepgram and whisper
-  paths).
+- **Transcription starts:** 30 / hour.
 
 Exceeding a limit returns `429`. Tune the constants in the respective routes.
 
@@ -107,11 +102,3 @@ convert a column with existing data (e.g. the `transcript_status` text→enum
 conversion), prefer the reviewed, in-place scripts under `drizzle/manual/` over
 `push`, which may offer a data-losing drop/recreate. Apply the same changes to
 each environment's database (dev and prod branches are separate).
-
-## Build note (pre-existing, non-fatal)
-
-`next build` emits one Turbopack warning about the whisper route tracing broadly
-(`join(process.cwd(), "scripts", …)` in `src/app/api/transcribe/whisper/route.ts`).
-It's harmless on a long-running Node host; if the deploy target becomes
-serverless, add a `/*turbopackIgnore: true*/` hint or scope the path to trim the
-function bundle.
