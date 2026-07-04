@@ -304,6 +304,20 @@ export function cutWords(edl: EDL, words: TranscriptWord[]): EDL {
   return setRangeStatus(edl, start, end, "cut", "manual");
 }
 
+/**
+ * Cut each word's own time range, leaving everything between the words
+ * untouched. `cutWords` cuts one span from the first word to the last — right
+ * for a contiguous transcript selection, catastrophic for scattered words
+ * (fillers dotted through a video would take all the speech between them).
+ */
+export function cutEachWord(edl: EDL, words: TranscriptWord[]): EDL {
+  let next = edl;
+  for (const w of words) {
+    next = setRangeStatus(next, w.start, w.end, "cut", "manual");
+  }
+  return next;
+}
+
 /** Add a range to a protected-keep list, keeping it sorted and coalesced. */
 function addProtectedRange(
   ranges: TimeRange[] | undefined,

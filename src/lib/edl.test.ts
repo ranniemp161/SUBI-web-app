@@ -9,6 +9,7 @@ import {
   pinTrimmedBoundary,
   trimBoundary,
   keptDuration,
+  cutEachWord,
   isFillerWord,
   findFillerWords,
   groupWordsIntoParagraphs,
@@ -340,5 +341,31 @@ describe("groupWordsIntoParagraphs", () => {
       Array.from({ length: p.endIndex - p.startIndex + 1 }, (_, k) => p.startIndex + k)
     );
     expect(covered).toEqual([0, 1, 2, 3]);
+  });
+});
+
+describe("cutEachWord", () => {
+  it("cuts only each word's own range, not the span between scattered words", () => {
+    // Regression: an "um" at 5s and an "uh" at 50s must NOT take the 45s of
+    // speech between them (cutWords' span semantics would).
+    const fillers = [
+      { word: "um", start: 5, end: 5.3, confidence: 1 },
+      { word: "uh", start: 50, end: 50.2, confidence: 1 },
+    ];
+    const result = cutEachWord(keep(60), fillers);
+    expect(result.segments).toEqual([
+      { start: 0, end: 5, status: "keep", reason: null },
+      { start: 5, end: 5.3, status: "cut", reason: "manual" },
+      { start: 5.3, end: 50, status: "keep", reason: null },
+      { start: 50, end: 50.2, status: "cut", reason: "manual" },
+      { start: 50.2, end: 60, status: "keep", reason: null },
+    ]);
+    // The overwhelming majority of the video survives.
+    expect(keptDuration(result)).toBeCloseTo(59.5, 5);
+  });
+
+  it("is a no-op for an empty word list", () => {
+    const edl = keep(10);
+    expect(cutEachWord(edl, [])).toBe(edl);
   });
 });

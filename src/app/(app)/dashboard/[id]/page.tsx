@@ -51,6 +51,7 @@ import {
 } from "@/lib/export/export-trigger";
 import {
   cutWords as cutWordsInEdl,
+  cutEachWord,
   restoreSegment as restoreSegmentInEdl,
   trimBoundary as trimBoundaryInEdl,
   setRangeStatus as setRangeStatusInEdl,
@@ -106,6 +107,15 @@ export default function EditorPage() {
 
   const [edl, setEdl] = useState<EDL | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
+  // Mirror of currentTime for event handlers. The rAF clock updates state at
+  // ~60 Hz; handlers that read the playhead through this ref stay referentially
+  // stable instead of re-creating (and re-attaching the global key listener,
+  // and re-rendering every timeline clip) once per frame.
+  const currentTimeRef = useRef(0);
+  const handleTimeUpdate = useCallback((seconds: number) => {
+    currentTimeRef.current = seconds;
+    setCurrentTime(seconds);
+  }, []);
   const [isPlaying, setIsPlaying] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showRetakeReview, setShowRetakeReview] = useState(false);
@@ -313,15 +323,15 @@ export default function EditorPage() {
   const cutToPlayhead = useCallback(
     (side: "left" | "right") => {
       if (!edl) return;
-      const seg = findSegmentAt(edl, currentTime);
+      const now = currentTimeRef.current;
+      const seg = findSegmentAt(edl, now);
       if (!seg || seg.status === "cut") {
         toast("Nothing to trim here", {
           description: "Park the playhead inside a clip first.",
         });
         return;
       }
-      const [start, end] =
-        side === "left" ? [seg.start, currentTime] : [currentTime, seg.end];
+      const [start, end] = side === "left" ? [seg.start, now] : [now, seg.end];
       // Playhead sitting on the clip edge — nothing to remove.
       if (end - start < 1e-3) return;
       if (!applyEdl(setRangeStatusInEdl(edl, start, end, "cut", "manual"))) return;
@@ -329,29 +339,30 @@ export default function EditorPage() {
         action: { label: "Undo", onClick: () => undo() },
       });
     },
-    [edl, currentTime, applyEdl, undo]
+    [edl, applyEdl, undo]
   );
 
   // S — razor: split the clip under the playhead into two independent clips
   // (a persistent boundary, so each half is separately cuttable / trimmable).
   const splitAtPlayhead = useCallback(() => {
     if (!edl) return;
-    const seg = findSegmentAt(edl, currentTime);
+    const now = currentTimeRef.current;
+    const seg = findSegmentAt(edl, now);
     const EPS = 1e-3;
     if (
       !seg ||
       seg.status !== "keep" ||
-      currentTime <= seg.start + EPS ||
-      currentTime >= seg.end - EPS
+      now <= seg.start + EPS ||
+      now >= seg.end - EPS
     ) {
       toast("Nothing to split here", {
         description: "Park the playhead inside a clip, away from its edges.",
       });
       return;
     }
-    applyEdl(splitAtInEdl(edl, currentTime));
+    applyEdl(splitAtInEdl(edl, now));
     toast("Split clip", { action: { label: "Undo", onClick: () => undo() } });
-  }, [edl, currentTime, applyEdl, undo]);
+  }, [edl, applyEdl, undo]);
 
   // Select a timeline clip (or pass null to clear). Seeking is handled
   // separately by the click, so this only tracks what's selected.
@@ -397,25 +408,27 @@ export default function EditorPage() {
   }, []);
 
   const seekRelative = useCallback(
-    (delta: number) => playerRef.current?.seek(Math.max(0, currentTime + delta)),
-    [currentTime]
+    (delta: number) =>
+      playerRef.current?.seek(Math.max(0, currentTimeRef.current + delta)),
+    []
   );
 
   // Jump to the previous/next edit point (any keep/cut segment boundary).
   const seekToEditPoint = useCallback(
     (dir: 1 | -1) => {
       if (!edl) return;
+      const now = currentTimeRef.current;
       const EPS = 0.05;
       const bounds = Array.from(
         new Set(edl.segments.flatMap((s) => [s.start, s.end]))
       ).sort((a, b) => a - b);
       const target =
         dir === 1
-          ? bounds.find((b) => b > currentTime + EPS)
-          : [...bounds].reverse().find((b) => b < currentTime - EPS);
+          ? bounds.find((b) => b > now + EPS)
+          : [...bounds].reverse().find((b) => b < now - EPS);
       if (target !== undefined) playerRef.current?.seek(target);
     },
-    [edl, currentTime]
+    [edl]
   );
 
   // Global keyboard shortcuts — NLE-style transport, navigation, zoom, undo.
@@ -657,7 +670,9 @@ export default function EditorPage() {
 
   const removeFillerWords = useCallback(() => {
     if (!edl || fillerWords.length === 0) return;
-    if (!applyEdl(cutWordsInEdl(edl, fillerWords))) return;
+    // cutEachWord, NOT cutWords: fillers are scattered, and cutWords' span
+    // semantics would take every word between the first and last filler too.
+    if (!applyEdl(cutEachWord(edl, fillerWords))) return;
     toast(`Removed ${fillerWords.length} filler word${fillerWords.length === 1 ? "" : "s"}`, {
       description: "Every “um” and “uh” is gone — undo if one carried meaning.",
       action: { label: "Undo", onClick: () => undo() },
@@ -877,7 +892,9 @@ export default function EditorPage() {
               key={tool.label}
               type="button"
               disabled={!tool.active}
-              aria-pressed={tool.active}
+              // One-shot actions (onClick) aren't toggles — pressed state would
+              // misreport them to assistive tech.
+              aria-pressed={tool.onClick ? undefined : tool.active}
               onClick={tool.onClick}
               title={
                 tool.title ?? (tool.active ? tool.label : `${tool.label} (coming soon)`)
@@ -909,7 +926,7 @@ export default function EditorPage() {
                 ref={playerRef}
                 src={sourceUrl}
                 edl={edl ?? { segments: [] }}
-                onTimeUpdate={setCurrentTime}
+                onTimeUpdate={handleTimeUpdate}
                 onPlayingChange={setIsPlaying}
                 onLoadedMetadata={setVideoMeta}
                 className="max-h-full max-w-full cursor-pointer rounded-lg bg-black object-contain"
@@ -944,7 +961,7 @@ export default function EditorPage() {
               <button
                 type="button"
                 aria-label="Back 5 seconds"
-                onClick={() => playerRef.current?.seek(Math.max(0, currentTime - 5))}
+                onClick={() => seekRelative(-5)}
                 className={transportBtn}
               >
                 <Rewind className="h-4 w-4" />
@@ -964,7 +981,7 @@ export default function EditorPage() {
               <button
                 type="button"
                 aria-label="Forward 5 seconds"
-                onClick={() => playerRef.current?.seek(currentTime + 5)}
+                onClick={() => seekRelative(5)}
                 className={transportBtn}
               >
                 <FastForward className="h-4 w-4" />

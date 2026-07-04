@@ -378,6 +378,11 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
   const handleHoverLeave = useCallback(() => {
     if (hoverRef.current) hoverRef.current.style.opacity = "0";
   }, []);
+  // A zoom under a resting cursor would leave the ghost at a stale time —
+  // hide it until the next mouse move recomputes the position.
+  useEffect(() => {
+    if (hoverRef.current) hoverRef.current.style.opacity = "0";
+  }, [pxPerSec]);
 
   // --- Scrubbing ---
   const handleScrubPointerDown = useCallback(
