@@ -29,6 +29,8 @@ interface WordSpanProps {
   word: string;
   isCut: boolean;
   isRetake: boolean;
+  isAi: boolean;
+  isRepetition: boolean;
   isSelected: boolean;
   isActive: boolean;
   isMatch: boolean;
@@ -48,6 +50,8 @@ const WordSpan = memo(function WordSpan({
   word,
   isCut,
   isRetake,
+  isAi,
+  isRepetition,
   isSelected,
   isActive,
   isMatch,
@@ -68,14 +72,28 @@ const WordSpan = memo(function WordSpan({
           isCut
             ? isRetake
               ? "text-amber-400/70 line-through decoration-amber-400/50 hover:text-emerald-300/80 hover:decoration-transparent"
-              : "text-red-400/70 line-through decoration-red-400/50 hover:text-emerald-300/80 hover:decoration-transparent"
+              : isAi
+                ? "text-sky-400/70 line-through decoration-sky-400/50 hover:text-emerald-300/80 hover:decoration-transparent"
+                : isRepetition
+                  ? "text-teal-400/70 line-through decoration-teal-400/50 hover:text-emerald-300/80 hover:decoration-transparent"
+                  : "text-red-400/70 line-through decoration-red-400/50 hover:text-emerald-300/80 hover:decoration-transparent"
             : isActive
               ? "bg-violet-600 text-white shadow-sm shadow-violet-500/40 ring-1 ring-violet-300/60"
               : "text-foreground/90 hover:bg-foreground/10"
         } ${isSelected && !isActive ? "bg-violet-500/30" : ""} ${
           isMatch && !isSelected && !isActive ? "bg-amber-400/25" : ""
         }`}
-        title={isCut ? (isRetake ? "Retake — click to restore" : "Click to restore this cut") : undefined}
+        title={
+          isCut
+            ? isRetake
+              ? "Retake — click to restore"
+              : isAi
+                ? "AI cut — speech mistake removed. Click to restore"
+                : isRepetition
+                  ? "Repeated words — kept the last delivery. Click to restore"
+                  : "Click to restore this cut"
+            : undefined
+        }
       >
         {word}
       </span>{" "}
@@ -164,6 +182,9 @@ export default function TranscriptPanel({
   ).length;
   const retakeCount = edl.segments.filter(
     (s) => s.status === "cut" && s.reason === "retake"
+  ).length;
+  const aiCount = edl.segments.filter(
+    (s) => s.status === "cut" && s.reason === "ai"
   ).length;
 
   // Keep the active word in view while playing.
@@ -484,6 +505,8 @@ export default function TranscriptPanel({
                 }
 
                 const isRetake = isCut && segment?.reason === "retake";
+                const isAi = isCut && segment?.reason === "ai";
+                const isRepetition = isCut && segment?.reason === "repetition";
                 const isSelected = selection.has(index);
                 const isActive = index === activeIndex;
                 const isMatch = matches.has(index);
@@ -494,6 +517,8 @@ export default function TranscriptPanel({
                     word={words[index].word}
                     isCut={isCut}
                     isRetake={isRetake}
+                    isAi={isAi}
+                    isRepetition={isRepetition}
                     isSelected={isSelected}
                     isActive={isActive}
                     isMatch={isMatch}
@@ -544,6 +569,11 @@ export default function TranscriptPanel({
                 ? `${retakeCount} retake${retakeCount === 1 ? "" : "s"} auto-cut — kept the later take`
                 : "No repeated takes detected"}
             </p>
+            {aiCount > 0 && (
+              <p className="truncate text-xs text-sky-300/70">
+                {aiCount} AI cut{aiCount === 1 ? "" : "s"} — retakes, stumbles & spoken directions
+              </p>
+            )}
           </div>
           <button
             type="button"

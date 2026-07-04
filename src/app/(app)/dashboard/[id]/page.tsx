@@ -31,6 +31,7 @@ import {
   Clock,
   Check,
   RotateCcw,
+  Wand2,
   type LucideIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -60,7 +61,6 @@ import {
   pinTrimmedBoundary as pinTrimmedBoundaryInEdl,
   findSegmentAt,
   findFillerWords,
-  buildInitialEDL,
   keptDuration,
   SENSITIVITY_PRESETS,
   DEFAULT_SENSITIVITY,
@@ -70,6 +70,11 @@ import {
   type Transcript,
   type TranscriptWord,
 } from "@/lib/edl";
+import {
+  applyAiCuts,
+  buildInitialEDLWithAi,
+  type AiCuts,
+} from "@/lib/ai-cuts";
 
 interface Project {
   id: string;
@@ -78,6 +83,7 @@ interface Project {
   transcript: Transcript | null;
   transcriptStatus: "idle" | "processing" | "ready" | "failed";
   edl: EDL | null;
+  aiCuts: AiCuts | null;
 }
 
 const AUTOSAVE_DELAY_MS = 800;
@@ -200,7 +206,7 @@ export default function EditorPage() {
         // otherwise we keep any valid saved EDL and wait for a reload.
         setEdl(
           data.transcriptStatus === "ready"
-            ? savedEdl ?? buildInitialEDL(words, durationSeconds)
+            ? savedEdl ?? buildInitialEDLWithAi(words, durationSeconds, data.aiCuts)
             : savedEdl
         );
       } catch {
@@ -560,7 +566,7 @@ export default function EditorPage() {
   // edits. This is what applies improved detection to an already-edited project.
   const reRunRoughCut = useCallback(() => {
     if (!edl || durationSeconds <= 0) return;
-    const next = reRoughCutInEdl(edl, words, durationSeconds, SENSITIVITY_PRESETS[sensitivity]);
+    let next = reRoughCutInEdl(edl, words, durationSeconds, SENSITIVITY_PRESETS[sensitivity]);
     // reRoughCut returns the same EDL untouched when there's nothing to
     // regenerate from (transcript not ready yet) — don't claim a re-run happened.
     if (next === edl) {
@@ -569,12 +575,63 @@ export default function EditorPage() {
       });
       return;
     }
+    // Stored AI cuts are part of the auto layer — re-apply them on top of the
+    // regenerated heuristics (applyAiCuts re-asserts protectedKeeps after, so
+    // the user's restores still win).
+    next = applyAiCuts(next, project?.aiCuts, words);
     if (!applyEdl(next)) return;
     toast("Rough cut re-run", {
       description: "Silence & retakes regenerated — your manual edits were kept.",
       action: { label: "Undo", onClick: () => undo() },
     });
-  }, [edl, words, durationSeconds, sensitivity, applyEdl, undo]);
+  }, [edl, words, durationSeconds, sensitivity, project, applyEdl, undo]);
+
+  // The studio's on-demand AI pass: ask the server to (re)run Gemini over the
+  // transcript, then layer the returned cuts onto the current edit — undoable
+  // like any other cut. Also the retry path when the automatic pass at
+  // transcription time failed, and the only path for older projects.
+  const [aiBusy, setAiBusy] = useState(false);
+  const runAiCut = useCallback(async () => {
+    if (!edl || aiBusy) return;
+    setAiBusy(true);
+    toast.loading("AI is reviewing your transcript…", { id: "ai-cut" });
+    try {
+      const response = await fetch(`/api/projects/${id}/ai-cut`, { method: "POST" });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) {
+        toast.error("AI cut failed", {
+          id: "ai-cut",
+          description:
+            (data as { error?: string } | null)?.error ?? "Try again in a moment.",
+        });
+        return;
+      }
+      const aiCuts = data as AiCuts;
+      setProject((prev) => (prev ? { ...prev, aiCuts } : prev));
+      if (aiCuts.ranges.length === 0) {
+        toast.success("Nothing to cut", {
+          id: "ai-cut",
+          description: "The AI found no false starts, stumbles, or flubbed takes.",
+        });
+        return;
+      }
+      if (!applyEdl(applyAiCuts(edl, aiCuts, words))) {
+        toast.dismiss("ai-cut");
+        return;
+      }
+      toast.success(
+        `AI cut applied — ${aiCuts.ranges.length} mistake${aiCuts.ranges.length === 1 ? "" : "s"} removed`,
+        { id: "ai-cut", action: { label: "Undo", onClick: () => undo() } }
+      );
+    } catch {
+      toast.error("AI cut failed", {
+        id: "ai-cut",
+        description: "Check your connection and try again.",
+      });
+    } finally {
+      setAiBusy(false);
+    }
+  }, [edl, aiBusy, id, words, applyEdl, undo]);
   // Signal the in-flight export to stop. Only reachable once a handle exists
   // (the Cancel control is shown only in "exporting"/"cancelling"); the guard
   // is belt-and-suspenders. The worker throws ExportError("cancelled"), which
@@ -841,6 +898,16 @@ export default function EditorPage() {
   }[] = [
     { Icon: MousePointer2, label: "Select", active: true },
     { Icon: Scissors, label: "Trim" },
+    {
+      Icon: Wand2,
+      label: "AI Cut",
+      active: !aiBusy,
+      badge: edl?.segments.filter((s) => s.status === "cut" && s.reason === "ai").length,
+      title: aiBusy
+        ? "AI is reviewing your transcript…"
+        : "AI pass — remove false starts, stumbles & flubbed takes",
+      onClick: runAiCut,
+    },
     {
       Icon: Sparkles,
       label: "Filler",

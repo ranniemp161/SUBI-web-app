@@ -7,6 +7,7 @@
  */
 
 import { detectRetakes } from "./retake-detection";
+import { detectRepetitions } from "./repetition-detection";
 
 /** A single transcribed word with timing, matching the Deepgram response shape. */
 export interface TranscriptWord {
@@ -23,7 +24,7 @@ export interface Transcript {
   language?: string;
 }
 
-export type EDLReason = "silence" | "retake" | "manual" | null;
+export type EDLReason = "silence" | "retake" | "repetition" | "manual" | "ai" | null;
 
 export interface EDLSegment {
   start: number;
@@ -93,7 +94,7 @@ const DEFAULT_SETTINGS = SENSITIVITY_PRESETS[DEFAULT_SENSITIVITY];
  * treated as a data problem (e.g. missing word timestamps), not a real edit —
  * we fall back to keep-all rather than silently delete the whole video.
  */
-const MIN_INITIAL_KEEP_FRACTION = 0.1;
+export const MIN_INITIAL_KEEP_FRACTION = 0.1;
 
 /**
  * Drop transcript words with unusable timing before they reach the EDL math.
@@ -209,6 +210,11 @@ function buildAutoLayer(
   settings: DetectionSettings
 ): EDL {
   let edl = generateInitialEDL(clean, durationSeconds, settings);
+  // Repetitions before retakes: where a full retake span covers a stutter,
+  // the later retake pass re-labels it — the broader diagnosis wins.
+  for (const rep of detectRepetitions(clean)) {
+    edl = setRangeStatus(edl, rep.cutStart, rep.cutEnd, "cut", "repetition");
+  }
   for (const retake of detectRetakes(clean, settings.retakeSimilarity)) {
     edl = setRangeStatus(edl, retake.cutStart, retake.cutEnd, "cut", "retake");
   }

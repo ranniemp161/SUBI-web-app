@@ -30,6 +30,28 @@ function word(start: number, end: number): TranscriptWord {
   return { word: "x", start, end, confidence: 1 };
 }
 
+describe("buildInitialEDL — repetition pass integration", () => {
+  it("labels a stutter cut with reason \"repetition\", keeping the last instance", () => {
+    const words: TranscriptWord[] = [
+      { word: "cut", start: 0, end: 0.2, confidence: 1 },
+      { word: "the", start: 0.25, end: 0.45, confidence: 1 },
+      { word: "the", start: 0.5, end: 0.7, confidence: 1 },
+      { word: "clip", start: 0.75, end: 0.95, confidence: 1 },
+    ];
+    const edl = buildInitialEDL(words, 1);
+    expect(edl.segments).toContainEqual({
+      start: 0.25,
+      end: 0.45,
+      status: "cut",
+      reason: "repetition",
+    });
+    // The second "the" stays kept.
+    expect(
+      edl.segments.find((s) => s.start <= 0.5 && s.end >= 0.7)?.status
+    ).toBe("keep");
+  });
+});
+
 describe("splitAt (razor)", () => {
   it("divides a kept clip into two, flagging the right half as a split", () => {
     const result = splitAt(keep(10), 5);

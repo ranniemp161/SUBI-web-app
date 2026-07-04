@@ -5,8 +5,13 @@ import { db } from "@/db";
 import { projects } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { normalizeDeepgram } from "@/lib/deepgram";
+import { runAiRoughCut } from "@/lib/ai-rough-cut";
 import { reportError } from "@/lib/observability";
 import { ipRateLimit } from "@/lib/ip-rate-limit";
+
+// The AI pass below can hold this function open well past the default
+// serverless window (Gemini itself is capped at 240s in ai-rough-cut.ts).
+export const maxDuration = 300;
 
 // This route has no Clerk session (Deepgram calls it directly), so it's
 // exempt from src/proxy.ts's middleware and from the per-user limits used
@@ -113,6 +118,25 @@ export async function POST(request: Request) {
       .where(eq(projects.id, projectId));
 
     if (blobUrl) await deleteBlobQuietly(blobUrl);
+
+    // AI mistake-detection pass over the fresh transcript, stored as a second
+    // update so a Gemini failure/timeout can never take the transcript with it
+    // (it's already saved and "ready" above). Strictly soft-fail: any error is
+    // reported and the project simply proceeds heuristic-only — the studio's
+    // "AI Cut" button is the retry path.
+    if (transcript && transcript.words.length > 0) {
+      try {
+        const aiCuts = await runAiRoughCut(transcript.words);
+        if (aiCuts) {
+          await db
+            .update(projects)
+            .set({ aiCuts, updatedAt: new Date() })
+            .where(eq(projects.id, projectId));
+        }
+      } catch (error) {
+        reportError("AI rough cut failed after transcription", error);
+      }
+    }
 
     return NextResponse.json({ received: true });
   } catch (error) {

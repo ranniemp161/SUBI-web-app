@@ -52,6 +52,8 @@ export const projects = pgTable("projects", {
   /** Random per-request secret checked on the Deepgram callback — Deepgram callbacks aren't signed. */
   transcriptCallbackToken: text("transcript_callback_token"),
   edl: jsonb("edl"),
+  /** AI rough-cut suggestions (shape: AiCuts in lib/ai-cuts.ts), written server-side only. */
+  aiCuts: jsonb("ai_cuts"),
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
     .notNull(),

@@ -32,7 +32,7 @@ const edlSegmentSchema = z.object({
   start: z.number(),
   end: z.number(),
   status: z.enum(["keep", "cut"]),
-  reason: z.enum(["silence", "retake", "manual"]).nullable(),
+  reason: z.enum(["silence", "retake", "repetition", "manual", "ai"]).nullable(),
   split: z.boolean().optional(),
 });
 

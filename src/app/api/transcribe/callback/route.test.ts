@@ -7,6 +7,8 @@ const state = vi.hoisted(() => ({
   updates: [] as Record<string, unknown>[],
   deletedUrls: [] as string[],
   rateAllowed: true,
+  aiResult: null as Record<string, unknown> | null,
+  aiError: false,
 }));
 
 vi.mock("@vercel/blob", () => ({
@@ -60,8 +62,17 @@ vi.mock("@/lib/deepgram", () => ({
   normalizeDeepgram: vi.fn(() => ({ words: [], text: "hello", duration: 1 })),
 }));
 
+vi.mock("@/lib/ai-rough-cut", () => ({
+  runAiRoughCut: vi.fn(async () => {
+    if (state.aiError) throw new Error("gemini down");
+    return state.aiResult;
+  }),
+}));
+
 import { POST } from "./route";
 import { rateLimit } from "@/lib/rate-limit";
+import { normalizeDeepgram } from "@/lib/deepgram";
+import { runAiRoughCut } from "@/lib/ai-rough-cut";
 
 const VALID_ID = "12345678-1234-1234-1234-123456789abc";
 const TOKEN = "a".repeat(64);
@@ -79,6 +90,8 @@ beforeEach(() => {
   state.updates = [];
   state.deletedUrls = [];
   state.rateAllowed = true;
+  state.aiResult = null;
+  state.aiError = false;
   vi.clearAllMocks();
 });
 
@@ -190,5 +203,55 @@ describe("POST /api/transcribe/callback — blob cleanup", () => {
     const res = await POST(callbackRequest(`?projectId=${VALID_ID}&token=${TOKEN}`));
     expect(res.status).toBe(200);
     expect(state.deletedUrls).toEqual([]);
+  });
+});
+
+describe("POST /api/transcribe/callback — AI rough-cut pass", () => {
+  const WORDS = [{ word: "hello", start: 0, end: 0.5, confidence: 1 }];
+  const withWords = () =>
+    vi.mocked(normalizeDeepgram).mockReturnValueOnce({
+      words: WORDS,
+      text: "hello",
+      duration: 1,
+    });
+
+  it("stores AI cuts as a second update once the transcript is safely saved", async () => {
+    state.selectRows = [{ id: VALID_ID, transcriptCallbackToken: TOKEN }];
+    state.aiResult = { ranges: [], model: "gemini-2.5-flash", createdAt: "now" };
+    withWords();
+    const res = await POST(callbackRequest(`?projectId=${VALID_ID}&token=${TOKEN}`));
+    expect(res.status).toBe(200);
+    expect(runAiRoughCut).toHaveBeenCalledWith(WORDS);
+    expect(state.updates).toHaveLength(2);
+    expect(state.updates[0].transcriptStatus).toBe("ready");
+    expect(state.updates[1].aiCuts).toBe(state.aiResult);
+  });
+
+  it("skips the AI pass entirely when the transcript has no words", async () => {
+    state.selectRows = [{ id: VALID_ID, transcriptCallbackToken: TOKEN }];
+    const res = await POST(callbackRequest(`?projectId=${VALID_ID}&token=${TOKEN}`));
+    expect(res.status).toBe(200);
+    expect(runAiRoughCut).not.toHaveBeenCalled();
+    expect(state.updates).toHaveLength(1);
+  });
+
+  it("soft-fails: an AI error still returns 200 with the transcript stored and ready", async () => {
+    state.selectRows = [{ id: VALID_ID, transcriptCallbackToken: TOKEN }];
+    state.aiError = true;
+    withWords();
+    const res = await POST(callbackRequest(`?projectId=${VALID_ID}&token=${TOKEN}`));
+    expect(res.status).toBe(200);
+    expect(state.updates).toHaveLength(1);
+    expect(state.updates[0].transcriptStatus).toBe("ready");
+  });
+
+  it("writes nothing extra when the AI pass is unconfigured (runAiRoughCut → null)", async () => {
+    state.selectRows = [{ id: VALID_ID, transcriptCallbackToken: TOKEN }];
+    state.aiResult = null;
+    withWords();
+    const res = await POST(callbackRequest(`?projectId=${VALID_ID}&token=${TOKEN}`));
+    expect(res.status).toBe(200);
+    expect(runAiRoughCut).toHaveBeenCalled();
+    expect(state.updates).toHaveLength(1);
   });
 });

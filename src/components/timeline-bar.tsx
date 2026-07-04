@@ -649,6 +649,8 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
               {edl.segments.map((segment, index) => {
                 const isCut = segment.status === "cut";
                 const isRetake = isCut && segment.reason === "retake";
+                const isAi = isCut && segment.reason === "ai";
+                const isRepetition = isCut && segment.reason === "repetition";
                 const isSelected =
                   !isCut &&
                   selectedStart !== null &&
@@ -656,9 +658,13 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
                 const cutTooltip =
                   segment.reason === "retake"
                     ? "Retake — kept the later take. Click to restore."
-                    : segment.reason === "silence"
-                      ? "Silence — auto-trimmed. Click to restore."
-                      : "Cut — click to restore.";
+                    : segment.reason === "ai"
+                      ? "AI cut — speech mistake removed. Click to restore."
+                      : segment.reason === "repetition"
+                        ? "Repeated words — kept the last delivery. Click to restore."
+                        : segment.reason === "silence"
+                          ? "Silence — auto-trimmed. Click to restore."
+                          : "Cut — click to restore.";
                 return (
                   <div
                     key={index}
@@ -677,11 +683,19 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
                         ? filmstrip
                           ? "border-amber-400/40 bg-amber-950/70"
                           : "border-amber-400/30 bg-amber-950/40"
-                        : isCut
+                        : isAi
                           ? filmstrip
-                            ? "border-foreground/10 bg-black/70"
-                            : "border-foreground/10 bg-black/40"
-                          : filmstrip
+                            ? "border-sky-400/40 bg-sky-950/70"
+                            : "border-sky-400/30 bg-sky-950/40"
+                          : isRepetition
+                            ? filmstrip
+                              ? "border-teal-400/40 bg-teal-950/70"
+                              : "border-teal-400/30 bg-teal-950/40"
+                            : isCut
+                              ? filmstrip
+                                ? "border-foreground/10 bg-black/70"
+                                : "border-foreground/10 bg-black/40"
+                              : filmstrip
                             ? // Frames show through kept clips; the violet wash keeps
                               // them reading as "kept" against the darkened cuts.
                               "border-violet-400/50 bg-violet-500/15 hover:bg-violet-400/20"
