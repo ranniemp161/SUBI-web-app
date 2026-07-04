@@ -35,11 +35,12 @@ video player). This is the de-facto design language for the **editor surface**.
 | Mono usage          | `font-mono` for all timecodes, durations, keycaps |
 
 **Accent note (IMPORTANT inconsistency):** the **editor** uses **violet**, but
-the rest of the app (dashboard list, landing page, auth, app-nav logo) still
-uses **blue** (`bg-blue-600`, `text-blue-400`). The app currently has two accent
-colors. Pick one direction before shipping: either migrate the marketing/dashboard
-surfaces to violet, or treat violet as an editor-only accent on purpose. Until
-resolved, **new editor components → violet; new dashboard/marketing components → blue.**
+the rest of the app (dashboard list, auth, app-nav logo) still uses **blue**
+(`bg-blue-600`, `text-blue-400`), and as of 2026-07-04 the **landing page** uses
+its own fixed marketing palette with a custom blue (`#4D8DFF` — see "Marketing /
+landing surface" below). The app currently has three accent treatments. Until
+resolved: **new editor components → violet; new dashboard/auth components →
+Tailwind blue; new marketing/landing components → the `#4D8DFF` system below.**
 
 **Icon note:** the editor uses **`lucide-react`** for all iconography (swapped in
 from emoji placeholders on 2026-06-30). Conventions: import named icons directly
@@ -249,3 +250,68 @@ Last updated: 2026-06-30
 
 **Pattern notes:** Waveform fill is `rgba(167, 139, 250, 0.55)` (violet-400 @ 55%)
 drawn to canvas — keep this in sync with the violet accent if the accent changes.
+
+---
+
+## Marketing / landing surface — Established 2026-07-04
+
+File: `src/app/page.tsx`
+Last updated: 2026-07-04
+
+The landing page follows a **fixed dark marketing palette** (from the Figma/HTML
+design), deliberately NOT the `background`/`foreground` theme tokens — it is
+dark-only and self-contained. These values apply to marketing/landing surfaces
+only; do not carry them into the editor or dashboard.
+
+### Palette
+
+| Role                  | Value |
+| --------------------- | ----- |
+| Page background       | `bg-[#070B12]` |
+| Card surface          | `bg-[#0B1220]` |
+| Raised surface        | `bg-[#0C1322]` |
+| Recessed surface      | `bg-[#0A101C]` |
+| Window-chrome bar     | `bg-[#0D1424]` |
+| Text — primary        | `text-[#E8EDF6]` |
+| Text — secondary      | `text-[#8A97AC]` |
+| Text — dim label      | `text-[#5D6B82]` |
+| Text — faint/footer   | `text-[#3D4A5F]` |
+| Accent solid          | `bg-[#4D8DFF]`, hover `hover:bg-[#7EB2FF]`, text-on-accent `text-[#06101F]` |
+| Accent text           | `text-[#7EB2FF]` (light) / `text-[#4D8DFF]` (labels) |
+| Accent tint           | `bg-[rgba(77,141,255,0.08)]` (pill) – `0.16` (chip) |
+| Border — hairline     | `border-[rgba(148,180,255,0.08)]` (nav/footer) |
+| Border — card         | `border-[rgba(148,180,255,0.12)]`, inner dividers `0.1`, list items `0.14` |
+| Border — accent       | `border-[rgba(77,141,255,0.2)]`–`0.35` (highlighted/open states) |
+| Destructive (marketing) | strikethrough `decoration-[rgba(248,113,113,0.7)]`, text `#F0A0A0`, tint `rgba(248,113,113,0.08)` |
+
+### Typography
+
+| Role        | Class |
+| ----------- | ----- |
+| Display / headings | `font-[family-name:var(--font-bricolage)]` (Bricolage Grotesque 600/700/800), tracking `-0.02em`–`-0.03em` |
+| Body        | `font-[family-name:var(--font-instrument)]` (Instrument Sans) on the page root |
+| Labels / eyebrows / timecodes | `font-[family-name:var(--font-plex-mono)]` (IBM Plex Mono), `text-xs`–`text-[13px]`, `uppercase`, `tracking-[0.04em]`–`[0.08em]` |
+
+Fonts load via `next/font` **inside `page.tsx`** (not the root layout) so they
+only ship on the landing route. Reuse the `display` / `mono` class consts.
+
+### Components
+
+| Component | Pattern |
+| --------- | ------- |
+| Button — primary | `rounded-xl bg-[#4D8DFF] px-7 py-3.5 text-[15px] font-semibold text-[#06101F] shadow-[0_4px_24px_rgba(77,141,255,0.35)] hover:bg-[#7EB2FF]` (nav variant: `rounded-[10px] px-[18px] py-[9px] text-sm`, no shadow) |
+| Button — secondary | `rounded-xl border border-[rgba(148,180,255,0.18)] text-[#E8EDF6] hover:border-[rgba(148,180,255,0.4)]` (same padding as primary) |
+| Feature card | `rounded-2xl border border-[rgba(148,180,255,0.12)] bg-gradient-to-b from-[rgba(20,30,52,0.5)] to-[rgba(11,18,32,0.5)] p-7 hover:border-[rgba(77,141,255,0.4)]` |
+| Icon tile | `h-10 w-10 rounded-[11px] border border-[rgba(77,141,255,0.25)] bg-[rgba(77,141,255,0.12)]`, stroke `#7EB2FF` inline SVG |
+| Eyebrow pill | mono uppercase, `rounded-full border border-[rgba(77,141,255,0.3)] bg-[rgba(77,141,255,0.08)] text-[#7EB2FF]` + 6px `bg-[#4D8DFF]` dot |
+| Highlight chip (headline) | `rounded-[10px] bg-[rgba(77,141,255,0.16)] px-3 text-[#7EB2FF] shadow-[inset_0_0_0_1px_rgba(77,141,255,0.25)]` |
+| FAQ item | `<details name="…">` (zero-JS exclusive accordion), `rounded-[14px] border-[rgba(148,180,255,0.12)] bg-[#0A101C]`, open: `open:border-[rgba(77,141,255,0.35)] open:bg-[#0C1322]`; `+` icon `group-open:rotate-45 group-open:text-[#7EB2FF]` |
+| Big showcase card (privacy) | `rounded-[20px] border-[rgba(77,141,255,0.2)] bg-[#0B1220]` + radial glow bg image, `p-8 sm:p-14` |
+| Nav | `sticky top-0 z-50 bg-[rgba(7,11,18,0.8)] backdrop-blur-xl border-b` hairline |
+| Ambient glow | absolutely-positioned `bg-[radial-gradient(…,rgba(56,110,220,0.14–0.22),transparent_70%)]`, always `pointer-events-none` + `aria-hidden` |
+
+**Pattern notes:** section content max-width is `max-w-[1060px]` (760px for the
+FAQ column); anchor targets use `scroll-mt-20` to clear the sticky nav. The page
+stays a server component — no client JS (FAQ uses native `<details name>`).
+Decorative mockup/diagram blocks are `aria-hidden`. The old landing accent
+(`bg-blue-600` + blue/cyan gradient text) is retired on this surface.

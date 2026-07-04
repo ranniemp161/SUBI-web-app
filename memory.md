@@ -1,99 +1,98 @@
-# Memory — Whisper removal + Ruff Cut landing page redesign
+# Memory — Hybrid AI rough cut (Gemini semantic pass + rule-based repetition)
 
-Last updated: 2026-07-04
+Last updated: 2026-07-04 (evening)
 
 ## What was built
 
-Everything below is **uncommitted** (working tree, on `main`). Two logical
-chunks, user was offered a 2-commit split but hasn't said go yet:
+All committed and pushed — `main` = `b7280aa`, CI green, 152/152 tests.
 
-### Chunk 1 — Whisper transcription path removed (Deepgram is now the ONLY provider)
-- Deleted `src/app/api/transcribe/whisper/route.ts` (had no test file) and
-  `scripts/transcribe_whisper.py` (scripts/ dir now empty).
-- `src/app/(app)/dashboard/page.tsx`: removed the `TRANSCRIBE_PROVIDER` env
-  switch (`NEXT_PUBLIC_TRANSCRIBE_PROVIDER`, which defaulted to whisper — the
-  prod footgun) and `startWhisperTranscription()`; the Deepgram flow
-  (extract audio → Blob upload → deepgram route) is now unconditional.
-- `next.config.ts`: removed `experimental.proxyClientMaxBodySize: "8gb"`
-  (existed only for whisper's raw video uploads).
-- `LIMITATIONS.md`: "single long-running Node process" + "concurrent-upload
-  memory ceiling" sections replaced with "serverless-compatible by design";
-  size-limit wording now points at Blob token issuance; whisper Turbopack
-  build-note section deleted (warning gone with the route).
-- Comment cleanups: `src/lib/deepgram.ts`, `src/lib/edl.ts`,
-  `src/app/(app)/dashboard/[id]/page.tsx`. The `reRoughCut` identifiers were
-  deliberately left alone (film term, not branding).
+### Semantic layer (Gemini 2.5 Flash, server-side only)
+- `src/lib/ai-rough-cut.ts`: transcript → Gemini as indexed words (`[i]word`),
+  structured JSON back as inclusive word-index ranges (never timestamps — LLMs
+  hallucinate those). Rubric ships as `systemInstruction`, calibrated on the
+  user's real footage (see Decisions). `thinkingBudget: 24576` (flash's max),
+  240s timeout, 50k-word size guard. Plain fetch, no SDK. Key read from
+  `GEMINI_API_KEY` env (already in `.env.local`; never commit/print it).
+- `src/lib/ai-cuts.ts`: pure shared half — `sanitizeAiRanges` (clamp/drop/
+  coalesce untrusted model output), `applyAiCuts` (reason `"ai"`, re-asserts
+  `protectedKeeps` after so user restores always win), `buildInitialEDLWithAi`
+  (same 10% keep-floor; drops only the AI layer if tripped).
+- Auto pass in `src/app/api/transcribe/callback/route.ts` AFTER the transcript
+  is stored (second DB update, strictly soft-fail). On-demand re-run:
+  `POST /api/projects/[id]/ai-cut` (Clerk auth, 10/user/hour rate limit).
+- `projects.ai_cuts` jsonb column — applied to dev Neon via `db:push`;
+  `drizzle/manual/0002_projects_ai_cuts.sql` for prod later.
+- Studio: "AI Cut" rail button (Wand2, badge = live AI-cut count, toast flow),
+  sky-blue `"ai"` cuts on timeline + transcript, sensitivity re-runs re-apply
+  stored aiCuts on top of regenerated heuristics.
 
-### Chunk 2 — Landing page redesign + rebrand to "Ruff Cut"
-- `src/app/page.tsx` rebuilt: sticky blur nav, hero with ambient glow,
-  3-step "How it works", feature grid (hover polish), privacy callout
-  section ("Your video never leaves your computer"), 8-item FAQ using native
-  `<details>/<summary>` (zero client JS, server-rendered), bottom CTA.
-  FAQ covers: video privacy, Chrome/Edge-only export, file re-selection on
-  reopen, device-bound export speed/4K, H.264 MP4 formats, internet needed
-  for transcription, Descript comparison, Skool access code.
-- Brand "Rough Cut" → "Ruff Cut" in: `src/app/page.tsx`,
-  `src/app/layout.tsx` metadata (description now includes privacy line),
-  `src/app/(app)/layout.tsx` header.
-- `src/app/(auth)/sign-in/[[...sign-in]]/page.tsx`: Clerk `<SignIn />`
-  restyled via `appearance` prop with app design tokens (bg-background,
-  foreground/xx, blue-600 primary, colorPrimary #2563eb) — **not yet
-  visually verified by user**; Clerk footer element is the usual override
-  holdout if anything still looks stock.
+### Deterministic layer (every build/re-run, zero tokens)
+- `src/lib/repetition-detection.ts`: word stutters ("the the") keep the LAST
+  instance — guards: trailing punctuation = deliberate emphasis ("very, very"),
+  all-capitalized pair = proper noun ("Duran Duran"), "I I" still cut; adjacent
+  2–8-word phrase repeats cut ONLY when ≥0.35s pause separates instances
+  (`PHRASE_PAUSE_SECONDS`) — fluid repeats are delivery, left to AI/user.
+- Wired into `buildAutoLayer` (edl.ts) between silence and retake passes
+  (retake re-labels overlaps). New EDL reason `"repetition"` (edl.ts +
+  validation.ts enums), teal styling in timeline-bar + transcript-panel.
 
 ## Decisions made
 
-- **Deploy target is Vercel (serverless) — locked.** That's WHY whisper was
-  removed (needs Python + disk + long-running process). Don't rebuild it.
-- **App name: "Ruff Cut"** — user's explicit choice (matches the Blob store
-  name "ruffcut"), chosen over "Rough Cut" despite the dog-pun caveat being
-  raised. Clerk Dashboard app name still says "My Application" — user's task.
-- **Tier-based pricing: dropped.** Client changed their mind mid-planning
-  (was going to be a $5 upgrade). Focus is production-readiness instead.
-- **Auth stays as-is for now** — user is happy with the shared Skool
-  access-code gate. Two known issues were flagged and "noted" (not fixed):
-  (1) rotating ACCESS_CODE locks out EXISTING users because write routes
-  re-check the live env var on every request (fix design: persist an
-  accessGranted flag on users row at webhook time instead);
-  (2) "Continue with Google" on the sign-in page can create an OAuth account
-  with no access code → webhook deletes it → confusing UX; disabling Google
-  in the Clerk Dashboard was suggested.
+- **Hybrid split is deliberate**: rules catch exact duplicates free on every
+  re-run; AI (once per transcript + button) handles semantic judgment.
+- **User's confirmed editorial rulings** (baked into the prompt): keep the
+  LAST complete take; spoken production notes ("insert clip No. 3", "start
+  again", off-camera asides) = new AI category `direction`, cut from playback
+  but visible in transcript as B-roll markers; deliberate rhetorical
+  repetition KEPT when it completes cleanly; punchline re-reads keep final.
+- **Thinking budget from measurement, not guess**: 0 tokens = 28s but shallow
+  (162 fragmented cuts, user rejected); dynamic ≈19k tokens = 87s, 71 quality
+  cuts. Capped at 24576 = full quality with hard latency ceiling. Routes have
+  `maxDuration = 300` (Vercel's cap).
+- AI Cut on an already-AI-cut project: run AI Cut, then "Re-run rough cut"
+  sweeps stale `"ai"` cuts (they're not manual, so re-run drops them) and
+  re-applies the latest stored aiCuts.
 
 ## Problems solved
 
-- Deleting `.next` while the dev server is running breaks it (user saw
-  "Internal Server Error" on Clerk's /sign-in/sso-callback) — fix is just
-  restarting the dev server. Also: `tsc` fails after deleting a route because
-  stale `.next/types/validator.ts` still references it — rebuild regenerates.
+- **502 on AI Cut** = Gemini's default *dynamic* thinking outliving the 60s
+  timeout on real transcripts (tiny probes pass, real ones don't). Any future
+  "AI pass failed" report: check elapsed vs timeout first.
+- Next.js only reads `.env.local` at server start — new env vars need a dev
+  server restart (that was the first AI Cut failure, 503).
+- PowerShell 5.1 mangles quotes in `git commit -m @'…'@` with inner double
+  quotes — write the message to a file and use `git commit -F`.
+- Probe scripts in scratchpad need `createRequire(<project package.json>)` to
+  resolve the project's node_modules; `--experimental-strip-types` runs the
+  TS lib directly (type-only imports are erased).
 
 ## Current state
 
-- `tsc` clean, **104/104 vitest pass** (14 files), `next build` succeeds with
-  NO warnings (the whisper Turbopack tracing warning died with the route).
-- User's `.env.local` still has a dead `NEXT_PUBLIC_TRANSCRIBE_PROVIDER=deepgram`
-  line (harmless; nothing reads it anymore).
-- Local dev now always uses Deepgram (sync mode without PUBLIC_APP_URL) —
-  the free local whisper option is gone, so local testing spends Deepgram credit.
-- Sign-in restyle awaiting the user's visual check in the browser.
+- Feature complete and shipped; typecheck + 152 tests + CI green on `b7280aa`.
+- Prompt template A/B'd on real JZ transcript: 9/9 spoken directions caught
+  (old prompt ~2/9 and it cut the "March and March" movement name); rule pass
+  adds 19 cuts incl. the triple "booby prize" re-read both AI runs missed.
+- Ground-truth manual edit doc: `H:\My Drive\Download\JZ Raw footage\JZ Raw
+  footage — edit analysis.md` (also indexed in auto-memory).
+- User has NOT yet reviewed a full AI+hybrid cut end-to-end in the studio.
+- Pre-existing ESLint errors (3) confirmed present on committed tree before
+  this work — not ours, CI doesn't run lint.
 
 ## Next session starts with
 
-1. Ask if the sign-in page looks right (they were mid-verification); patch
-   specific Clerk elements if anything is still stock-white.
-2. **Commit the two chunks** (whisper removal; landing page + rebrand +
-   sign-in styling) — long overdue, everything verifies.
-3. Then the production-readiness list, in the order recommended: **CI setup
-   (top priority, zero workflows exist)** → access-code rotation fix →
-   callback-mode e2e test on a public host → 4K/HEVC export manual verification.
+1. User reviews a full hybrid cut in the studio (JZ or 0615 project: AI Cut →
+   Re-run rough cut). Tune from real misjudgments — prompt rules for semantic
+   misses, `PHRASE_PAUSE_SECONDS` if the pause gate mis-fires.
+2. Then the standing production list: access-code rotation fix (architecture
+   still undecided: accessGranted flag vs per-invite codes) → Vercel deploy
+   (add `GEMINI_API_KEY` to Vercel env; run `drizzle/manual/0002` on prod DB;
+   callback-mode e2e on public host) → 4K/HEVC export verification.
 
 ## Open questions
 
-- CI: GitHub Actions running tsc + vitest + build on push — recommended,
-  not yet approved/built.
-- Access-code architecture decision (accessGranted flag vs per-invite codes)
-  — user said "can't decide yet."
-- Landing page FAQ promises only H.264 MP4; HEVC/WebM stay unadvertised
-  until manually verified.
-- Older backlog: orphaned private "ruffcut" Blob store (delete or ignore),
-  R2-vs-Blob client conversation, prod Neon migration, Vercel passkey login
-  issue (user's account).
+- Is the old fuzzy retake matcher (`retake-detection.ts`) still earning its
+  place now the AI handles reworded retakes better? Candidate for demotion.
+- Studio UI/UX overhaul from last session (filmstrip, paragraphs, pills) still
+  awaiting the user's visual pass with a real video.
+- Older backlog: access-code architecture, orphaned "ruffcut" Blob store,
+  R2-vs-Blob client conversation, prod Neon migration, Vercel passkey issue.
