@@ -69,8 +69,8 @@ export async function extractAudioForTranscription(
         ? { start: firstTimestamp }
         : undefined;
 
-    // Pick the conventional container for the source codec so the lossless
-    // copy lands somewhere Deepgram definitely decodes: AAC/MP3/etc. → .m4a,
+    // Pick the conventional container for the source codec so the output
+    // lands somewhere Deepgram definitely decodes: AAC/MP3/etc. → .m4a,
     // Opus/Vorbis (WebM sources) → audio-only WebM. Whichever is first fails
     // (e.g. exotic codec), the other is tried before giving up.
     const mp4Attempt = { format: new Mp4OutputFormat(), mimeType: "audio/mp4" };
@@ -80,26 +80,47 @@ export async function extractAudioForTranscription(
         ? [webmAttempt, mp4Attempt]
         : [mp4Attempt, webmAttempt];
 
-    for (const { format, mimeType } of attempts) {
-      const target = new BufferTarget();
-      const conversion = await Conversion.init({
-        input,
-        output: new Output({ format, target }),
-        video: { discard: true },
-        trim,
-        showWarnings: false,
-      });
+    // We try to transcode the audio to mono 32kbps to shrink the upload size by 5x-10x.
+    // Transcoding requires WebCodecs/WebAudio support. If the environment doesn't support
+    // transcoding (e.g. Node.js unit tests or older browsers), we fall back to a lossless
+    // remux (copying the audio track as-is).
+    const configs = [
+      {
+        transcode: true,
+        audio: {
+          numberOfChannels: 1,
+          bitrate: 32000,
+        },
+      },
+      {
+        transcode: false,
+        audio: undefined,
+      },
+    ];
 
-      if (!conversion.isValid) continue;
+    for (const config of configs) {
+      for (const { format, mimeType } of attempts) {
+        const target = new BufferTarget();
+        const conversion = await Conversion.init({
+          input,
+          output: new Output({ format, target }),
+          video: { discard: true },
+          audio: config.audio,
+          trim,
+          showWarnings: false,
+        });
 
-      if (onProgress) {
-        conversion.onProgress = (fraction) => onProgress(fraction);
+        if (!conversion.isValid) continue;
+
+        if (onProgress) {
+          conversion.onProgress = (fraction) => onProgress(fraction);
+        }
+
+        await conversion.execute();
+        if (!target.buffer) continue;
+
+        return { kind: "audio", blob: new Blob([target.buffer], { type: mimeType }), mimeType };
       }
-
-      await conversion.execute();
-      if (!target.buffer) continue;
-
-      return { kind: "audio", blob: new Blob([target.buffer], { type: mimeType }), mimeType };
     }
 
     return { kind: "unsupported" };
