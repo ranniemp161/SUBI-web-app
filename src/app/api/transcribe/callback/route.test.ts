@@ -6,6 +6,8 @@ const state = vi.hoisted(() => ({
   selectRows: [] as Record<string, unknown>[],
   updates: [] as Record<string, unknown>[],
   deletedUrls: [] as string[],
+  settled: [] as Array<{ projectId: string; actual: number | null }>,
+  settleError: false,
   rateAllowed: true,
   aiResult: null as Record<string, unknown> | null,
   aiError: false,
@@ -62,6 +64,18 @@ vi.mock("@/lib/deepgram", () => ({
   normalizeDeepgram: vi.fn(() => ({ words: [], text: "hello", duration: 1 })),
 }));
 
+vi.mock("@/lib/credits", () => ({
+  secondsFromDeepgramDuration: vi.fn((d: number | null | undefined) =>
+    d && d > 0 ? Math.max(1, Math.ceil(d)) : null
+  ),
+  settleHold: vi.fn(async (projectId: string, actual: number | null) => {
+    if (state.settleError) throw new Error("db down");
+    state.settled.push({ projectId, actual });
+  }),
+}));
+
+vi.mock("@/lib/observability", () => ({ reportError: vi.fn() }));
+
 vi.mock("@/lib/ai-rough-cut", () => ({
   runAiRoughCut: vi.fn(async () => {
     if (state.aiError) throw new Error("gemini down");
@@ -89,6 +103,8 @@ beforeEach(() => {
   state.selectRows = [];
   state.updates = [];
   state.deletedUrls = [];
+  state.settled = [];
+  state.settleError = false;
   state.rateAllowed = true;
   state.aiResult = null;
   state.aiError = false;
@@ -203,6 +219,58 @@ describe("POST /api/transcribe/callback — blob cleanup", () => {
     const res = await POST(callbackRequest(`?projectId=${VALID_ID}&token=${TOKEN}`));
     expect(res.status).toBe(200);
     expect(state.deletedUrls).toEqual([]);
+  });
+});
+
+describe("POST /api/transcribe/callback — credit settlement", () => {
+  it("settles on Deepgram's measured duration after a successful transcript", async () => {
+    state.selectRows = [{ id: VALID_ID, transcriptCallbackToken: TOKEN }];
+    const res = await POST(
+      callbackRequest(`?projectId=${VALID_ID}&token=${TOKEN}`, {
+        metadata: { duration: 93.2 },
+        results: {},
+      })
+    );
+    expect(res.status).toBe(200);
+    expect(state.settled).toEqual([{ projectId: VALID_ID, actual: 94 }]);
+  });
+
+  it("keeps the hold as the final charge when the payload has no duration", async () => {
+    state.selectRows = [{ id: VALID_ID, transcriptCallbackToken: TOKEN }];
+    const res = await POST(callbackRequest(`?projectId=${VALID_ID}&token=${TOKEN}`));
+    expect(res.status).toBe(200);
+    expect(state.settled).toEqual([{ projectId: VALID_ID, actual: null }]);
+  });
+
+  it("fully refunds the hold when Deepgram reports an error", async () => {
+    state.selectRows = [{ id: VALID_ID, transcriptCallbackToken: TOKEN }];
+    const res = await POST(
+      callbackRequest(`?projectId=${VALID_ID}&token=${TOKEN}`, { err_code: "SOME_ERROR" })
+    );
+    expect(res.status).toBe(200);
+    expect(state.settled).toEqual([{ projectId: VALID_ID, actual: 0 }]);
+  });
+
+  it("refunds the hold on the catch path (malformed payload)", async () => {
+    state.selectRows = [{ id: VALID_ID, transcriptCallbackToken: TOKEN }];
+    const res = await POST(
+      new Request(`http://localhost/api/transcribe/callback?projectId=${VALID_ID}&token=${TOKEN}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-forwarded-for": "203.0.113.1" },
+        body: "{not json",
+      })
+    );
+    expect(res.status).toBe(500);
+    expect(state.settled).toEqual([{ projectId: VALID_ID, actual: 0 }]);
+    expect(state.updates[0].transcriptStatus).toBe("failed");
+  });
+
+  it("a settle failure never changes the response Deepgram sees", async () => {
+    state.selectRows = [{ id: VALID_ID, transcriptCallbackToken: TOKEN }];
+    state.settleError = true;
+    const res = await POST(callbackRequest(`?projectId=${VALID_ID}&token=${TOKEN}`));
+    expect(res.status).toBe(200);
+    expect(state.updates[0].transcriptStatus).toBe("ready");
   });
 });
 

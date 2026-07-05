@@ -5,6 +5,7 @@ import { db } from "@/db";
 import { projects } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { normalizeDeepgram } from "@/lib/deepgram";
+import { secondsFromDeepgramDuration, settleHold } from "@/lib/credits";
 import { runAiRoughCut } from "@/lib/ai-rough-cut";
 import { reportError } from "@/lib/observability";
 import { ipRateLimit } from "@/lib/ip-rate-limit";
@@ -34,6 +35,15 @@ async function deleteBlobQuietly(blobUrl: string) {
     await del(blobUrl);
   } catch (error) {
     reportError("Failed to delete transcription blob", error);
+  }
+}
+
+/** Best-effort settle — a credits hiccup must never mask the transcript result. */
+async function settleHoldQuietly(projectId: string, actualSeconds: number | null) {
+  try {
+    await settleHold(projectId, actualSeconds);
+  } catch (error) {
+    reportError("Failed to settle credit hold", error, { projectId });
   }
 }
 
@@ -117,6 +127,14 @@ export async function POST(request: Request) {
       })
       .where(eq(projects.id, projectId));
 
+    // Settle the credit hold: full refund on failure, otherwise reconcile
+    // against the duration Deepgram actually measured — this is where a
+    // spoofed client durationMs gets corrected.
+    await settleHoldQuietly(
+      projectId,
+      failed ? 0 : secondsFromDeepgramDuration(payload?.metadata?.duration)
+    );
+
     if (blobUrl) await deleteBlobQuietly(blobUrl);
 
     // AI mistake-detection pass over the fresh transcript, stored as a second
@@ -149,6 +167,10 @@ export async function POST(request: Request) {
         updatedAt: new Date(),
       })
       .where(eq(projects.id, projectId));
+
+    // Deepgram's retry of this callback will 401 on the cleared token, so
+    // this is the last chance to release the hold for a failed job.
+    await settleHoldQuietly(projectId, 0);
 
     if (blobUrl) await deleteBlobQuietly(blobUrl);
 

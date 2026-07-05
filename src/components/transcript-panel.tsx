@@ -1,6 +1,14 @@
 "use client";
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type { ReactNode } from "react";
 import { EyeOff, Eye, Search, Sparkles, RotateCcw, Scissors, Play } from "lucide-react";
 import type { EDLSegment, TranscriptWord } from "@/lib/edl";
@@ -101,6 +109,28 @@ const WordSpan = memo(function WordSpan({
   );
 });
 
+// The persisted "hide removed text" preference as a tiny external store, so
+// components read it with useSyncExternalStore instead of a mount effect
+// (localStorage is an external system; effect-body setState is a lint error
+// and an extra render). The listener set makes same-tab toggles reactive —
+// the native "storage" event only fires in *other* tabs.
+const HIDE_CUT_STORAGE_KEY = "rc:hideCutWords";
+const hideCutListeners = new Set<() => void>();
+
+function subscribeHideCut(listener: () => void): () => void {
+  hideCutListeners.add(listener);
+  return () => hideCutListeners.delete(listener);
+}
+
+function readHideCutPreference(): boolean {
+  return localStorage.getItem(HIDE_CUT_STORAGE_KEY) === "1";
+}
+
+function writeHideCutPreference(hide: boolean) {
+  localStorage.setItem(HIDE_CUT_STORAGE_KEY, hide ? "1" : "0");
+  hideCutListeners.forEach((listener) => listener());
+}
+
 /**
  * Transcript panel — click a word to seek, click-drag or shift-click to select
  * a range, right-click for cut/restore/play, click a cut (red) word to restore.
@@ -122,17 +152,16 @@ export default function TranscriptPanel({
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
   const [dragging, setDragging] = useState(false);
   // Descript-style "hide removed text": cut words collapse to a restorable "···"
-  // pill. Starts false on both server and client, then restores the saved
-  // preference after mount (no SSR hydration mismatch).
-  const [hideCut, setHideCut] = useState(false);
-  useEffect(() => {
-    setHideCut(localStorage.getItem("rc:hideCutWords") === "1");
-  }, []);
+  // pill. Backed by the module-level localStorage store below — the server
+  // snapshot is false, so SSR and first client render agree (no hydration
+  // mismatch), then React swaps in the saved preference.
+  const hideCut = useSyncExternalStore(
+    subscribeHideCut,
+    readHideCutPreference,
+    () => false
+  );
   const toggleHideCut = useCallback(() => {
-    setHideCut((h) => {
-      localStorage.setItem("rc:hideCutWords", h ? "0" : "1");
-      return !h;
-    });
+    writeHideCutPreference(!readHideCutPreference());
   }, []);
 
   const containerRef = useRef<HTMLDivElement>(null);

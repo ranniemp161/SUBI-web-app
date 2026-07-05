@@ -13,8 +13,10 @@ vi.mock("@clerk/nextjs/server", () => ({
   currentUser: vi.fn(async () => ({ unsafeMetadata: {} })),
 }));
 
-vi.mock("@/lib/access-code", () => ({
-  hasValidAccessCode: vi.fn(() => state.accessOk),
+vi.mock("@/lib/authz", () => ({
+  getAuthorizedDbUser: vi.fn(async () =>
+    state.accessOk ? { id: "db-user-1", creditSeconds: 3600 } : null
+  ),
 }));
 
 vi.mock("@/lib/rate-limit", () => ({

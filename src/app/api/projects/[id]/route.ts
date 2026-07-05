@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { projects } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { getOwnedProject } from "@/lib/projects";
+import { settleHold } from "@/lib/credits";
 import { patchProjectSchema } from "@/lib/validation";
 import { reportError } from "@/lib/observability";
 
@@ -128,6 +129,17 @@ export async function DELETE(
         { error: "Project not found." },
         { status: 404 }
       );
+    }
+
+    // Refund any in-flight credit hold before the row (and with it the only
+    // record of the hold) disappears. Best-effort: a refund hiccup shouldn't
+    // block the deletion the user asked for.
+    try {
+      await settleHold(id, 0);
+    } catch (error) {
+      reportError("Failed to refund credit hold on project delete", error, {
+        projectId: id,
+      });
     }
 
     await db.delete(projects).where(eq(projects.id, id));

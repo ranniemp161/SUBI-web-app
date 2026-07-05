@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Toaster, toast } from "sonner";
 import { upload } from "@vercel/blob/client";
 import FilePicker, { type VideoMetadata } from "@/components/file-picker";
+import CreditsPanel, { type CreditsInfo } from "@/components/credits-panel";
 import { formatDuration, formatDate } from "@/lib/utils";
 import { extractAudioForTranscription } from "@/lib/audio-extract";
 import { uploadPathnameForProject } from "@/lib/blob";
@@ -66,6 +67,25 @@ function posterFor(id: string): string {
   return POSTER_GRADIENTS[hash % POSTER_GRADIENTS.length];
 }
 
+/**
+ * Fetch the caller's credit balance. Returns null on any failure (network,
+ * auth, an HTML redirect body instead of JSON) — deliberately side-effect
+ * free (no setState) so every call site, including a mount effect, can invoke
+ * it directly without tripping react-hooks/set-state-in-effect, and decide
+ * for itself what to do with the result.
+ */
+async function fetchCreditsInfo(): Promise<CreditsInfo | null> {
+  try {
+    const response = await fetch("/api/credits");
+    if (!response.ok) return null;
+    if (!response.headers.get("content-type")?.includes("application/json")) return null;
+    return (await response.json()) as CreditsInfo;
+  } catch (error) {
+    console.error("Failed to fetch credits:", error);
+    return null;
+  }
+}
+
 /** Pull the most useful human-readable reason out of a failed API response. */
 async function readErrorReason(response: Response): Promise<string> {
   try {
@@ -112,7 +132,11 @@ async function startDeepgramTranscription(
     );
 
     if (!response.ok) {
-      throw new Error(await readErrorReason(response));
+      // Tagged so the caller can show a "buy credits" action instead of the
+      // generic failure copy.
+      throw Object.assign(new Error(await readErrorReason(response)), {
+        insufficientCredits: response.status === 402,
+      });
     }
   } catch (error) {
     // The bytes are already in Blob but the server never learned about them —
@@ -139,8 +163,15 @@ export default function DashboardPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [isLoadingProjects, setIsLoadingProjects] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
+  const [credits, setCredits] = useState<CreditsInfo | null>(null);
+  const [buyOpen, setBuyOpen] = useState(false);
 
-  /** Fetch user's projects on mount. */
+  const fetchCredits = useCallback(async () => {
+    const data = await fetchCreditsInfo();
+    if (data) setCredits(data);
+  }, []);
+
+  /** Fetch user's projects and credit balance on mount. */
   useEffect(() => {
     async function fetchProjects() {
       try {
@@ -157,7 +188,32 @@ export default function DashboardPage() {
     }
 
     fetchProjects();
+    fetchCreditsInfo().then((data) => {
+      if (data) setCredits(data);
+    });
   }, []);
+
+  // Returning from Stripe Checkout: ?checkout=success|cancelled. Read from
+  // window.location (client-only effect) rather than useSearchParams, which
+  // would force a Suspense boundary around the whole page. The webhook may
+  // land a beat after the redirect, so re-fetch the balance a few times.
+  useEffect(() => {
+    const checkout = new URLSearchParams(window.location.search).get("checkout");
+    if (!checkout) return;
+    window.history.replaceState(null, "", "/dashboard");
+    if (checkout === "success") {
+      toast.success("Payment received", {
+        description: "Your credits are being added — the balance updates in a moment.",
+      });
+      const timers = [2000, 5000, 10000].map((ms) => setTimeout(fetchCredits, ms));
+      return () => timers.forEach(clearTimeout);
+    }
+    if (checkout === "cancelled") {
+      toast.message("Checkout cancelled", {
+        description: "No payment was made.",
+      });
+    }
+  }, [fetchCredits]);
 
   // Guards against double-submitting the same project (e.g. mashing "Retry")
   // — the Deepgram route no longer has a DB column to detect that itself,
@@ -234,16 +290,54 @@ export default function DashboardPage() {
         id: toastId,
         description: "This can take a minute — the status updates here when it's ready.",
       });
+      // The reserve just changed the balance — reflect it in the header chip.
+      fetchCredits();
     } catch (error) {
       console.error("Failed to start transcription:", error);
-      fail(
-        "Transcription didn't start",
-        error instanceof Error ? error.message : String(error)
-      );
+      if ((error as { insufficientCredits?: boolean })?.insufficientCredits) {
+        // Server-authoritative "out of credits" — offer the fix directly.
+        fetchCredits();
+        toast.error("Not enough credits", {
+          id: toastId,
+          description:
+            error instanceof Error ? error.message : String(error),
+          action: { label: "Buy credits", onClick: () => setBuyOpen(true) },
+        });
+        setProjects((prev) =>
+          prev.map((p) =>
+            p.id === projectId ? { ...p, transcriptStatus: "failed" } : p
+          )
+        );
+      } else {
+        fail(
+          "Transcription didn't start",
+          error instanceof Error ? error.message : String(error)
+        );
+      }
     } finally {
       inFlightProjectIds.current.delete(projectId);
     }
-  }, []);
+  }, [fetchCredits]);
+
+  /**
+   * Pre-flight credit check (UX only — the server re-checks authoritatively
+   * and 402s). Returns true when the upload should be blocked.
+   */
+  const blockedByCredits = useCallback(
+    (durationMs: number | null | undefined): boolean => {
+      if (credits == null || durationMs == null || durationMs <= 0) return false;
+      const needed = Math.ceil(durationMs / 1000);
+      if (needed <= credits.creditSeconds) return false;
+      toast.error("Not enough credits for this video", {
+        description: `It needs ${formatDuration(durationMs)} of credit — you have ${formatDuration(
+          credits.creditSeconds * 1000
+        )}.`,
+        action: { label: "Buy credits", onClick: () => setBuyOpen(true) },
+      });
+      return true;
+    },
+    [credits]
+  );
 
   /** Handle file selection — create a new project, then kick off transcription. */
   const handleFileSelected = useCallback(
@@ -251,6 +345,7 @@ export default function DashboardPage() {
       // Note: no up-front size gate on the video itself — what's uploaded is
       // the extracted audio track, which kickOffTranscription size-checks
       // against the Deepgram cap after extraction.
+      if (blockedByCredits(metadata.durationMs)) return;
       setIsCreating(true);
 
       try {
@@ -284,7 +379,7 @@ export default function DashboardPage() {
         setIsCreating(false);
       }
     },
-    [kickOffTranscription]
+    [kickOffTranscription, blockedByCredits]
   );
 
   // Retry flow: the media only ever lives in the browser (nothing is stored
@@ -314,6 +409,8 @@ export default function DashboardPage() {
       toast.error("Please select a video file.");
       return;
     }
+
+    if (blockedByCredits(project.durationMs)) return;
 
     // Picking a different file than the project was created from is probably a
     // mistake (the transcript would describe the wrong video) — flag it, but
@@ -365,6 +462,11 @@ export default function DashboardPage() {
                 : p
             )
           );
+          // A finished job settled its credit hold (reconcile or refund) —
+          // pick up the corrected balance.
+          if (updated.transcriptStatus !== "processing") {
+            fetchCredits();
+          }
         } catch (error) {
           if (error instanceof DOMException && error.name === "AbortError") continue;
           console.error("Failed to poll transcript status:", error);
@@ -376,7 +478,7 @@ export default function DashboardPage() {
       clearInterval(interval);
       abortController.abort();
     };
-  }, [projects]);
+  }, [projects, fetchCredits]);
 
   /** Delete a project. */
   async function handleDeleteProject(e: React.MouseEvent, projectId: string) {
@@ -419,25 +521,28 @@ export default function DashboardPage() {
             Turn raw footage into a rough cut — start by adding a video below.
           </p>
         </div>
-        {!isLoadingProjects && projects.length > 0 && (
-          <div className="flex items-center gap-2 text-xs">
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-foreground/[0.04] px-3 py-1.5 font-medium text-foreground/60 ring-1 ring-inset ring-foreground/10">
-              {projects.length} {projects.length === 1 ? "project" : "projects"}
-            </span>
+        <div className="flex flex-col items-end gap-2">
+          <CreditsPanel credits={credits} buyOpen={buyOpen} onBuyOpenChange={setBuyOpen} />
+          {!isLoadingProjects && projects.length > 0 && (
+            <div className="flex items-center gap-2 text-xs">
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-foreground/[0.04] px-3 py-1.5 font-medium text-foreground/60 ring-1 ring-inset ring-foreground/10">
+                {projects.length} {projects.length === 1 ? "project" : "projects"}
+              </span>
             {readyCount > 0 && (
               <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-3 py-1.5 font-medium text-emerald-200 ring-1 ring-inset ring-emerald-400/20">
                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
                 {readyCount} ready
               </span>
             )}
-            {processingCount > 0 && (
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-500/10 px-3 py-1.5 font-medium text-blue-200 ring-1 ring-inset ring-blue-400/20">
-                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-blue-400" />
-                {processingCount} transcribing
-              </span>
-            )}
-          </div>
-        )}
+              {processingCount > 0 && (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-500/10 px-3 py-1.5 font-medium text-blue-200 ring-1 ring-inset ring-blue-400/20">
+                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-blue-400" />
+                  {processingCount} transcribing
+                </span>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* File Picker */}

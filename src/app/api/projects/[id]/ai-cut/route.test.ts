@@ -8,6 +8,9 @@ const state = vi.hoisted(() => ({
   aiResult: null as Record<string, unknown> | null,
   aiError: false,
   updates: [] as Record<string, unknown>[],
+  chargeStatus: "charged" as "charged" | "insufficient",
+  chargeCalls: [] as unknown[][],
+  refundCalls: [] as unknown[][],
 }));
 
 vi.mock("@clerk/nextjs/server", () => ({
@@ -35,6 +38,18 @@ vi.mock("@/lib/ai-rough-cut", () => ({
 }));
 
 vi.mock("@/lib/observability", () => ({ reportError: vi.fn() }));
+
+vi.mock("@/lib/credits", () => ({
+  costSecondsForDurationMs: (durationMs: number | null | undefined) =>
+    durationMs ? Math.ceil(durationMs / 1000) : 60,
+  chargeAiCut: vi.fn(async (userId: string, projectId: string, costSeconds: number) => {
+    state.chargeCalls.push([userId, projectId, costSeconds]);
+    return { status: state.chargeStatus };
+  }),
+  refundAiCut: vi.fn(async (userId: string, projectId: string, costSeconds: number) => {
+    state.refundCalls.push([userId, projectId, costSeconds]);
+  }),
+}));
 
 vi.mock("@/db", () => {
   function chain(getResult: () => unknown, onSet?: (v: Record<string, unknown>) => void) {
@@ -65,6 +80,7 @@ vi.mock("@/db", () => {
 import { POST } from "./route";
 import { rateLimit } from "@/lib/rate-limit";
 import { runAiRoughCut } from "@/lib/ai-rough-cut";
+import { chargeAiCut, refundAiCut } from "@/lib/credits";
 
 const VALID_ID = "12345678-1234-1234-1234-123456789abc";
 const params = Promise.resolve({ id: VALID_ID });
@@ -72,6 +88,8 @@ const request = () => new Request("http://localhost", { method: "POST" });
 
 const READY_PROJECT = {
   id: VALID_ID,
+  userId: "user-1",
+  durationMs: 5000,
   transcriptStatus: "ready",
   transcript: {
     words: [{ word: "hello", start: 0, end: 0.5, confidence: 1 }],
@@ -90,6 +108,9 @@ beforeEach(() => {
   state.aiResult = null;
   state.aiError = false;
   state.updates = [];
+  state.chargeStatus = "charged";
+  state.chargeCalls = [];
+  state.refundCalls = [];
   vi.clearAllMocks();
 });
 
@@ -137,6 +158,29 @@ describe("POST /api/projects/:id/ai-cut — gates", () => {
   });
 });
 
+describe("POST /api/projects/:id/ai-cut — credits", () => {
+  it("charges before calling Gemini, using the project's duration", async () => {
+    state.clerkId = "clerk_1";
+    state.ownedProject = READY_PROJECT;
+    state.aiResult = AI_CUTS;
+    await POST(request(), { params });
+    expect(chargeAiCut).toHaveBeenCalledWith("user-1", VALID_ID, 5);
+    expect(state.chargeCalls).toHaveLength(1);
+  });
+
+  it("returns 402 and never calls Gemini when credits are insufficient", async () => {
+    state.clerkId = "clerk_1";
+    state.ownedProject = READY_PROJECT;
+    state.chargeStatus = "insufficient";
+    const res = await POST(request(), { params });
+    expect(res.status).toBe(402);
+    const body = (await res.json()) as { code?: string; requiredSeconds?: number };
+    expect(body.code).toBe("INSUFFICIENT_CREDITS");
+    expect(body.requiredSeconds).toBe(5);
+    expect(runAiRoughCut).not.toHaveBeenCalled();
+  });
+});
+
 describe("POST /api/projects/:id/ai-cut — the run itself", () => {
   it("runs Gemini over the transcript, stores the result, and returns it", async () => {
     state.clerkId = "clerk_1";
@@ -150,23 +194,26 @@ describe("POST /api/projects/:id/ai-cut — the run itself", () => {
     expect(state.updates).toHaveLength(1);
     expect(state.updates[0].aiCuts).toBe(AI_CUTS);
     expect(await res.json()).toEqual(AI_CUTS);
+    expect(state.refundCalls).toHaveLength(0);
   });
 
-  it("returns 422 (and stores nothing) when the transcript trips the size guard", async () => {
+  it("returns 422, stores nothing, and refunds the charge when the transcript trips the size guard", async () => {
     state.clerkId = "clerk_1";
     state.ownedProject = READY_PROJECT;
     state.aiResult = null; // configured + words present, so null = size guard
     const res = await POST(request(), { params });
     expect(res.status).toBe(422);
     expect(state.updates).toHaveLength(0);
+    expect(refundAiCut).toHaveBeenCalledWith("user-1", VALID_ID, 5);
   });
 
-  it("returns 502 (and stores nothing) when the Gemini request fails", async () => {
+  it("returns 502, stores nothing, and refunds the charge when the Gemini request fails", async () => {
     state.clerkId = "clerk_1";
     state.ownedProject = READY_PROJECT;
     state.aiError = true;
     const res = await POST(request(), { params });
     expect(res.status).toBe(502);
     expect(state.updates).toHaveLength(0);
+    expect(refundAiCut).toHaveBeenCalledWith("user-1", VALID_ID, 5);
   });
 });

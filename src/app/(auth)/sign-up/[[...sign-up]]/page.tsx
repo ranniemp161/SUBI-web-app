@@ -238,12 +238,13 @@ export default function SignUpPage() {
                 type="text"
                 value={accessCode}
                 onChange={(e) => setAccessCode(e.target.value)}
-                placeholder="From your Skool community"
+                placeholder="SKOOL-XXXX-XXXX"
                 required
                 className="mt-1 block w-full rounded-lg border border-foreground/10 bg-foreground/5 px-4 py-3 text-foreground placeholder-foreground/40 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
               />
               <p className="mt-1 text-xs text-foreground/40">
-                Find this code inside your Skool community
+                Your personal access code from the Skool community — each code
+                works once
               </p>
             </div>
           </div>

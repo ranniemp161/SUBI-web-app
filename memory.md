@@ -1,108 +1,40 @@
-# Memory — Landing page redesign (Figma design → live page) + copy honesty pass
+# Memory — Bandwidth Review + Stripe Sandbox Setup + Credits Verification
 
-Last updated: 2026-07-04 (late evening)
+Last updated: 2026-07-05 (late)
 
 ## What was built
 
-All in the working tree — **NOT committed yet** (`src/app/page.tsx`,
-`ui-registry.md`, `memory.md` modified).
+Nothing new in application code this session — this session was infrastructure/verification work on top of the credit system built in prior sessions (schema, engine, Stripe wiring, dashboard UI — all still uncommitted, see prior memory).
 
-### Landing page rebuild (`src/app/page.tsx`)
-- Rewrote the whole page to match the user's design file ("Ruff Cut
-  Landing.html", a bundled Figma/Claude-design export they attached in chat).
-  Copy was preserved verbatim except the honesty corrections below.
-- New look: fixed dark-navy marketing palette (`#070B12` bg, `#4D8DFF`/`#7EB2FF`
-  accent), fonts **Bricolage Grotesque** (display) / **Instrument Sans** (body) /
-  **IBM Plex Mono** (labels) loaded via `next/font` *inside page.tsx* so they
-  only ship on this route.
-- New design elements: hero app mockup (window chrome, transcript with
-  strikethrough retakes + RETAKE/SILENCE chips, "Suggested cuts" panel,
-  sine-generated waveform strip), three-steps section with mono 01/02/03,
-  gradient feature cards, privacy card with disk→cloud→disk flow diagram,
-  bottom CTA with struck-through "dead air".
-- Page stays a **server component, zero client JS** — FAQ uses
-  `<details name="faq-accordion">` (native exclusive accordion, first item
-  `open`). Tradeoff: no open/close height animation.
-
-### Copy honesty pass (user explicitly asked for non-deceptive copy)
-- **Gated CTAs** (sign-up requires an access code before Clerk even creates the
-  account, so "Get Started Free" was misleading): nav → "Get access", both big
-  CTAs → "Get started with your code", hero note "Invite-only · access codes
-  via the Skool community", bottom note "Have a code from the Skool community?
-  Enter it when you create your account." (all from the design's gated variant,
-  which was its default).
-- **Internet FAQ** rewritten: exports can fail if you go offline mid-session
-  (app is served from the web; mediabunny is bundled but worker chunk/session/
-  saves need network). Old copy claimed exporting is fully local/offline.
-- **4K FAQ**: now discloses 4K is "our least-tested path" (per LIMITATIONS.md
-  "not yet verified end to end"); points to the 1080p/720p export selector.
-- **Descript FAQ**: removed "there's no timeline" (the studio has one) →
-  "editing is text-first — the timeline is there to show your cuts"; and
-  "your media never sits in anyone's cloud" → "your video" (audio sits in Blob
-  briefly).
-- Verified-and-left-alone: "video never leaves your computer" (true),
-  MP4-only formats claim (the conservative/honest option), Chromium-only note,
-  re-select-file FAQ, "in minutes" headline (fair marketing claim).
-
-### ui-registry.md
-- Appended **"Marketing / landing surface — Established 2026-07-04"** section:
-  full palette/typography/component recipes for the landing design language.
-- Updated the accent note: app now has **three** accent treatments — editor
-  violet, dashboard/auth Tailwind blue, landing custom `#4D8DFF`. Rule: match
-  the surface you're on.
+- **[src/app/api/billing/bundles/route.ts](src/app/api/billing/bundles/route.ts)** — dropped the `auth()` gate (bundle prices aren't sensitive/user-specific) and added `Cache-Control: public, s-maxage=300, stale-while-revalidate=3600`, so Vercel's edge can serve repeat requests without invoking the function or hitting Stripe. Test file updated to match (dropped the 401 test, added a cache-header assertion).
+- **Migration `drizzle/manual/0004_credit_ledger_cost_tracking.sql` — now applied to the dev DB.** `credit_ledger.cost_micros` and the `'ai_cut'` enum value both confirmed present via direct query.
+- **Stripe test-mode fully wired**: `STRIPE_SECRET_KEY` (sandbox), 3 bundle Products/Prices created via the Stripe API (Starter $19/60min, Standard $79/300min, Bulk $249/1000min — `metadata.credit_seconds` = 3600/18000/60000), `STRIPE_PRICE_IDS` set in `.env.local`. Stripe CLI installed (winget), logged in, and `stripe listen --forward-to localhost:3000/api/webhooks/stripe` is running in a background task — its `whsec_...` is in `STRIPE_WEBHOOK_SECRET`.
+- Two throwaway verification scripts were written, run, and deleted (not committed): one exercising `chargeAiCut`/`refundAiCut`/overdraft-guard logic against a scratch user+project row in the real dev DB (all 8 assertions passed), one reading back the `purchase` ledger row after a manual Stripe Checkout test.
 
 ## Decisions made
 
-- Landing uses a **fixed dark-only palette with arbitrary hex values**, NOT the
-  `background`/`foreground` theme tokens — intentional, marketing-only; don't
-  carry into editor/dashboard.
-- Landing fonts scoped to the route (loaded in page.tsx, not layout.tsx) so
-  Geist stays the app-wide font.
-- Adopted the design's **gated** copy variant (its `gatedAccess` default was
-  true) — aligns marketing with the real invite-gated signup.
-- Kept FAQ zero-JS; offered a client component only if the user wants the
-  open/close animation.
+- **Bundle pricing endpoint made public + edge-cacheable** — the data (Stripe Prices) isn't sensitive or user-specific, so requiring auth only cost an invocation with no security benefit. Checkout itself (`/api/billing/checkout`) still requires auth; only the read-only listing was opened up.
+- **Bandwidth architecture confirmed sound for the 100GB Vercel free tier** — video/audio never streams through Vercel (client-side `URL.createObjectURL`, direct-to-Blob uploads, blobs deleted immediately post-transcription). The real cost lever to watch is Vercel Blob *data transfer* from transcription audio, not Fast Data Transfer — and even that is deep in free-tier territory at current pricing/margins. No caching changes were needed beyond the bundles route.
 
 ## Problems solved
 
-- **Screenshot verification on Windows**: `chrome.exe --headless=new
-  --window-size=1440,6200 --screenshot=...` captures the full page (no
-  chromium-cli/playwright browsers installed). Anchor-URL screenshots (`/#faq`)
-  race the scroll and come out black — instead crop the tall full-page PNG with
-  PowerShell `System.Drawing` `Bitmap.Clone`.
-- The design HTML's template has mojibake (`â`, `ââ`) — those are em dashes,
-  middots, `→`, `⇅`, curly quotes; use real characters.
-- `<details name="...">` works in React 19 / Next 16 for a no-JS exclusive
-  accordion (typechecks fine).
+- **Neon HTTP driver can't run multi-statement SQL scripts.** `sql.unsafe(script)` on a BEGIN/DO $$/COMMIT script silently no-ops (returns a query-builder object, never executes) — this looked like a successful migration run until verified directly against `information_schema`. Fixed by running the migration as two separate idempotent statements (`ALTER TYPE ... ADD VALUE IF NOT EXISTS`, `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`) instead of the transactional DO-block version. **Lesson: always verify a migration against the DB's actual state, not just the absence of a thrown error** — this is the second time this exact failure mode has bitten this project (see prior session's `settleHold` RETURNING-clause bug).
+- A dotenv console "tip" referencing `vestauth.com` looked like a possible supply-chain/prompt-injection concern; confirmed benign by reading `node_modules/dotenv/lib/main.js` directly — it's a hardcoded self-promotional string array with no network call.
 
 ## Current state
 
-- Landing redesign complete and visually verified section-by-section against
-  the design via headless-Chrome screenshots. Typecheck passes; all 152 tests
-  pass. Dev server may still be running on :3000 from this session.
-- **Nothing committed** — the user hadn't signed off on a commit yet.
-- Prior feature (hybrid AI rough cut, `b7280aa`) unchanged: user has STILL not
-  reviewed a full AI+hybrid cut end-to-end in the studio.
+- Migration `0004` is live in the dev DB and verified working end-to-end (ledger writes, cost_micros, enum value all confirmed via a scratch charge/refund/overdraft test).
+- Stripe sandbox is fully wired and **manually tested successfully by the user**: a real Checkout test purchase (Starter bundle, test card) completed, webhook fired, and the `purchase` ledger row + balance bump were confirmed directly in the dev DB (balance landed at 5110s for the test account).
+- `stripe listen` is still running in a background task on this machine — needed for the webhook to keep working locally; if it's restarted, `STRIPE_WEBHOOK_SECRET` in `.env.local` will need updating again (a fresh secret is issued each time `stripe listen` starts).
+- **Still nothing committed to git** — all credit-system + Stripe + AI Cut metering work across this session and prior sessions remains uncommitted working-tree changes.
 
 ## Next session starts with
 
-1. User eyeballs the redesigned landing page in a browser; then commit the
-   redesign (`src/app/page.tsx` + `ui-registry.md`).
-2. Carried over: user reviews a full hybrid cut in the studio (JZ or 0615
-   project: AI Cut → Re-run rough cut); tune prompt rules /
-   `PHRASE_PAUSE_SECONDS` from real misjudgments.
-3. Then the standing production list: access-code rotation fix (architecture
-   undecided) → Vercel deploy (add `GEMINI_API_KEY` env, run
-   `drizzle/manual/0002` on prod DB, callback-mode e2e) → 4K/HEVC export
-   verification (now also promised implicitly by the 4K FAQ wording).
+1. Prepare and confirm a commit covering the full credit system + AI Cut metering + Stripe wiring + the bundles route caching change (user was about to be asked this when the session ended).
+2. Nothing else is blocking — migration, Stripe, and credits verification are all done. After committing, the remaining rollout work is genuinely deploy-time only: setting the same env vars (this time with a **live**-mode Stripe key/webhook, not sandbox) on Vercel's production project settings.
 
 ## Open questions
 
-- FAQ open/close animation: wanted? (needs a small client component.)
-- Unify the three accent colors someday? The landing's `#4D8DFF` is the
-  strongest brand candidate if so.
-- Idea (not planned): preload the export-worker chunk when the studio opens so
-  a brief offline drop mid-session can't block starting an export.
-- Carried over: is `retake-detection.ts` still earning its place vs the AI
-  pass; R2-vs-Blob client conversation; orphaned "ruffcut" Blob store; prod
-  Neon migration; Vercel passkey issue.
+1. `TRANSCRIPTION_COST_MICROS_PER_SECOND` (1383) and `AI_CUT_COST_MICROS_PER_SECOND` (1217) are still estimates — revisit once real `cost_micros` data accumulates post-launch (carried over from prior session).
+2. Whether/when to open signup to non-Skool members is still undecided (carried over from prior session).
+3. Live-mode Stripe setup (real Products/Prices/webhook against a real bank-connected account) hasn't been started — today's work was sandbox-only.

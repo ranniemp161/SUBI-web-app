@@ -1,8 +1,8 @@
-import { auth, currentUser } from "@clerk/nextjs/server";
+import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import { del } from "@vercel/blob";
 import { getOwnedProject } from "@/lib/projects";
-import { hasValidAccessCode } from "@/lib/access-code";
+import { getAuthorizedDbUser } from "@/lib/authz";
 import { rateLimit } from "@/lib/rate-limit";
 import { reportError } from "@/lib/observability";
 import { isOwnBlobUrl, projectIdFromBlobUrl } from "@/lib/blob";
@@ -32,9 +32,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const clerkUser = await currentUser();
+  const user = await getAuthorizedDbUser(clerkId);
 
-  if (!hasValidAccessCode(clerkUser?.unsafeMetadata)) {
+  if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
   }
 

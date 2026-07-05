@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   ArrowLeft,
@@ -104,6 +104,7 @@ const exportSupportSubscribe = () => () => {};
 
 export default function EditorPage() {
   const { id } = useParams<{ id: string }>();
+  const router = useRouter();
 
   const [project, setProject] = useState<Project | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -599,6 +600,14 @@ export default function EditorPage() {
       const response = await fetch(`/api/projects/${id}/ai-cut`, { method: "POST" });
       const data = await response.json().catch(() => null);
       if (!response.ok) {
+        if (response.status === 402) {
+          toast.error("Not enough credits", {
+            id: "ai-cut",
+            description: "This AI pass needs more credit than you have left.",
+            action: { label: "Buy credits", onClick: () => router.push("/dashboard") },
+          });
+          return;
+        }
         toast.error("AI cut failed", {
           id: "ai-cut",
           description:
@@ -631,7 +640,7 @@ export default function EditorPage() {
     } finally {
       setAiBusy(false);
     }
-  }, [edl, aiBusy, id, words, applyEdl, undo]);
+  }, [edl, aiBusy, id, words, applyEdl, undo, router]);
   // Signal the in-flight export to stop. Only reachable once a handle exists
   // (the Cancel control is shown only in "exporting"/"cancelling"); the guard
   // is belt-and-suspenders. The worker throws ExportError("cancelled"), which
@@ -888,13 +897,17 @@ export default function EditorPage() {
     );
   }
 
+  // Pure data only — the click handlers are attached at JSX time via
+  // `action`. Storing the callbacks here trips react-hooks/refs: they
+  // transitively capture the undo-stack refs, which taints the whole array
+  // as "ref-carrying" and flags its render-time read as a ref access.
   const railTools: {
     Icon: LucideIcon;
     label: string;
     badge?: number;
     active?: boolean;
     title?: string;
-    onClick?: () => void;
+    action?: "ai-cut" | "filler";
   }[] = [
     { Icon: MousePointer2, label: "Select", active: true },
     { Icon: Scissors, label: "Trim" },
@@ -906,7 +919,7 @@ export default function EditorPage() {
       title: aiBusy
         ? "AI is reviewing your transcript…"
         : "AI pass — remove false starts, stumbles & flubbed takes",
-      onClick: runAiCut,
+      action: "ai-cut",
     },
     {
       Icon: Sparkles,
@@ -917,7 +930,7 @@ export default function EditorPage() {
         fillerWords.length > 0
           ? `Remove ${fillerWords.length} filler word${fillerWords.length === 1 ? "" : "s"} (um, uh, …)`
           : "No filler words detected",
-      onClick: removeFillerWords,
+      action: "filler",
     },
     { Icon: AudioLines, label: "Silence", badge: stats.removedCount },
     { Icon: Captions, label: "Captions" },
@@ -959,16 +972,22 @@ export default function EditorPage() {
               key={tool.label}
               type="button"
               disabled={!tool.active}
-              // One-shot actions (onClick) aren't toggles — pressed state would
+              // One-shot actions aren't toggles — pressed state would
               // misreport them to assistive tech.
-              aria-pressed={tool.onClick ? undefined : tool.active}
-              onClick={tool.onClick}
+              aria-pressed={tool.action ? undefined : tool.active}
+              onClick={
+                tool.action === "ai-cut"
+                  ? runAiCut
+                  : tool.action === "filler"
+                    ? removeFillerWords
+                    : undefined
+              }
               title={
                 tool.title ?? (tool.active ? tool.label : `${tool.label} (coming soon)`)
               }
               className={`relative flex w-14 flex-col items-center gap-1 rounded-lg py-2 text-[10px] ${
                 tool.active
-                  ? tool.onClick
+                  ? tool.action
                     ? "bg-violet-500/15 text-violet-300 transition-colors hover:bg-violet-500/25"
                     : "bg-violet-500/15 text-violet-300"
                   : "cursor-not-allowed text-foreground/30"

@@ -7,7 +7,13 @@ const state = vi.hoisted(() => ({
     headers: Record<string, string>
   ) => { type: string; data: Record<string, unknown> },
   deletedUserIds: [] as string[],
-  insertedUsers: [] as Record<string, unknown>[],
+  provisionCalls: [] as Array<{
+    clerkId: string;
+    email: string;
+    code: string | undefined;
+  }>,
+  // Emulates provisionMemberWithCode: only this code redeems successfully.
+  validCode: "SKOOL-AAAA-BBBB",
 }));
 
 vi.mock("@/lib/rate-limit", () => ({
@@ -36,27 +42,15 @@ vi.mock("@clerk/nextjs/server", () => ({
   })),
 }));
 
-vi.mock("@/lib/access-code", () => ({
-  hasValidAccessCode: vi.fn(
-    (metadata: Record<string, unknown> | undefined) => metadata?.accessCode === "SKOOL2026"
+vi.mock("@/lib/access-codes", () => ({
+  provisionMemberWithCode: vi.fn(
+    async (clerkId: string, email: string, code: string | undefined) => {
+      state.provisionCalls.push({ clerkId, email, code });
+      if (code !== state.validCode) return null;
+      return { id: "db-user-1", clerkId, email, isMember: true, creditSeconds: 0 };
+    }
   ),
 }));
-
-vi.mock("@/db", () => {
-  const proxy: unknown = new Proxy(function () {}, {
-    get(_t, prop) {
-      if (prop === "then") return undefined;
-      if (prop === "values") {
-        return (v: Record<string, unknown>) => {
-          state.insertedUsers.push(v);
-          return proxy;
-        };
-      }
-      return () => proxy;
-    },
-  });
-  return { db: { insert: () => proxy } };
-});
 
 import { POST } from "./route";
 import { rateLimit } from "@/lib/rate-limit";
@@ -81,7 +75,7 @@ function req(
 beforeEach(() => {
   state.rateAllowed = true;
   state.deletedUserIds = [];
-  state.insertedUsers = [];
+  state.provisionCalls = [];
   state.verifyImpl = () => ({ type: "user.created", data: {} });
   vi.clearAllMocks();
   process.env.CLERK_WEBHOOK_SECRET = "whsec_test";
@@ -124,7 +118,7 @@ describe("POST /api/webhooks/clerk — request guards", () => {
 });
 
 describe("POST /api/webhooks/clerk — user.created handling", () => {
-  it("deletes the user when the access code is missing or invalid", async () => {
+  it("deletes the Clerk user when provisioning rejects the code", async () => {
     state.verifyImpl = () => ({
       type: "user.created",
       data: { id: "user_1", unsafe_metadata: { accessCode: "wrong" } },
@@ -132,15 +126,30 @@ describe("POST /api/webhooks/clerk — user.created handling", () => {
     const res = await POST(req({}));
     expect(res.status).toBe(200);
     expect(state.deletedUserIds).toEqual(["user_1"]);
-    expect(state.insertedUsers).toHaveLength(0);
+    expect(state.provisionCalls).toEqual([
+      { clerkId: "user_1", email: "", code: "wrong" },
+    ]);
   });
 
-  it("creates our own users row when the access code is valid", async () => {
+  it("deletes the Clerk user when no code was provided at all", async () => {
+    state.verifyImpl = () => ({
+      type: "user.created",
+      data: { id: "user_3", unsafe_metadata: {} },
+    });
+    const res = await POST(req({}));
+    expect(res.status).toBe(200);
+    expect(state.deletedUserIds).toEqual(["user_3"]);
+    expect(state.provisionCalls).toEqual([
+      { clerkId: "user_3", email: "", code: undefined },
+    ]);
+  });
+
+  it("provisions a member (users row + redeemed code) when the code is valid", async () => {
     state.verifyImpl = () => ({
       type: "user.created",
       data: {
         id: "user_2",
-        unsafe_metadata: { accessCode: "SKOOL2026" },
+        unsafe_metadata: { accessCode: ` ${state.validCode} ` },
         email_addresses: [{ id: "e1", email_address: "a@b.com" }],
         primary_email_address_id: "e1",
       },
@@ -148,6 +157,9 @@ describe("POST /api/webhooks/clerk — user.created handling", () => {
     const res = await POST(req({}));
     expect(res.status).toBe(200);
     expect(state.deletedUserIds).toEqual([]);
-    expect(state.insertedUsers).toEqual([{ clerkId: "user_2", email: "a@b.com" }]);
+    // The raw metadata code is trimmed before redemption.
+    expect(state.provisionCalls).toEqual([
+      { clerkId: "user_2", email: "a@b.com", code: state.validCode },
+    ]);
   });
 });

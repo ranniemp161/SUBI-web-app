@@ -1,9 +1,7 @@
 import { Webhook } from "svix";
 import { NextResponse } from "next/server";
 import { clerkClient } from "@clerk/nextjs/server";
-import { db } from "@/db";
-import { users } from "@/db/schema";
-import { hasValidAccessCode } from "@/lib/access-code";
+import { provisionMemberWithCode } from "@/lib/access-codes";
 import { ipRateLimit } from "@/lib/ip-rate-limit";
 
 // No Clerk session on this request (Clerk itself is calling us), so it's
@@ -79,16 +77,9 @@ export async function POST(request: Request) {
     const unsafeMetadata = event.data.unsafe_metadata as
       | Record<string, unknown>
       | undefined;
-    if (!hasValidAccessCode(unsafeMetadata)) {
-      const client = await clerkClient();
-      await client.users.deleteUser(userId);
-      console.warn(`Deleted user ${userId}: invalid or missing access code.`);
-      return NextResponse.json({ received: true });
-    }
+    const rawCode = unsafeMetadata?.accessCode;
+    const code = typeof rawCode === "string" ? rawCode.trim() : undefined;
 
-    // Access code is valid — create our own users row now, with the
-    // real email, instead of waiting for the first project creation
-    // to lazily upsert a placeholder.
     const emailAddresses = event.data.email_addresses as
       | Array<{ id: string; email_address: string }>
       | undefined;
@@ -100,10 +91,16 @@ export async function POST(request: Request) {
       emailAddresses?.[0]?.email_address ??
       "";
 
-    await db
-      .insert(users)
-      .values({ clerkId: userId, email })
-      .onConflictDoNothing();
+    // Creates our users row and atomically redeems the per-member code —
+    // idempotent against the lazy fallback in lib/authz.ts, which may have
+    // provisioned this user already if they raced the webhook.
+    const user = await provisionMemberWithCode(userId, email, code);
+
+    if (!user) {
+      const client = await clerkClient();
+      await client.users.deleteUser(userId);
+      console.warn(`Deleted user ${userId}: invalid or missing access code.`);
+    }
   }
 
   return NextResponse.json({ received: true });

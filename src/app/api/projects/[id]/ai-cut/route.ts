@@ -6,6 +6,7 @@ import { eq } from "drizzle-orm";
 import { getOwnedProject } from "@/lib/projects";
 import { rateLimit } from "@/lib/rate-limit";
 import { runAiRoughCut, isAiRoughCutConfigured } from "@/lib/ai-rough-cut";
+import { chargeAiCut, costSecondsForDurationMs, refundAiCut } from "@/lib/credits";
 import { reportError } from "@/lib/observability";
 import type { Transcript } from "@/lib/edl";
 
@@ -17,6 +18,15 @@ export const maxDuration = 300;
 // "re-run it on a project or three", not enough to matter if a client loops.
 const AI_CUT_LIMIT = 10;
 const AI_CUT_WINDOW_SECONDS = 3600;
+
+/** Best-effort refund — a credits hiccup must never mask the real Gemini error. */
+async function refundAiCutQuietly(userId: string, projectId: string, costSeconds: number) {
+  try {
+    await refundAiCut(userId, projectId, costSeconds);
+  } catch (error) {
+    reportError("Failed to refund AI cut charge", error, { projectId });
+  }
+}
 
 /**
  * POST /api/projects/:id/ai-cut — run (or re-run) the AI mistake-detection
@@ -67,10 +77,36 @@ export async function POST(
       );
     }
 
-    const aiCuts = await runAiRoughCut(transcript.words);
+    // Each run is a real Gemini call the account pays for; the automatic
+    // first pass right after transcription is already priced into the
+    // original per-second transcription charge (see lib/credits.ts), so only
+    // this on-demand path (re-runs, and the retry when that first pass
+    // failed) is charged here.
+    const costSeconds = costSecondsForDurationMs(project.durationMs);
+    const charge = await chargeAiCut(project.userId, id, costSeconds);
+    if (charge.status === "insufficient") {
+      return NextResponse.json(
+        {
+          error: "Not enough credits to run the AI pass.",
+          code: "INSUFFICIENT_CREDITS",
+          requiredSeconds: costSeconds,
+        },
+        { status: 402 }
+      );
+    }
+
+    let aiCuts;
+    try {
+      aiCuts = await runAiRoughCut(transcript.words);
+    } catch (error) {
+      await refundAiCutQuietly(project.userId, id, costSeconds);
+      throw error;
+    }
+
     // Configured + non-empty words were checked above, so null here means the
-    // transcript tripped the size guard.
+    // transcript tripped the size guard — no usable result was delivered.
     if (!aiCuts) {
+      await refundAiCutQuietly(project.userId, id, costSeconds);
       return NextResponse.json(
         { error: "This transcript is too long for the AI pass." },
         { status: 422 }

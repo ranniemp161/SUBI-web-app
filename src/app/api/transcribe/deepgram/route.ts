@@ -1,12 +1,22 @@
 import { randomBytes } from "crypto";
-import { auth, currentUser } from "@clerk/nextjs/server";
+import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import { del } from "@vercel/blob";
 import { db } from "@/db";
 import { projects } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { getOwnedProject } from "@/lib/projects";
-import { hasValidAccessCode } from "@/lib/access-code";
+import { getAuthorizedDbUser } from "@/lib/authz";
+import {
+  costSecondsForDurationMs,
+  ensureMonthlyGrant,
+  memberGrantSeconds,
+  reclaimStaleHold,
+  reserveCredits,
+  secondsFromDeepgramDuration,
+  settleHold,
+  STALE_HOLD_MS,
+} from "@/lib/credits";
 import { rateLimit } from "@/lib/rate-limit";
 import { reportError } from "@/lib/observability";
 import { isOwnBlobUrl } from "@/lib/blob";
@@ -66,6 +76,15 @@ async function deleteBlobQuietly(blobUrl: string) {
   }
 }
 
+/** Best-effort settle — a credits hiccup must never mask the transcript result. */
+async function settleHoldQuietly(projectId: string, actualSeconds: number | null) {
+  try {
+    await settleHold(projectId, actualSeconds);
+  } catch (error) {
+    reportError("Failed to settle credit hold", error, { projectId });
+  }
+}
+
 export async function POST(request: Request) {
   const { userId: clerkId } = await auth();
 
@@ -73,9 +92,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const clerkUser = await currentUser();
+  const user = await getAuthorizedDbUser(clerkId);
 
-  if (!hasValidAccessCode(clerkUser?.unsafeMetadata)) {
+  if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
   }
 
@@ -117,6 +136,47 @@ export async function POST(request: Request) {
 
   if (typeof blobUrl !== "string" || !isOwnBlobUrl(blobUrl)) {
     return NextResponse.json({ error: "Invalid or missing blobUrl." }, { status: 400 });
+  }
+
+  // Credits: top up the member grant if a new month started, then atomically
+  // reserve this job's cost (charged now, trued up against Deepgram's
+  // authoritative duration when the transcript lands — see lib/credits.ts).
+  await ensureMonthlyGrant(user.id, memberGrantSeconds());
+
+  const costSeconds = costSecondsForDurationMs(project.durationMs);
+  let reserved = await reserveCredits(user.id, projectId, costSeconds);
+
+  if (reserved.status === "already_held") {
+    // Only reclaim a hold that's BOTH not "processing" AND has sat past
+    // STALE_HOLD_MS — checked and cleared atomically in one statement against
+    // the database's current state, not an in-memory snapshot taken before
+    // this reserve attempt. That distinction matters: a snapshot can't tell
+    // "an earlier attempt crashed" apart from "a concurrent request just
+    // reserved and hasn't written 'processing' yet" — both look identical to
+    // a stale read — so trusting one would let a live request's hold get
+    // refunded and stolen out from under it.
+    const reclaimed = await reclaimStaleHold(projectId, STALE_HOLD_MS);
+    if (reclaimed) {
+      reserved = await reserveCredits(user.id, projectId, costSeconds);
+    }
+  }
+
+  if (reserved.status === "already_held") {
+    return NextResponse.json(
+      { error: "A transcription for this project is already in progress." },
+      { status: 409 }
+    );
+  }
+
+  if (reserved.status === "insufficient") {
+    return NextResponse.json(
+      {
+        error: "Not enough credits to transcribe this video.",
+        code: "INSUFFICIENT_CREDITS",
+        requiredSeconds: costSeconds,
+      },
+      { status: 402 }
+    );
   }
 
   // The base Deepgram's callback must POST back to. PUBLIC_APP_URL (a tunnel's
@@ -182,6 +242,7 @@ export async function POST(request: Request) {
 
       // Whether sync or callback mode, a rejected initial request means no
       // callback will ever arrive — safe to clean up now either way.
+      await settleHoldQuietly(projectId, 0);
       await deleteBlobQuietly(blobUrl);
 
       return NextResponse.json(
@@ -212,6 +273,12 @@ export async function POST(request: Request) {
       })
       .where(eq(projects.id, projectId));
 
+    // Reconcile the hold against the duration Deepgram actually measured —
+    // the client-reported one the hold was based on can't be trusted.
+    await settleHoldQuietly(
+      projectId,
+      secondsFromDeepgramDuration(payload.metadata?.duration)
+    );
     await deleteBlobQuietly(blobUrl);
 
     return NextResponse.json({ received: true });
@@ -226,6 +293,7 @@ export async function POST(request: Request) {
       })
       .where(eq(projects.id, projectId));
 
+    await settleHoldQuietly(projectId, 0);
     await deleteBlobQuietly(blobUrl);
 
     return NextResponse.json(

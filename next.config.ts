@@ -13,7 +13,7 @@ const nextConfig: NextConfig = {
 // @sentry/nextjs never enters next.config's module trace — otherwise Turbopack
 // flags it as unintentionally tracing the whole project — and default builds
 // stay completely Sentry-free.
-export default async (): Promise<NextConfig> => {
+const buildConfig = async (): Promise<NextConfig> => {
   if (!process.env.SENTRY_DSN) return nextConfig;
   const { withSentryConfig } = await import("@sentry/nextjs");
   return withSentryConfig(nextConfig, {
@@ -23,3 +23,5 @@ export default async (): Promise<NextConfig> => {
     disableLogger: true,
   });
 };
+
+export default buildConfig;

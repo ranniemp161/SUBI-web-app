@@ -1,9 +1,9 @@
-import { auth, currentUser } from "@clerk/nextjs/server";
+import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import { db, withDbRetry } from "@/db";
 import { projects, users } from "@/db/schema";
 import { eq, desc } from "drizzle-orm";
-import { hasValidAccessCode } from "@/lib/access-code";
+import { getAuthorizedDbUser } from "@/lib/authz";
 import { createProjectSchema } from "@/lib/validation";
 import { rateLimit } from "@/lib/rate-limit";
 import { reportError } from "@/lib/observability";
@@ -26,14 +26,13 @@ export async function POST(request: Request) {
   }
 
   try {
-    // Re-check the access code here too, not just in the user.created
-    // webhook. signUp.create() grants a session immediately, before the
-    // webhook has had a chance to run and delete an invalid account —
-    // without this check, a fast enough request in that window could
-    // create real rows before the webhook catches up.
-    const clerkUser = await currentUser();
+    // The users row is the authorization (it only exists once an access code
+    // was validated). getAuthorizedDbUser also covers the window where
+    // signUp.create() granted a session before the user.created webhook ran,
+    // by provisioning lazily from the code in Clerk metadata.
+    const user = await getAuthorizedDbUser(clerkId);
 
-    if (!hasValidAccessCode(clerkUser?.unsafeMetadata)) {
+    if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
     }
 
@@ -58,37 +57,10 @@ export async function POST(request: Request) {
 
     const { fileName, durationMs } = parsed.data;
 
-    // Upsert user — create if first project, otherwise get existing
-    const existingUsers = await withDbRetry(() =>
-      db
-        .select()
-        .from(users)
-        .where(eq(users.clerkId, clerkId))
-        .limit(1)
-    );
-
-    let dbUserId: string;
-
-    if (existingUsers.length === 0) {
-      // Fallback for the rare race where a project is created before
-      // the user.created webhook has landed — fetch the real email
-      // directly instead of leaving it blank.
-      const email = clerkUser?.emailAddresses[0]?.emailAddress ?? "";
-
-      const [newUser] = await db
-        .insert(users)
-        .values({ clerkId, email })
-        .returning();
-      dbUserId = newUser.id;
-    } else {
-      dbUserId = existingUsers[0].id;
-    }
-
-    // Create the project
     const [project] = await db
       .insert(projects)
       .values({
-        userId: dbUserId,
+        userId: user.id,
         fileName,
         durationMs: durationMs ?? null,
       })

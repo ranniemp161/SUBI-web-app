@@ -1,8 +1,9 @@
-import { auth, currentUser } from "@clerk/nextjs/server";
+import { auth } from "@clerk/nextjs/server";
 import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
 import { NextResponse } from "next/server";
 import { getOwnedProject } from "@/lib/projects";
-import { hasValidAccessCode } from "@/lib/access-code";
+import { getAuthorizedDbUser } from "@/lib/authz";
+import { costSecondsForDurationMs } from "@/lib/credits";
 import { rateLimit } from "@/lib/rate-limit";
 import { DEEPGRAM_MAX_UPLOAD_BYTES } from "@/lib/deepgram";
 import { uploadPathnameForProject } from "@/lib/blob";
@@ -39,10 +40,8 @@ export async function POST(request: Request): Promise<NextResponse> {
         const { userId: clerkId } = await auth();
         if (!clerkId) throw new Error("Not authenticated.");
 
-        const clerkUser = await currentUser();
-        if (!hasValidAccessCode(clerkUser?.unsafeMetadata)) {
-          throw new Error("Not authorized.");
-        }
+        const user = await getAuthorizedDbUser(clerkId);
+        if (!user) throw new Error("Not authorized.");
 
         const limit = await rateLimit(
           `blob-upload:${clerkId}`,
@@ -61,6 +60,12 @@ export async function POST(request: Request): Promise<NextResponse> {
 
         const project = await getOwnedProject(projectId, clerkId);
         if (!project) throw new Error("Project not found.");
+
+        // Soft credit check — saves the user a doomed upload. The
+        // authoritative reserve happens in /api/transcribe/deepgram.
+        if (user.creditSeconds < costSecondsForDurationMs(project.durationMs)) {
+          throw new Error("Not enough credits to transcribe this video.");
+        }
 
         // Pin the pathname so every upload lands under `projects/` — the
         // orphan sweep only lists that prefix, and a freely chosen pathname
