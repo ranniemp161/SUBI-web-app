@@ -157,8 +157,10 @@ async function startDeepgramTranscription(
 /**
  * Estimated transcription progress. Deepgram gives no progress signal — it's
  * one async job — so this is a duration-calibrated estimate (Deepgram runs at
- * roughly 30× realtime, floored/capped to stay sane on tiny/huge files) that
- * climbs to 95% and holds there until the status poll reports the real result.
+ * roughly 30× realtime, floored/capped to stay sane on tiny/huge files).
+ * Asymptotic rather than linear: ~86% at the expected finish time, then a
+ * visible crawl toward 99% however long the real job takes — a jammed-looking
+ * bar reads as a hang even when everything is fine. The poll completes it.
  */
 function estimateTranscribePercent(
   startedAt: number,
@@ -167,7 +169,7 @@ function estimateTranscribePercent(
 ): number {
   const expectedSeconds = Math.min(90, Math.max(8, (durationMs ?? 60_000) / 1000 / 30));
   const elapsed = (now - startedAt) / 1000;
-  return Math.min(95, (elapsed / expectedSeconds) * 100);
+  return Math.min(99, (1 - Math.exp(-2 * (elapsed / expectedSeconds))) * 100);
 }
 
 /**
@@ -587,18 +589,31 @@ export default function DashboardPage() {
     kickOffTranscription(project.id, file);
   }
 
+  // Mirror of `projects` for the poll callback below, which must read current
+  // data (toast file names) without depending on the array — depending on it
+  // would tear down and restart the poll interval on every list update.
+  const projectsRef = useRef<Project[]>(projects);
+  useEffect(() => {
+    projectsRef.current = projects;
+  }, [projects]);
+
+  // The poll effect keys off this string, so the interval only resets when the
+  // set of transcribing projects actually changes — not on every re-render or
+  // unrelated list update.
+  const processingKey = projects
+    .filter((p) => p.transcriptStatus === "processing")
+    .map((p) => p.id)
+    .sort()
+    .join(",");
+
   /** Poll any project still transcribing until it's ready or failed. */
   useEffect(() => {
-    const processingIds = projects
-      .filter((p) => p.transcriptStatus === "processing")
-      .map((p) => p.id);
-
-    if (processingIds.length === 0) return;
-
+    if (!processingKey) return;
+    const ids = processingKey.split(",");
     const abortController = new AbortController();
 
-    const interval = setInterval(async () => {
-      for (const id of processingIds) {
+    const checkStatuses = async () => {
+      for (const id of ids) {
         try {
           const response = await fetch(`/api/projects/${id}/status`, {
             signal: abortController.signal,
@@ -613,6 +628,15 @@ export default function DashboardPage() {
           }
 
           const updated = await response.json();
+          // Only ready/failed are terminal. "processing" means keep waiting,
+          // and "idle" means the server hasn't started the job yet (the card
+          // is optimistically "processing" through the extract/upload phases,
+          // before the Deepgram kickoff flips the server status) — flipping
+          // the card back on either would kill the progress UI mid-job.
+          if (updated.transcriptStatus !== "ready" && updated.transcriptStatus !== "failed") {
+            continue;
+          }
+
           setProjects((prev) =>
             prev.map((p) =>
               p.id === id
@@ -620,57 +644,100 @@ export default function DashboardPage() {
                 : p
             )
           );
-          // A finished job settled its credit hold (reconcile or refund) —
+          // The finished job settled its credit hold (reconcile or refund) —
           // pick up the corrected balance, clear the card's progress overlay,
           // and tell the user the outcome.
-          if (updated.transcriptStatus !== "processing") {
-            fetchCredits();
-            setActiveUploads((prev) => {
-              const copy = { ...prev };
-              delete copy[id];
-              return copy;
+          fetchCredits();
+          setActiveUploads((prev) => {
+            const copy = { ...prev };
+            delete copy[id];
+            return copy;
+          });
+          const fileName = projectsRef.current.find((p) => p.id === id)?.fileName;
+          if (updated.transcriptStatus === "ready") {
+            toast.success("Transcript ready", {
+              description: fileName
+                ? `"${fileName}" is ready to edit — open it to create your rough cut.`
+                : "Open the project to create your rough cut.",
             });
-            const fileName = projects.find((p) => p.id === id)?.fileName;
-            if (updated.transcriptStatus === "ready") {
-              toast.success("Transcript ready", {
-                description: fileName
-                  ? `"${fileName}" is ready to edit — open it to create your rough cut.`
-                  : "Open the project to create your rough cut.",
-              });
-            } else if (updated.transcriptStatus === "failed") {
-              toast.error("Transcription failed", {
-                description: fileName
-                  ? `"${fileName}" couldn't be transcribed — retry it from its card.`
-                  : "Retry it from the project card.",
-              });
-            }
+          } else {
+            toast.error("Transcription failed", {
+              description: fileName
+                ? `"${fileName}" couldn't be transcribed — retry it from its card.`
+                : "Retry it from the project card.",
+            });
           }
         } catch (error) {
           if (error instanceof DOMException && error.name === "AbortError") continue;
           console.error("Failed to poll transcript status:", error);
         }
       }
-    }, 4000);
+    };
+
+    // Check right away instead of sitting out a full interval (the job may
+    // already be done), then keep polling. Background tabs throttle timers to
+    // a minute or more, so also re-check the moment the tab is visible or
+    // focused again — that's the "came back to a stuck 95%" case.
+    checkStatuses();
+    const interval = setInterval(checkStatuses, 4000);
+    const handleReturnToTab = () => {
+      if (document.visibilityState === "visible") checkStatuses();
+    };
+    document.addEventListener("visibilitychange", handleReturnToTab);
+    window.addEventListener("focus", handleReturnToTab);
 
     return () => {
       clearInterval(interval);
       abortController.abort();
+      document.removeEventListener("visibilitychange", handleReturnToTab);
+      window.removeEventListener("focus", handleReturnToTab);
     };
-  }, [projects, fetchCredits]);
+  }, [processingKey, fetchCredits]);
 
-  /** Delete a project. */
-  async function handleDeleteProject(e: React.MouseEvent, projectId: string) {
-    e.preventDefault();
+  // Deleting is irreversible (transcript + edits go with the project), so the
+  // trash button only opens this confirmation; the DELETE fires from the modal.
+  const [confirmDeleteProject, setConfirmDeleteProject] = useState<Project | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  // Escape closes the confirmation (unless the delete is already in flight).
+  useEffect(() => {
+    if (!confirmDeleteProject || isDeleting) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setConfirmDeleteProject(null);
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [confirmDeleteProject, isDeleting]);
+
+  /** Delete the project pending in the confirmation modal. */
+  async function handleConfirmedDelete() {
+    const project = confirmDeleteProject;
+    if (!project || isDeleting) return;
+    setIsDeleting(true);
     try {
-      const response = await fetch(`/api/projects/${projectId}`, {
+      const response = await fetch(`/api/projects/${project.id}`, {
         method: "DELETE",
       });
-
-      if (response.ok) {
-        setProjects((prev) => prev.filter((p) => p.id !== projectId));
+      if (!response.ok) {
+        throw new Error(await readErrorReason(response));
       }
+      setProjects((prev) => prev.filter((p) => p.id !== project.id));
+      setActiveUploads((prev) => {
+        const copy = { ...prev };
+        delete copy[project.id];
+        return copy;
+      });
+      setConfirmDeleteProject(null);
+      toast.success("Project deleted", {
+        description: `"${project.fileName}" and its transcript were removed.`,
+      });
     } catch (error) {
       console.error("Failed to delete project:", error);
+      toast.error("Couldn't delete the project", {
+        description: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setIsDeleting(false);
     }
   }
 
@@ -924,9 +991,13 @@ export default function DashboardPage() {
                     </div>
                   )}
 
-                  {/* Delete */}
+                  {/* Delete — opens the confirmation modal; nothing is
+                      deleted until the user confirms there. */}
                   <button
-                    onClick={(e) => handleDeleteProject(e, project.id)}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setConfirmDeleteProject(project);
+                    }}
                     className="absolute right-3 top-3 rounded-lg bg-black/60 p-2 text-zinc-400 opacity-0 backdrop-blur-md transition-all hover:bg-red-500/80 hover:text-white focus-visible:opacity-100 group-hover:opacity-100 cursor-pointer"
                     title="Delete project"
                   >
@@ -974,6 +1045,95 @@ export default function DashboardPage() {
             <p className="mt-2 text-zinc-400 text-sm">
               We&apos;ll instantly extract the audio and start generating your transcription.
             </p>
+          </div>
+        </div>
+      )}
+
+      {/* Delete confirmation — same modal treatment as the buy-credits panel. */}
+      {confirmDeleteProject && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="delete-project-title"
+        >
+          {/* Backdrop — click cancels, unless the delete is already in flight. */}
+          <div
+            onClick={() => {
+              if (!isDeleting) setConfirmDeleteProject(null);
+            }}
+            className="fixed inset-0 bg-black/75 backdrop-blur-md transition-opacity duration-300"
+          />
+
+          <div className="relative w-full max-w-md transform overflow-hidden rounded-2xl border border-white/10 bg-surface/95 p-6 shadow-2xl transition-all duration-300">
+            <div className="flex items-start gap-4">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-500/10 ring-1 ring-inset ring-red-400/25">
+                <svg
+                  className="h-5 w-5 text-red-400"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                  />
+                </svg>
+              </div>
+              <div className="min-w-0">
+                <h3 id="delete-project-title" className="text-lg font-bold text-white">
+                  Delete this project?
+                </h3>
+                <p className="mt-1.5 text-sm text-zinc-400">
+                  <span className="font-semibold text-zinc-200 break-words">
+                    &ldquo;{confirmDeleteProject.fileName}&rdquo;
+                  </span>{" "}
+                  and its transcript and edits will be permanently deleted. This
+                  can&apos;t be undone.
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                onClick={() => setConfirmDeleteProject(null)}
+                disabled={isDeleting}
+                className="rounded-lg border border-white/10 bg-white/[0.03] px-4 py-2 text-xs font-semibold text-zinc-300 transition-all duration-200 hover:bg-white/[0.06] hover:text-white disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmedDelete}
+                disabled={isDeleting}
+                autoFocus
+                className="inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-xs font-semibold text-white shadow-md shadow-red-600/25 transition-all duration-200 hover:bg-red-500 active:scale-95 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
+              >
+                {isDeleting ? (
+                  <>
+                    <svg className="h-3 w-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                      <circle
+                        className="opacity-25"
+                        cx="12"
+                        cy="12"
+                        r="10"
+                        stroke="currentColor"
+                        strokeWidth="4"
+                      />
+                      <path
+                        className="opacity-75"
+                        fill="currentColor"
+                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                      />
+                    </svg>
+                    Deleting…
+                  </>
+                ) : (
+                  "Delete project"
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}

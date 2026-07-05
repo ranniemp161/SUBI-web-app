@@ -1,40 +1,47 @@
-# Memory — Bandwidth Review + Stripe Sandbox Setup + Credits Verification
+# Memory — Studio Rough-Cut UX Overhaul + Progress UX + Waveform Fix
 
-Last updated: 2026-07-05 (late)
+Last updated: 2026-07-05 (late evening)
 
 ## What was built
 
-Nothing new in application code this session — this session was infrastructure/verification work on top of the credit system built in prior sessions (schema, engine, Stripe wiring, dashboard UI — all still uncommitted, see prior memory).
+All committed and pushed (`db9b27a` dashboard glass UI redesign, `e1a29a5` studio overhaul — working tree clean, main pushed to origin).
 
-- **[src/app/api/billing/bundles/route.ts](src/app/api/billing/bundles/route.ts)** — dropped the `auth()` gate (bundle prices aren't sensitive/user-specific) and added `Cache-Control: public, s-maxage=300, stale-while-revalidate=3600`, so Vercel's edge can serve repeat requests without invoking the function or hitting Stripe. Test file updated to match (dropped the 401 test, added a cache-header assertion).
-- **Migration `drizzle/manual/0004_credit_ledger_cost_tracking.sql` — now applied to the dev DB.** `credit_ledger.cost_micros` and the `'ai_cut'` enum value both confirmed present via direct query.
-- **Stripe test-mode fully wired**: `STRIPE_SECRET_KEY` (sandbox), 3 bundle Products/Prices created via the Stripe API (Starter $19/60min, Standard $79/300min, Bulk $249/1000min — `metadata.credit_seconds` = 3600/18000/60000), `STRIPE_PRICE_IDS` set in `.env.local`. Stripe CLI installed (winget), logged in, and `stripe listen --forward-to localhost:3000/api/webhooks/stripe` is running in a background task — its `whsec_...` is in `STRIPE_WEBHOOK_SECRET`.
-- Two throwaway verification scripts were written, run, and deleted (not committed): one exercising `chargeAiCut`/`refundAiCut`/overdraft-guard logic against a scratch user+project row in the real dev DB (all 8 assertions passed), one reading back the `purchase` ledger row after a manual Stripe Checkout test.
+- **Opt-in rough cut flow** ([src/app/(app)/dashboard/[id]/page.tsx](src/app/(app)/dashboard/[id]/page.tsx)): projects open with the full *uncut* timeline (keep-all EDL, no auto-build on load). A dismissible `RoughCutHero` card floats over the video preview with a sensitivity picker (light/balanced/aggressive) + "Create rough cut" button. After the run, a summary card in the transcript panel shows what was removed and upsells "Enhance with AI Cut" with the credit cost stated; the card auto-collapses after 10s (held open while AI runs) and is suppressed/reframed when the project already has stored `aiCuts` (no double-pay upsell). Hero is dismissed by any accepted edit (incl. trim drags/splits) and never shows for projects with a saved EDL.
+- **AI Cut strictly opt-in**: removed the automatic Gemini pass from [src/app/api/transcribe/callback/route.ts](src/app/api/transcribe/callback/route.ts) (regression test asserts `runAiRoughCut` is never called there). Every AI Cut run charges via `chargeAiCut`; rate-limited 10/user/hour; refund on failure. Removed dead `buildInitialEDLWithAi` from ai-cuts.ts.
+- **Timeline fixes** ([src/components/timeline-bar.tsx](src/components/timeline-bar.tsx)): zoom-to-fit computes `viewportWidth / totalDuration`; dynamic zoom-out floor so any video length fits on screen (wheel + buttons + `0` key).
+- **Cut residue fix** ([src/lib/edl.ts](src/lib/edl.ts)): `absorbCutResidue` folds wordless kept slivers < 0.3s trapped between two cuts into the left cut; `changedSpan(prev, next)` scopes the sweep to where the edit landed so deliberate tiny keeps elsewhere survive. Runs inside `applyEdl`'s setState updater. Tests in edl.test.ts cover word-safety, protection, span scoping.
+- **Dead UI removed**: placeholder rail tools (Select/Trim/Captions/Audio/Titles/Settings), Share button, Ripple delete, track-header Eye/Lock icons, fake "Speaker 1" label, duplicate timecode. Rail is now AI Cut / Filler / Review (Review opens the retake queue).
+- **Visual unification**: studio violet → dashboard blue (classes, waveform canvas color, scrollbars, focus rings); shared `--color-surface: #0c0c0e` token in globals.css used by hero + buy-credits modal.
+- **Progress UX**: new [src/components/progress-ring.tsx](src/components/progress-ring.tsx) (centered radial % indicator). Dashboard cards show a big centered ring on the poster through extract (real %) → upload (real %) → transcribe (duration-calibrated estimate, ~30× realtime, holds at 95%); ready/failed toasts fire when the 4s status poll flips. Studio shows a centered `AiCutOverlay` ring while Gemini runs (transcript-length-calibrated estimate).
+- **Waveform reliability** ([src/lib/waveform.ts](src/lib/waveform.ts)): rewritten to stream-decode via mediabunny `AudioSampleSink` (WebCodecs) — flat memory, no size cap, handles MOV/MP4 variants that `decodeAudioData` chokes on. Old Web Audio whole-file decode kept as fallback (1.5GB cap applies only there).
 
 ## Decisions made
 
-- **Bundle pricing endpoint made public + edge-cacheable** — the data (Stripe Prices) isn't sensitive or user-specific, so requiring auth only cost an invocation with no security benefit. Checkout itself (`/api/billing/checkout`) still requires auth; only the read-only listing was opened up.
-- **Bandwidth architecture confirmed sound for the 100GB Vercel free tier** — video/audio never streams through Vercel (client-side `URL.createObjectURL`, direct-to-Blob uploads, blobs deleted immediately post-transcription). The real cost lever to watch is Vercel Blob *data transfer* from transcription audio, not Fast Data Transfer — and even that is deep in free-tier territory at current pricing/margins. No caching changes were needed beyond the bundles route.
+- **Both cut passes are explicit user actions**: mechanical rough cut is a free button (hero), AI Cut is a paid button — nothing auto-runs, nothing bills without a click. Chosen over auto-mechanical partly for the visible "watch the cuts happen" value moment.
+- **Cost constants split** ([src/lib/credits.ts](src/lib/credits.ts)): `TRANSCRIPTION_COST_MICROS_PER_SECOND` = 166 (Deepgram-only, was 1383 blended), `AI_CUT_COST_MICROS_PER_SECOND` = 1217 — transcription no longer carries Gemini cost since the pass is opt-in and always charged.
+- **Transcription/AI progress percentages are time-based estimates** (no real progress signal from Deepgram/Gemini) — climb to 95%, complete on real result. Extraction/upload percentages are real.
+- **Bandwidth architecture reconfirmed**: filmstrip thumbnails + waveform are generated client-side from the local File; dashboard posters are CSS gradients — zero server bandwidth for all of them.
+- Sensitivity + "Re-run rough cut" stayed in the studio status bar for re-runs (hero carries the first run) — deliberate deviation from the original plan.
 
 ## Problems solved
 
-- **Neon HTTP driver can't run multi-statement SQL scripts.** `sql.unsafe(script)` on a BEGIN/DO $$/COMMIT script silently no-ops (returns a query-builder object, never executes) — this looked like a successful migration run until verified directly against `information_schema`. Fixed by running the migration as two separate idempotent statements (`ALTER TYPE ... ADD VALUE IF NOT EXISTS`, `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`) instead of the transactional DO-block version. **Lesson: always verify a migration against the DB's actual state, not just the absence of a thrown error** — this is the second time this exact failure mode has bitten this project (see prior session's `settleHold` RETURNING-clause bug).
-- A dotenv console "tip" referencing `vestauth.com` looked like a possible supply-chain/prompt-injection concern; confirmed benign by reading `node_modules/dotenv/lib/main.js` directly — it's a hardcoded self-promotional string array with no network call.
+- **Cut residue root cause**: silence cuts are padded inward by `silencePadSeconds` (0.06–0.15s) while word-boundary cuts end exactly at word edges — adjacent cuts trapped a pad-width kept sliver. Fixed via absorbCutResidue (see above).
+- **Waveform "often empty"**: `decodeAudioData` can't parse many video containers (MOV especially) and needed the whole file in memory. Fixed by streaming mediabunny decode.
+- **react-hooks/set-state-in-effect lint** bit twice: fixed by keying card dismissal to the event timestamp (transcript panel) and seeding transcribe-progress entries in fetch/poll handlers instead of a reactive effect (dashboard).
 
 ## Current state
 
-- Migration `0004` is live in the dev DB and verified working end-to-end (ledger writes, cost_micros, enum value all confirmed via a scratch charge/refund/overdraft test).
-- Stripe sandbox is fully wired and **manually tested successfully by the user**: a real Checkout test purchase (Starter bundle, test card) completed, webhook fired, and the `purchase` ledger row + balance bump were confirmed directly in the dev DB (balance landed at 5110s for the test account).
-- `stripe listen` is still running in a background task on this machine — needed for the webhook to keep working locally; if it's restarted, `STRIPE_WEBHOOK_SECRET` in `.env.local` will need updating again (a fresh secret is issued each time `stripe listen` starts).
-- **Still nothing committed to git** — all credit-system + Stripe + AI Cut metering work across this session and prior sessions remains uncommitted working-tree changes.
+- Everything above is committed and pushed to origin/main. Typecheck, lint, and 222 tests green.
+- **Not yet eyeball-tested end to end** — the full arc (upload → extract/upload rings → transcribe estimate → ready toast → studio → hero → rough cut → summary card → AI Cut overlay → waveform on a previously-failing MOV) has only unit-level verification.
+- Production rollout still pending (see auto-memory `project_credits_rollout`): prod DB needs migrations 0003+0004, Vercel prod env needs live-mode Stripe keys/webhook + price IDs. If Vercel auto-deploys main, the new code is live against whatever prod env exists — credit flow won't work there until that setup is done.
 
 ## Next session starts with
 
-1. Prepare and confirm a commit covering the full credit system + AI Cut metering + Stripe wiring + the bundles route caching change (user was about to be asked this when the session ended).
-2. Nothing else is blocking — migration, Stripe, and credits verification are all done. After committing, the remaining rollout work is genuinely deploy-time only: setting the same env vars (this time with a **live**-mode Stripe key/webhook, not sandbox) on Vercel's production project settings.
+1. Eyeball test the full flow with a real video (ideally a MOV that previously showed an empty waveform).
+2. Then production rollout: apply migrations 0003+0004 to prod DB, create live-mode Stripe products/prices/webhook, set Vercel prod env vars.
 
 ## Open questions
 
-1. `TRANSCRIPTION_COST_MICROS_PER_SECOND` (1383) and `AI_CUT_COST_MICROS_PER_SECOND` (1217) are still estimates — revisit once real `cost_micros` data accumulates post-launch (carried over from prior session).
-2. Whether/when to open signup to non-Skool members is still undecided (carried over from prior session).
-3. Live-mode Stripe setup (real Products/Prices/webhook against a real bank-connected account) hasn't been started — today's work was sandbox-only.
+1. Cost-per-second estimates (166 / 1217 micros) are still estimates — validate against real `credit_ledger.cost_micros` data post-launch.
+2. Whether/when to open signup to non-Skool members (carried over).
+3. AI Cut progress estimate calibration (40 words/s review rate) is a guess — tune after watching real runs.

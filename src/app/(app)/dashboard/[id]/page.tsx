@@ -169,7 +169,11 @@ export default function EditorPage() {
   const timelineRef = useRef<TimelineHandle>(null);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Fetch the project on mount.
+  // Bumped by the transcription poll below when a processing project reaches
+  // a terminal status — re-runs the fetch effect so the editor swaps in.
+  const [reloadNonce, setReloadNonce] = useState(0);
+
+  // Fetch the project on mount (and again whenever a reload is requested).
   useEffect(() => {
     async function fetchProject() {
       try {
@@ -231,7 +235,54 @@ export default function EditorPage() {
     }
 
     fetchProject();
-  }, [id]);
+  }, [id, reloadNonce]);
+
+  // While transcription runs, poll for completion and swap in the editor the
+  // moment it's ready — without this, the "Transcribing your video" screen is
+  // a dead end the user has to leave and re-enter by hand.
+  const transcriptStatus = project?.transcriptStatus;
+  useEffect(() => {
+    if (transcriptStatus !== "processing") return;
+    const abortController = new AbortController();
+
+    const checkStatus = async () => {
+      try {
+        const response = await fetch(`/api/projects/${id}/status`, {
+          signal: abortController.signal,
+        });
+        if (!response.ok) return;
+        if (!response.headers.get("content-type")?.includes("application/json")) {
+          return;
+        }
+        const updated = await response.json();
+        // Terminal either way (ready or failed): re-run the fetch effect so
+        // the screen reflects the real outcome. The refreshed status also
+        // shuts this poll down.
+        if (updated.transcriptStatus === "ready" || updated.transcriptStatus === "failed") {
+          setReloadNonce((n) => n + 1);
+        }
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        console.error("Failed to poll transcript status:", error);
+      }
+    };
+
+    // Background tabs throttle timers heavily, so also re-check the moment
+    // the user comes back to the tab.
+    const interval = setInterval(checkStatus, 4000);
+    const handleReturnToTab = () => {
+      if (document.visibilityState === "visible") checkStatus();
+    };
+    document.addEventListener("visibilitychange", handleReturnToTab);
+    window.addEventListener("focus", handleReturnToTab);
+
+    return () => {
+      clearInterval(interval);
+      abortController.abort();
+      document.removeEventListener("visibilitychange", handleReturnToTab);
+      window.removeEventListener("focus", handleReturnToTab);
+    };
+  }, [transcriptStatus, id]);
 
   // Object URL for the locally re-selected source file, revoked on change/unmount.
   const sourceUrl = useMemo(
@@ -888,7 +939,7 @@ export default function EditorPage() {
         <StatusScreen
           icon={<Loader2 className="h-7 w-7 motion-safe:animate-spin" />}
           title="Transcribing your video"
-          message="This usually takes a minute or two. Come back once it's ready — we'll have the transcript waiting."
+          message="This usually takes a minute or two. The editor opens automatically the moment your transcript is ready."
         />
       );
     }
