@@ -112,13 +112,13 @@ export default function CreditsPanel({
     <div ref={panelRef} className="relative flex items-center gap-2">
       <span
         title="Transcription credits remaining"
-        className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium tabular-nums ring-1 ring-inset ${
+        className={`inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-semibold tabular-nums border backdrop-blur-md transition-all duration-300 ${
           low
-            ? "bg-amber-500/10 text-amber-200 ring-amber-400/25"
-            : "bg-foreground/[0.04] text-foreground/60 ring-foreground/10"
+            ? "bg-amber-500/10 text-amber-300 border-amber-500/30 animate-glow-amber"
+            : "bg-blue-500/5 text-blue-200 border-blue-500/25 animate-glow-blue"
         }`}
       >
-        <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg className={`h-3.5 w-3.5 ${low ? "text-amber-400" : "text-blue-400"}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path
             strokeLinecap="round"
             strokeLinejoin="round"
@@ -126,56 +126,150 @@ export default function CreditsPanel({
             d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
           />
         </svg>
-        {credits == null ? "—" : formatDuration(credits.creditSeconds * 1000)}
+        <span>
+          {credits == null ? "—" : formatDuration(credits.creditSeconds * 1000)}
+        </span>
       </span>
 
       <button
         onClick={() => onBuyOpenChange(!buyOpen)}
-        className="inline-flex items-center gap-1.5 rounded-full bg-blue-500/15 px-3 py-1.5 text-xs font-medium text-blue-200 ring-1 ring-inset ring-blue-400/25 transition-colors hover:bg-blue-500/25"
+        className="inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-1.5 text-xs font-semibold text-white shadow-lg shadow-blue-500/25 hover:shadow-indigo-500/35 border border-white/10 transition-all duration-200 hover:scale-105 active:scale-95 cursor-pointer"
       >
+        <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M12 9v3m0 0v3m0-3h3m-3 0H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z"
+          />
+        </svg>
         Buy credits
       </button>
 
       {buyOpen && (
-        <div className="absolute right-0 top-full z-20 mt-2 w-72 rounded-xl border border-foreground/10 bg-background p-2 shadow-2xl shadow-black/40">
-          <p className="px-2 pb-2 pt-1 text-xs text-foreground/50">
-            Credits are minutes of transcription — they never expire.
-          </p>
-          {bundles == null ? (
-            <div className="space-y-2 p-2">
-              {Array.from({ length: 3 }).map((_, i) => (
-                <div key={i} className="h-12 animate-pulse rounded-lg bg-foreground/[0.05]" />
-              ))}
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          {/* Backdrop */}
+          <div 
+            onClick={() => onBuyOpenChange(false)}
+            className="fixed inset-0 bg-black/75 backdrop-blur-md transition-opacity duration-300" 
+          />
+
+          {/* Modal Content */}
+          <div className="relative w-full max-w-2xl transform overflow-hidden rounded-2xl border border-white/10 bg-[#0c0c0e]/95 p-6 shadow-2xl transition-all duration-300 sm:p-8">
+            {/* Header */}
+            <div className="flex items-start justify-between pb-6 border-b border-white/5">
+              <div>
+                <h3 className="text-xl font-bold text-white flex items-center gap-2">
+                  <svg className="h-5 w-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                  </svg>
+                  Get Transcription Credits
+                </h3>
+                <p className="mt-1.5 text-sm text-zinc-400">
+                  Credits represent minutes of high-accuracy transcription. They never expire and rollover automatically.
+                </p>
+              </div>
+              <button
+                onClick={() => onBuyOpenChange(false)}
+                className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-1.5 text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors cursor-pointer"
+              >
+                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
             </div>
-          ) : bundles.length === 0 ? (
-            <p className="p-3 text-sm text-foreground/50">
-              No bundles are available right now.
-            </p>
-          ) : (
-            <ul className="space-y-1">
-              {bundles.map((bundle) => (
-                <li key={bundle.priceId}>
-                  <button
-                    onClick={() => startCheckout(bundle)}
-                    disabled={checkoutPriceId !== null}
-                    className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-left transition-colors hover:bg-blue-500/10 disabled:opacity-50"
-                  >
-                    <span>
-                      <span className="block text-sm font-medium text-foreground">
-                        {Math.round(bundle.creditSeconds / 60)} minutes
-                      </span>
-                      <span className="block text-xs text-foreground/40">{bundle.name}</span>
-                    </span>
-                    <span className="text-sm font-semibold tabular-nums text-blue-200">
-                      {checkoutPriceId === bundle.priceId
-                        ? "…"
-                        : formatPrice(bundle.amount, bundle.currency)}
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
+
+            {bundles == null ? (
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 py-6">
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <div key={i} className="h-48 animate-shimmer rounded-xl border border-white/5 bg-white/[0.01]" />
+                ))}
+              </div>
+            ) : bundles.length === 0 ? (
+              <p className="p-8 text-center text-sm text-zinc-500">
+                No bundles are available right now. Please try again later.
+              </p>
+            ) : (
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 py-6">
+                {bundles.map((bundle) => {
+                  const minutes = Math.round(bundle.creditSeconds / 60);
+                  const isPopular = bundle.name.toLowerCase().includes("standard");
+                  
+                  return (
+                    <div
+                      key={bundle.priceId}
+                      className={`relative flex flex-col justify-between overflow-hidden rounded-xl border p-5 transition-all duration-300 hover:-translate-y-1 ${
+                        isPopular
+                          ? "border-blue-500/40 bg-gradient-to-b from-blue-500/10 to-transparent shadow-lg shadow-blue-500/5"
+                          : "border-white/5 bg-white/[0.02] hover:border-white/10"
+                      }`}
+                    >
+                      {isPopular && (
+                        <span className="absolute right-3 top-3 rounded-full bg-blue-500 px-2.5 py-0.5 text-[9px] font-bold tracking-wide text-white uppercase shadow-sm">
+                          Best Value
+                        </span>
+                      )}
+                      <div>
+                        <span className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
+                          {bundle.name}
+                        </span>
+                        <div className="mt-2 flex items-baseline">
+                          <span className="text-3xl font-extrabold text-white tracking-tight">
+                            {formatPrice(bundle.amount, bundle.currency)}
+                          </span>
+                        </div>
+                        <div className="mt-4 space-y-2">
+                          <div className="flex items-center gap-2 text-sm text-zinc-200">
+                            <svg className="h-4 w-4 text-emerald-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                            </svg>
+                            <span className="font-semibold">{minutes} Minutes</span>
+                          </div>
+                          <div className="flex items-center gap-2 text-xs text-zinc-400">
+                            <svg className="h-3.5 w-3.5 text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                            <span>${(bundle.amount / 100 / (bundle.creditSeconds / 3600)).toFixed(2)}/hr transcribing</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={() => startCheckout(bundle)}
+                        disabled={checkoutPriceId !== null}
+                        className={`mt-6 inline-flex w-full items-center justify-center rounded-lg py-2.5 text-xs font-semibold transition-all duration-200 cursor-pointer ${
+                          checkoutPriceId === bundle.priceId
+                            ? "bg-zinc-800 text-zinc-400 cursor-not-allowed"
+                            : isPopular
+                            ? "bg-blue-600 text-white hover:bg-blue-500 shadow-md shadow-blue-600/25 active:scale-95"
+                            : "bg-white/10 text-white hover:bg-white/15 active:scale-95"
+                        }`}
+                      >
+                        {checkoutPriceId === bundle.priceId ? (
+                          <div className="flex items-center gap-2">
+                            <svg className="animate-spin h-3 w-3 text-zinc-400" fill="none" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                            </svg>
+                            Starting checkout...
+                          </div>
+                        ) : (
+                          "Buy Now"
+                        )}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            
+            <div className="mt-2 flex items-center justify-center gap-2 rounded-xl bg-white/[0.01] border border-white/5 px-4 py-3 text-xs text-zinc-500">
+              <svg className="h-4 w-4 text-zinc-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+              </svg>
+              Secure checkouts powered by Stripe. Unused credits are fully refundable.
+            </div>
+          </div>
         </div>
       )}
     </div>
