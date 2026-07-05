@@ -2,11 +2,10 @@ import { describe, it, expect } from "vitest";
 import {
   sanitizeAiRanges,
   applyAiCuts,
-  buildInitialEDLWithAi,
   type AiCuts,
   type AiCutRange,
 } from "./ai-cuts";
-import { buildInitialEDL, keptDuration, type EDL, type TranscriptWord } from "./edl";
+import type { EDL, TranscriptWord } from "./edl";
 
 function w(word: string, start: number, end: number): TranscriptWord {
   return { word, start, end, confidence: 1 };
@@ -128,26 +127,3 @@ describe("applyAiCuts", () => {
   });
 });
 
-describe("buildInitialEDLWithAi", () => {
-  it("matches the plain heuristic build when there are no AI cuts", () => {
-    expect(buildInitialEDLWithAi(TEN_WORDS, 10, null)).toEqual(
-      buildInitialEDL(TEN_WORDS, 10)
-    );
-  });
-
-  it("layers AI cuts on top of the heuristic base", () => {
-    const edl = buildInitialEDLWithAi(TEN_WORDS, 10, aiCuts([
-      { startWordIndex: 3, endWordIndex: 5, category: "false_start" },
-    ]));
-    const aiSegment = edl.segments.find((s) => s.reason === "ai");
-    expect(aiSegment).toMatchObject({ start: 3, end: 6, status: "cut" });
-  });
-
-  it("drops the AI layer (not the whole build) when it would cut nearly everything", () => {
-    const withAi = buildInitialEDLWithAi(TEN_WORDS, 10, aiCuts([
-      { startWordIndex: 0, endWordIndex: 9, category: "retake" },
-    ]));
-    expect(withAi).toEqual(buildInitialEDL(TEN_WORDS, 10));
-    expect(keptDuration(withAi)).toBeCloseTo(10, 5);
-  });
-});

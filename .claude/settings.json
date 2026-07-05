@@ -14,7 +14,8 @@
       "Bash(npm view *)",
       "Bash(npm search *)",
       "Bash(npx next *)",
-      "Bash(netstat -ano)"
+      "Bash(netstat -ano)",
+      "Bash(git commit -m ' *)"
     ]
   }
 }

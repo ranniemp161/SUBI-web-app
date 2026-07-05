@@ -274,52 +274,20 @@ describe("POST /api/transcribe/callback — credit settlement", () => {
   });
 });
 
-describe("POST /api/transcribe/callback — AI rough-cut pass", () => {
-  const WORDS = [{ word: "hello", start: 0, end: 0.5, confidence: 1 }];
-  const withWords = () =>
+describe("POST /api/transcribe/callback — AI pass is strictly opt-in", () => {
+  it("never runs the AI rough cut, even with a word-filled transcript", async () => {
+    // AI Cut spends money and must only ever run from the studio's explicit
+    // button — a regression that re-adds it here would bill silently.
+    state.selectRows = [{ id: VALID_ID, transcriptCallbackToken: TOKEN }];
     vi.mocked(normalizeDeepgram).mockReturnValueOnce({
-      words: WORDS,
+      words: [{ word: "hello", start: 0, end: 0.5, confidence: 1 }],
       text: "hello",
       duration: 1,
     });
-
-  it("stores AI cuts as a second update once the transcript is safely saved", async () => {
-    state.selectRows = [{ id: VALID_ID, transcriptCallbackToken: TOKEN }];
-    state.aiResult = { ranges: [], model: "gemini-2.5-flash", createdAt: "now" };
-    withWords();
-    const res = await POST(callbackRequest(`?projectId=${VALID_ID}&token=${TOKEN}`));
-    expect(res.status).toBe(200);
-    expect(runAiRoughCut).toHaveBeenCalledWith(WORDS);
-    expect(state.updates).toHaveLength(2);
-    expect(state.updates[0].transcriptStatus).toBe("ready");
-    expect(state.updates[1].aiCuts).toBe(state.aiResult);
-  });
-
-  it("skips the AI pass entirely when the transcript has no words", async () => {
-    state.selectRows = [{ id: VALID_ID, transcriptCallbackToken: TOKEN }];
     const res = await POST(callbackRequest(`?projectId=${VALID_ID}&token=${TOKEN}`));
     expect(res.status).toBe(200);
     expect(runAiRoughCut).not.toHaveBeenCalled();
     expect(state.updates).toHaveLength(1);
-  });
-
-  it("soft-fails: an AI error still returns 200 with the transcript stored and ready", async () => {
-    state.selectRows = [{ id: VALID_ID, transcriptCallbackToken: TOKEN }];
-    state.aiError = true;
-    withWords();
-    const res = await POST(callbackRequest(`?projectId=${VALID_ID}&token=${TOKEN}`));
-    expect(res.status).toBe(200);
-    expect(state.updates).toHaveLength(1);
     expect(state.updates[0].transcriptStatus).toBe("ready");
-  });
-
-  it("writes nothing extra when the AI pass is unconfigured (runAiRoughCut → null)", async () => {
-    state.selectRows = [{ id: VALID_ID, transcriptCallbackToken: TOKEN }];
-    state.aiResult = null;
-    withWords();
-    const res = await POST(callbackRequest(`?projectId=${VALID_ID}&token=${TOKEN}`));
-    expect(res.status).toBe(200);
-    expect(runAiRoughCut).toHaveBeenCalled();
-    expect(state.updates).toHaveLength(1);
   });
 });

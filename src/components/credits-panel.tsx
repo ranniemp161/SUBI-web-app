@@ -155,7 +155,7 @@ export default function CreditsPanel({
           />
 
           {/* Modal Content */}
-          <div className="relative w-full max-w-2xl transform overflow-hidden rounded-2xl border border-white/10 bg-[#0c0c0e]/95 p-6 shadow-2xl transition-all duration-300 sm:p-8">
+          <div className="relative w-full max-w-2xl transform overflow-hidden rounded-2xl border border-white/10 bg-surface/95 p-6 shadow-2xl transition-all duration-300 sm:p-8">
             {/* Header */}
             <div className="flex items-start justify-between pb-6 border-b border-white/5">
               <div>

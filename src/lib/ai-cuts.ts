@@ -16,10 +16,6 @@ import { z } from "zod";
 import {
   sanitizeWords,
   setRangeStatus,
-  buildInitialEDL,
-  keptDuration,
-  MIN_INITIAL_KEEP_FRACTION,
-  type DetectionSettings,
   type EDL,
   type TranscriptWord,
 } from "./edl";
@@ -133,23 +129,3 @@ export function applyAiCuts(
   return next;
 }
 
-/**
- * The initial auto-build with the AI layer on top: heuristic silence + retake
- * pass, then the stored AI cuts. The same keep-fraction floor as
- * `buildInitialEDL` applies to the *combined* result — if the AI layer would
- * push the cut past it, the AI layer alone is dropped (the heuristic base
- * already passed its own floor).
- */
-export function buildInitialEDLWithAi(
-  words: TranscriptWord[],
-  durationSeconds: number,
-  aiCuts: AiCuts | null | undefined,
-  settings?: DetectionSettings
-): EDL {
-  const base = buildInitialEDL(words, durationSeconds, settings);
-  const withAi = applyAiCuts(base, aiCuts, words);
-  if (keptDuration(withAi) < durationSeconds * MIN_INITIAL_KEEP_FRACTION) {
-    return base;
-  }
-  return withAi;
-}

@@ -16,9 +16,6 @@ import {
   Magnet,
   Minus,
   Plus,
-  Eye,
-  Lock,
-  VolumeX,
   ArrowLeftToLine,
   ArrowRightToLine,
 } from "lucide-react";
@@ -78,7 +75,7 @@ const VIDEO_H = 72;
 const AUDIO_H = 104;
 const TOTAL_H = RULER_H + VIDEO_H + AUDIO_H;
 const HEADER_W = 88;
-const WAVE_COLOR = "rgba(167, 139, 250, 0.6)";
+const WAVE_COLOR = "rgba(96, 165, 250, 0.6)"; // blue-400 — matches the app accent
 // Amplitude boost so quieter passages still read clearly; clamped to the track.
 const WAVE_GAIN = 2.2;
 
@@ -153,15 +150,29 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
   const total = totalDuration(edl);
   const widthPx = Math.max(1, total * pxPerSec);
 
+  // Zoom level at which the whole timeline exactly fills the viewport. Also
+  // the effective zoom-out floor — long videos need to go well below the
+  // static MIN_PX_PER_SEC to be seen whole. Kept in a ref for the stable
+  // wheel listener and the zoom callbacks.
+  const fitPxPerSec =
+    total > 0 && view.width > 0
+      ? Math.min(MAX_PX_PER_SEC, view.width / total)
+      : DEFAULT_PX_PER_SEC;
+  const minPxPerSec = Math.min(MIN_PX_PER_SEC, fitPxPerSec);
+  const fitPxPerSecRef = useRef(fitPxPerSec);
+  fitPxPerSecRef.current = fitPxPerSec;
+  const minPxPerSecRef = useRef(minPxPerSec);
+  minPxPerSecRef.current = minPxPerSec;
+
   const zoomIn = useCallback(
     () => setPxPerSec((px) => Math.min(MAX_PX_PER_SEC, px * 1.5)),
     []
   );
   const zoomOut = useCallback(
-    () => setPxPerSec((px) => Math.max(MIN_PX_PER_SEC, px / 1.5)),
+    () => setPxPerSec((px) => Math.max(minPxPerSecRef.current, px / 1.5)),
     []
   );
-  const zoomFit = useCallback(() => setPxPerSec(DEFAULT_PX_PER_SEC), []);
+  const zoomFit = useCallback(() => setPxPerSec(fitPxPerSecRef.current), []);
 
   useImperativeHandle(ref, () => ({ zoomIn, zoomOut, zoomFit }), [
     zoomIn,
@@ -253,7 +264,10 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
       const offsetX = e.clientX - rect.left;
       const px = pxPerSecRef.current;
       const time = (scroller!.scrollLeft + offsetX) / px;
-      const next = Math.min(MAX_PX_PER_SEC, Math.max(MIN_PX_PER_SEC, px * Math.exp(-dy * 0.0015)));
+      const next = Math.min(
+        MAX_PX_PER_SEC,
+        Math.max(minPxPerSecRef.current, px * Math.exp(-dy * 0.0015))
+      );
       if (next === px) return;
       pendingZoomRef.current = { time, offsetX };
       setPxPerSec(next);
@@ -488,11 +502,6 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
       {/* Toolbar */}
       <div className="flex items-center justify-between border-b border-foreground/5 px-4 py-2">
         <div className="flex items-center gap-1">
-          <span className="mr-3 font-mono text-xs text-foreground/40">
-            <span className="text-foreground/70">{formatDuration(currentTime * 1000)}</span>
-            {" / "}
-            {formatDuration(total * 1000)}
-          </span>
           <button
             type="button"
             onClick={() => onCutToPlayhead("left")}
@@ -528,9 +537,6 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
           >
             <Trash2 className="h-3.5 w-3.5" /> Delete
           </button>
-          <button type="button" disabled title="Ripple delete (coming soon)" className={toolBtn}>
-            <Trash2 className="h-3.5 w-3.5" /> Ripple delete
-          </button>
           <button
             type="button"
             onClick={() => setSnapEnabled((s) => !s)}
@@ -538,7 +544,7 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
             title="Toggle snapping to word edges"
             className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors ${
               snapEnabled
-                ? "bg-violet-500/20 text-violet-300"
+                ? "bg-blue-500/20 text-blue-300"
                 : "text-foreground/50 hover:bg-foreground/10 hover:text-foreground/80"
             }`}
           >
@@ -586,20 +592,12 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
             className="flex flex-col justify-center gap-1 border-b border-foreground/5 px-3"
           >
             <span className="text-xs font-semibold text-foreground/70">Video</span>
-            <span className="flex items-center gap-1.5 text-foreground/25">
-              <Eye className="h-3.5 w-3.5" />
-              <Lock className="h-3.5 w-3.5" />
-            </span>
           </div>
           <div
             style={{ height: AUDIO_H }}
             className="flex flex-col justify-center gap-1 px-3"
           >
             <span className="text-xs font-semibold text-foreground/70">Audio</span>
-            <span className="flex items-center gap-1.5 text-foreground/25">
-              <VolumeX className="h-3.5 w-3.5" />
-              <Lock className="h-3.5 w-3.5" />
-            </span>
           </div>
         </div>
 
@@ -696,10 +694,10 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
                                 ? "border-foreground/10 bg-black/70"
                                 : "border-foreground/10 bg-black/40"
                               : filmstrip
-                            ? // Frames show through kept clips; the violet wash keeps
+                            ? // Frames show through kept clips; the blue wash keeps
                               // them reading as "kept" against the darkened cuts.
-                              "border-violet-400/50 bg-violet-500/15 hover:bg-violet-400/20"
-                            : "border-violet-400/40 bg-gradient-to-b from-violet-500/85 to-violet-600/85 hover:from-violet-500 hover:to-violet-600"
+                              "border-blue-400/50 bg-blue-500/15 hover:bg-blue-400/20"
+                            : "border-blue-400/40 bg-gradient-to-b from-blue-500/85 to-blue-600/85 hover:from-blue-500 hover:to-blue-600"
                     } ${isSelected ? "ring-2 ring-inset ring-white/90" : ""}`}
                   >
                     {!isCut && index === firstKeepIndex && (
@@ -731,7 +729,7 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
               })}
 
               {/* Boundary trim handles — a razor split boundary reads brighter
-                  (violet) so the user can see where they cut the clip. */}
+                  (blue) so the user can see where they cut the clip. */}
               {edl.segments.slice(0, -1).map((segment, index) => {
                 const isSplit = edl.segments[index + 1]?.split;
                 return (
@@ -747,8 +745,8 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
                     className="group absolute top-0 z-10 flex h-full cursor-col-resize items-center justify-center"
                   >
                     <div
-                      className={`h-8 w-0.5 rounded-full group-hover:bg-violet-400 ${
-                        isSplit ? "bg-violet-400/80" : "bg-foreground/25"
+                      className={`h-8 w-0.5 rounded-full group-hover:bg-blue-400 ${
+                        isSplit ? "bg-blue-400/80" : "bg-foreground/25"
                       }`}
                     />
                   </div>

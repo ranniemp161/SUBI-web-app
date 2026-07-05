@@ -8,16 +8,10 @@ import {
   Clapperboard,
   Undo2,
   Redo2,
-  Share2,
   Download,
-  MousePointer2,
   Scissors,
   Sparkles,
-  AudioLines,
-  Captions,
-  SlidersHorizontal,
-  Type,
-  Settings,
+  ListChecks,
   Play,
   Pause,
   Rewind,
@@ -37,6 +31,7 @@ import {
 import type { ReactNode } from "react";
 import { Toaster, toast } from "sonner";
 import FilePicker from "@/components/file-picker";
+import ProgressRing from "@/components/progress-ring";
 import VideoPlayer, {
   type VideoPlayerHandle,
   type VideoMeta,
@@ -51,6 +46,8 @@ import {
   type ExportSupport,
 } from "@/lib/export/export-trigger";
 import {
+  absorbCutResidue,
+  changedSpan,
   cutWords as cutWordsInEdl,
   cutEachWord,
   restoreSegment as restoreSegmentInEdl,
@@ -70,11 +67,7 @@ import {
   type Transcript,
   type TranscriptWord,
 } from "@/lib/edl";
-import {
-  applyAiCuts,
-  buildInitialEDLWithAi,
-  type AiCuts,
-} from "@/lib/ai-cuts";
+import { applyAiCuts, type AiCuts } from "@/lib/ai-cuts";
 
 interface Project {
   id: string;
@@ -113,6 +106,14 @@ export default function EditorPage() {
   const [sourceFile, setSourceFile] = useState<File | null>(null);
 
   const [edl, setEdl] = useState<EDL | null>(null);
+  // The hero prompt shows until the user edits (any accepted edit dismisses
+  // it), dismisses it, or opens a project that already has a saved EDL.
+  const [heroDismissed, setHeroDismissed] = useState(false);
+  // The last completed cut pass — drives the transcript panel's summary card
+  // (which auto-collapses a few seconds after each event).
+  const [cutEvent, setCutEvent] = useState<{ kind: "rough" | "ai"; at: number } | null>(
+    null
+  );
   const [currentTime, setCurrentTime] = useState(0);
   // Mirror of currentTime for event handlers. The rAF clock updates state at
   // ~60 Hz; handlers that read the playhead through this ref stay referentially
@@ -188,7 +189,6 @@ export default function EditorPage() {
         const data: Project = await response.json();
         setProject(data);
 
-        const words = data.transcript?.words ?? [];
         const durationSeconds =
           data.transcript?.duration ?? (data.durationMs ? data.durationMs / 1000 : 0);
 
@@ -200,14 +200,27 @@ export default function EditorPage() {
 
         if (savedEdl?.sensitivity) setSensitivity(savedEdl.sensitivity);
 
-        // Only auto-build from the transcript once it's actually ready.
-        // Transcription runs in the background, so an editor opened mid-processing has
-        // no words yet — building then would derive the EDL from an empty
-        // transcript (the original whole-video-deleted bug). When ready we build;
-        // otherwise we keep any valid saved EDL and wait for a reload.
+        // A saved EDL means this project has been edited before — even one
+        // where every cut was later restored. Don't float the first-run hero
+        // over work in progress.
+        if (savedEdl) setHeroDismissed(true);
+
+        // No automatic rough cut: a fresh project opens with the full, uncut
+        // timeline and a hero prompt to create the rough cut. The user sees
+        // their raw footage first and watches the cuts happen on their click —
+        // nothing is ever removed without an action they took.
         setEdl(
           data.transcriptStatus === "ready"
-            ? savedEdl ?? buildInitialEDLWithAi(words, durationSeconds, data.aiCuts)
+            ? savedEdl ?? {
+                segments: [
+                  {
+                    start: 0,
+                    end: Math.max(durationSeconds, 0),
+                    status: "keep" as const,
+                    reason: null,
+                  },
+                ],
+              }
             : savedEdl
         );
       } catch {
@@ -262,10 +275,16 @@ export default function EditorPage() {
     };
   }, [edl, project, id, sensitivity]);
 
+  const words = useMemo(() => project?.transcript?.words ?? [], [project]);
+
   // Apply an edit, returning whether it was accepted. An edit that keeps
   // nothing is refused: the timeline must always retain at least one clip,
   // otherwise the load path (which discards a zero-kept EDL as corrupt) would
   // silently rebuild from the transcript and wipe every edit on the next reload.
+  // Every accepted edit is swept for cut residue — pad-width keep slivers
+  // trapped between two cuts that the user would otherwise hunt down by hand.
+  // The sweep is scoped to where this edit actually landed (changedSpan), so
+  // a deliberate tiny keep elsewhere is never absorbed by an unrelated edit.
   const applyEdl = useCallback(
     (next: EDL): boolean => {
       if (keptDuration(next) <= 0) {
@@ -275,14 +294,15 @@ export default function EditorPage() {
         return false;
       }
       hasEditedRef.current = true;
+      setHeroDismissed(true);
       setEdl((prev) => {
         if (prev) undoStack.current.push(prev);
         redoStack.current = [];
-        return next;
+        return prev ? absorbCutResidue(next, words, changedSpan(prev, next)) : next;
       });
       return true;
     },
-    []
+    [words]
   );
 
   const undo = useCallback(() => {
@@ -393,6 +413,8 @@ export default function EditorPage() {
   // must not each push a new undo entry, or undo would only step back a pixel.
   const handleTrimStart = useCallback(() => {
     hasEditedRef.current = true;
+    // A trim drag is an edit like any other — the first-run hero goes away.
+    setHeroDismissed(true);
     setEdl((prev) => {
       if (prev) undoStack.current.push(prev);
       redoStack.current = [];
@@ -549,7 +571,6 @@ export default function EditorPage() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [edl, undo, redo, seekRelative, seekToEditPoint, cutToPlayhead, splitAtPlayhead, selectedStart, deleteSelected]);
 
-  const words = useMemo(() => project?.transcript?.words ?? [], [project]);
   const totalSeconds = useMemo(
     () => (edl ? Math.max(...edl.segments.map((s) => s.end), 0) : 0),
     [edl]
@@ -563,10 +584,17 @@ export default function EditorPage() {
     [project]
   );
 
-  // Re-run the automatic rough cut at the current sensitivity, keeping manual
-  // edits. This is what applies improved detection to an already-edited project.
+  const showRoughCutHero =
+    !!edl &&
+    words.length > 0 &&
+    !heroDismissed &&
+    edl.segments.every((s) => s.status === "keep");
+
+  // Create the rough cut (first run), or re-run it at the current sensitivity
+  // keeping manual edits — same operation, framed differently in the UI.
   const reRunRoughCut = useCallback(() => {
     if (!edl || durationSeconds <= 0) return;
+    const firstRun = edl.segments.every((s) => s.status === "keep");
     let next = reRoughCutInEdl(edl, words, durationSeconds, SENSITIVITY_PRESETS[sensitivity]);
     // reRoughCut returns the same EDL untouched when there's nothing to
     // regenerate from (transcript not ready yet) — don't claim a re-run happened.
@@ -581,8 +609,12 @@ export default function EditorPage() {
     // the user's restores still win).
     next = applyAiCuts(next, project?.aiCuts, words);
     if (!applyEdl(next)) return;
-    toast("Rough cut re-run", {
-      description: "Silence & retakes regenerated — your manual edits were kept.",
+    setCutEvent({ kind: "rough", at: Date.now() });
+    const removed = Math.max(0, keptDuration(edl) - keptDuration(next));
+    toast(firstRun ? "Rough cut created" : "Rough cut re-run", {
+      description: firstRun
+        ? `Removed ${formatDuration(removed * 1000)} of silence, retakes & repeats — all undoable.`
+        : "Silence & retakes regenerated — your manual edits were kept.",
       action: { label: "Undo", onClick: () => undo() },
     });
   }, [edl, words, durationSeconds, sensitivity, project, applyEdl, undo]);
@@ -628,6 +660,7 @@ export default function EditorPage() {
         toast.dismiss("ai-cut");
         return;
       }
+      setCutEvent({ kind: "ai", at: Date.now() });
       toast.success(
         `AI cut applied — ${aiCuts.ranges.length} mistake${aiCuts.ranges.length === 1 ? "" : "s"} removed`,
         { id: "ai-cut", action: { label: "Undo", onClick: () => undo() } }
@@ -901,16 +934,25 @@ export default function EditorPage() {
   // `action`. Storing the callbacks here trips react-hooks/refs: they
   // transitively capture the undo-stack refs, which taints the whole array
   // as "ref-carrying" and flags its render-time read as a ref access.
+  // Only real, working tools live in the rail — anything not yet built simply
+  // isn't shown (no "coming soon" buttons in production).
+  const retakeCount =
+    edl?.segments.filter((s) => s.status === "cut" && s.reason === "retake").length ?? 0;
+  // What an AI Cut run charges, phrased for tooltips/CTAs. When the duration is
+  // unknown the server charges the 60s fallback — say that, not "0:00".
+  const aiCostLabel =
+    durationSeconds > 0
+      ? `${formatDuration(durationSeconds * 1000)} of credits`
+      : "1:00 of credits";
+  const hasAiCuts = (project?.aiCuts?.ranges.length ?? 0) > 0;
   const railTools: {
     Icon: LucideIcon;
     label: string;
     badge?: number;
     active?: boolean;
     title?: string;
-    action?: "ai-cut" | "filler";
+    action: "ai-cut" | "filler" | "review";
   }[] = [
-    { Icon: MousePointer2, label: "Select", active: true },
-    { Icon: Scissors, label: "Trim" },
     {
       Icon: Wand2,
       label: "AI Cut",
@@ -918,7 +960,7 @@ export default function EditorPage() {
       badge: edl?.segments.filter((s) => s.status === "cut" && s.reason === "ai").length,
       title: aiBusy
         ? "AI is reviewing your transcript…"
-        : "AI pass — remove false starts, stumbles & flubbed takes",
+        : `AI pass — remove false starts, stumbles & flubbed takes (uses ${aiCostLabel})`,
       action: "ai-cut",
     },
     {
@@ -932,11 +974,17 @@ export default function EditorPage() {
           : "No filler words detected",
       action: "filler",
     },
-    { Icon: AudioLines, label: "Silence", badge: stats.removedCount },
-    { Icon: Captions, label: "Captions" },
-    { Icon: SlidersHorizontal, label: "Audio" },
-    { Icon: Type, label: "Titles" },
-    { Icon: Settings, label: "Settings" },
+    {
+      Icon: ListChecks,
+      label: "Review",
+      active: retakeCount > 0,
+      badge: retakeCount,
+      title:
+        retakeCount > 0
+          ? `Review ${retakeCount} auto-cut retake${retakeCount === 1 ? "" : "s"} one by one`
+          : "No auto-cut retakes to review",
+      action: "review",
+    },
   ];
 
   const transportBtn =
@@ -972,24 +1020,17 @@ export default function EditorPage() {
               key={tool.label}
               type="button"
               disabled={!tool.active}
-              // One-shot actions aren't toggles — pressed state would
-              // misreport them to assistive tech.
-              aria-pressed={tool.action ? undefined : tool.active}
               onClick={
                 tool.action === "ai-cut"
                   ? runAiCut
                   : tool.action === "filler"
                     ? removeFillerWords
-                    : undefined
+                    : () => setShowRetakeReview(true)
               }
-              title={
-                tool.title ?? (tool.active ? tool.label : `${tool.label} (coming soon)`)
-              }
+              title={tool.title ?? tool.label}
               className={`relative flex w-14 flex-col items-center gap-1 rounded-lg py-2 text-[10px] ${
                 tool.active
-                  ? tool.action
-                    ? "bg-violet-500/15 text-violet-300 transition-colors hover:bg-violet-500/25"
-                    : "bg-violet-500/15 text-violet-300"
+                  ? "bg-blue-500/15 text-blue-300 transition-colors hover:bg-blue-500/25"
                   : "cursor-not-allowed text-foreground/30"
               }`}
             >
@@ -1023,17 +1064,26 @@ export default function EditorPage() {
                   {resolutionLabel.aspect && <span>{resolutionLabel.aspect}</span>}
                 </div>
               )}
-              {!isPlaying && (
+              {!isPlaying && !showRoughCutHero && (
                 <button
                   type="button"
                   aria-label="Play"
                   onClick={() => playerRef.current?.play()}
-                  className="absolute inset-0 m-auto flex h-16 w-16 items-center justify-center rounded-full bg-violet-600/90 text-white shadow-lg motion-safe:transition-transform motion-safe:hover:scale-105"
+                  className="absolute inset-0 m-auto flex h-16 w-16 items-center justify-center rounded-full bg-blue-600/90 text-white shadow-lg motion-safe:transition-transform motion-safe:hover:scale-105"
                 >
                   <Play className="h-7 w-7 translate-x-0.5 fill-current" />
                 </button>
               )}
             </div>
+            {showRoughCutHero && (
+              <RoughCutHero
+                sensitivity={sensitivity}
+                onSensitivityChange={setSensitivity}
+                onRun={reRunRoughCut}
+                onDismiss={() => setHeroDismissed(true)}
+              />
+            )}
+            {aiBusy && <AiCutOverlay wordCount={words.length} />}
           </div>
 
           {/* Transport bar */}
@@ -1056,7 +1106,7 @@ export default function EditorPage() {
                 type="button"
                 aria-label={isPlaying ? "Pause" : "Play"}
                 onClick={() => playerRef.current?.togglePlay()}
-                className="flex h-10 w-10 items-center justify-center rounded-full bg-violet-600 text-white transition-colors hover:bg-violet-500"
+                className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-600 text-white transition-colors hover:bg-blue-500"
               >
                 {isPlaying ? (
                   <Pause className="h-5 w-5 fill-current" />
@@ -1113,7 +1163,7 @@ export default function EditorPage() {
           aria-label="Resize transcript panel"
           className="group relative z-10 w-1 shrink-0 cursor-col-resize"
         >
-          <div className="absolute inset-y-0 -left-1 -right-1 transition-colors group-hover:bg-violet-500/30" />
+          <div className="absolute inset-y-0 -left-1 -right-1 transition-colors group-hover:bg-blue-500/30" />
         </div>
 
         {/* Transcript */}
@@ -1127,6 +1177,11 @@ export default function EditorPage() {
             onCutWords={handleCutWords}
             onRestoreSegment={handleRestoreSegment}
             onOpenRetakeReview={() => setShowRetakeReview(true)}
+            cutEvent={cutEvent}
+            onEnhanceAi={runAiCut}
+            aiBusy={aiBusy}
+            aiCostLabel={aiCostLabel}
+            hasAiCuts={hasAiCuts}
           />
         </div>
       </div>
@@ -1181,7 +1236,7 @@ export default function EditorPage() {
                   title={`${level} auto-cut`}
                   className={`px-2 py-0.5 capitalize transition-colors ${
                     sensitivity === level
-                      ? "bg-violet-600 text-white"
+                      ? "bg-blue-600 text-white"
                       : "text-foreground/55 hover:bg-foreground/10 hover:text-foreground/80"
                   }`}
                 >
@@ -1201,7 +1256,7 @@ export default function EditorPage() {
           <button
             type="button"
             onClick={() => setShowShortcuts(true)}
-            className="text-violet-400/70 hover:text-violet-400 hover:underline"
+            className="text-blue-400/70 hover:text-blue-400 hover:underline"
           >
             Shortcuts (?)
           </button>
@@ -1228,12 +1283,118 @@ export default function EditorPage() {
               "!rounded-lg !border !border-foreground/10 !bg-background !text-foreground !shadow-2xl",
             description: "!text-foreground/60",
             actionButton:
-              "!rounded-md !bg-violet-600 !px-2.5 !py-1 !text-xs !font-medium !text-white hover:!bg-violet-500",
+              "!rounded-md !bg-blue-600 !px-2.5 !py-1 !text-xs !font-medium !text-white hover:!bg-blue-500",
             error: "!text-red-300",
-            icon: "!text-violet-300",
+            icon: "!text-blue-300",
           },
         }}
       />
+    </div>
+  );
+}
+
+/**
+ * Centered progress overlay while the AI pass runs. Gemini gives no progress
+ * signal — it's a single call — so the percent is a transcript-size-calibrated
+ * estimate that climbs to 95% and completes when the response lands (this
+ * overlay unmounts the moment aiBusy clears).
+ */
+function AiCutOverlay({ wordCount }: { wordCount: number }) {
+  const [startedAt] = useState(() => Date.now());
+  const [now, setNow] = useState(startedAt);
+  useEffect(() => {
+    const interval = setInterval(() => setNow(Date.now()), 500);
+    return () => clearInterval(interval);
+  }, []);
+  // Gemini's runtime scales with transcript length (thinking enabled, capped
+  // at 240s server-side) — roughly 40 words/s of review, floored and capped.
+  const expectedSeconds = Math.min(180, Math.max(12, 8 + wordCount / 40));
+  const percent = Math.min(95, ((now - startedAt) / 1000 / expectedSeconds) * 100);
+  return (
+    <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-black/60 backdrop-blur-sm">
+      <ProgressRing percent={percent} size={96} />
+      <div className="text-center">
+        <p className="text-sm font-semibold text-white">
+          AI is reviewing your transcript…
+        </p>
+        <p className="mt-1 text-xs text-zinc-400">
+          Finding false starts, stumbles & flubbed takes
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * First-run hero: floats over the video preview until the user creates their
+ * rough cut (or dismisses it). Deliberately not a modal — the raw footage
+ * stays scrubbable and watchable behind it.
+ */
+function RoughCutHero({
+  sensitivity,
+  onSensitivityChange,
+  onRun,
+  onDismiss,
+}: {
+  sensitivity: SensitivityLevel;
+  onSensitivityChange: (level: SensitivityLevel) => void;
+  onRun: () => void;
+  onDismiss: () => void;
+}) {
+  return (
+    <div className="absolute bottom-6 left-1/2 z-10 w-full max-w-xl -translate-x-1/2 px-4">
+      <div className="rounded-2xl border border-white/10 bg-surface/90 p-5 shadow-2xl shadow-black/50 backdrop-blur-md">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-blue-500/15 text-blue-300">
+              <Scissors className="h-4.5 w-4.5" />
+            </span>
+            <div>
+              <h3 className="text-sm font-bold text-white">Create your rough cut</h3>
+              <p className="mt-0.5 text-xs text-zinc-400">
+                Removes silences, retakes & repeated words — instant, free, and
+                fully undoable.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onDismiss}
+            aria-label="Dismiss"
+            className="rounded-lg p-1.5 text-zinc-500 hover:bg-white/10 hover:text-white"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="mt-4 flex items-center justify-between gap-3">
+          <div className="flex overflow-hidden rounded-lg border border-white/10">
+            {(["light", "balanced", "aggressive"] as SensitivityLevel[]).map((level) => (
+              <button
+                key={level}
+                type="button"
+                onClick={() => onSensitivityChange(level)}
+                aria-pressed={sensitivity === level}
+                title={`${level} auto-cut`}
+                className={`px-3 py-1.5 text-xs capitalize transition-colors ${
+                  sensitivity === level
+                    ? "bg-blue-600 text-white"
+                    : "text-zinc-400 hover:bg-white/10 hover:text-zinc-200"
+                }`}
+              >
+                {level}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={onRun}
+            className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-blue-600/25 transition-colors hover:bg-blue-500"
+          >
+            <Scissors className="h-4 w-4" />
+            Create rough cut
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1253,7 +1414,7 @@ function StatusScreen({
     <div className="flex h-screen flex-col items-center justify-center gap-4 bg-background px-6 text-center">
       <div
         className={`flex h-14 w-14 items-center justify-center rounded-2xl ${
-          tone === "error" ? "bg-red-500/10 text-red-400" : "bg-violet-500/15 text-violet-300"
+          tone === "error" ? "bg-red-500/10 text-red-400" : "bg-blue-500/15 text-blue-300"
         }`}
       >
         {icon}
@@ -1376,7 +1537,7 @@ function TopBar({
           <ArrowLeft className="h-4 w-4" /> Dashboard
         </Link>
         <div className="flex items-center gap-2">
-          <span className="flex h-7 w-7 items-center justify-center rounded-md bg-violet-500/15 text-violet-300">
+          <span className="flex h-7 w-7 items-center justify-center rounded-md bg-blue-500/15 text-blue-300">
             <Clapperboard className="h-4 w-4" />
           </span>
           <div>
@@ -1407,14 +1568,6 @@ function TopBar({
             <Redo2 className="h-4 w-4" />
           </button>
         </div>
-        <button
-          type="button"
-          disabled
-          title="Share (coming soon)"
-          className="flex cursor-not-allowed items-center gap-1.5 rounded-lg border border-foreground/10 px-3 py-1.5 text-sm text-foreground/40"
-        >
-          <Share2 className="h-4 w-4" /> Share
-        </button>
         <label htmlFor="export-quality" className="sr-only">
           Export resolution
         </label>
@@ -1451,7 +1604,7 @@ function TopBar({
           onClick={onExport}
           disabled={exportDisabled}
           title={exportBlockedReason ?? "Export to MP4"}
-          className="flex items-center gap-1.5 rounded-lg bg-violet-600 px-4 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-violet-500 disabled:cursor-not-allowed disabled:bg-violet-600/60 disabled:text-white/70 disabled:hover:bg-violet-600/60"
+          className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-blue-600/60 disabled:text-white/70 disabled:hover:bg-blue-600/60"
         >
           {busy ? (
             <Loader2 className="h-4 w-4 motion-safe:animate-spin" />
@@ -1567,7 +1720,7 @@ function RetakeReviewQueue({ edl, onSeek, onRestoreSegment, onClose }: RetakeRev
             <button
               type="button"
               onClick={onClose}
-              className="w-full rounded-lg bg-violet-500/20 px-3 py-2 text-sm font-medium text-violet-300 hover:bg-violet-500/30"
+              className="w-full rounded-lg bg-blue-500/20 px-3 py-2 text-sm font-medium text-blue-300 hover:bg-blue-500/30"
             >
               Done
             </button>

@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
+  absorbCutResidue,
+  changedSpan,
   splitAt,
   setRangeStatus,
   generateInitialEDL,
@@ -389,5 +391,122 @@ describe("cutEachWord", () => {
   it("is a no-op for an empty word list", () => {
     const edl = keep(10);
     expect(cutEachWord(edl, [])).toBe(edl);
+  });
+});
+
+describe("absorbCutResidue", () => {
+  // The real-world shape: a silence cut padded inward (starts word.end + pad)
+  // next to a manual/AI cut ending exactly at word.end traps a pad-width keep.
+  function edlWithSliver(sliver: { start: number; end: number }): EDL {
+    return {
+      segments: [
+        { start: 0, end: 2, status: "keep", reason: null },
+        { start: 2, end: sliver.start, status: "cut", reason: "manual" },
+        { start: sliver.start, end: sliver.end, status: "keep", reason: null },
+        { start: sliver.end, end: 6, status: "cut", reason: "silence" },
+        { start: 6, end: 10, status: "keep", reason: null },
+      ],
+    };
+  }
+
+  it("folds a wordless sub-threshold keep between two cuts into the left cut", () => {
+    const result = absorbCutResidue(edlWithSliver({ start: 4, end: 4.1 }), []);
+    expect(result.segments).toEqual([
+      { start: 0, end: 2, status: "keep", reason: null },
+      { start: 2, end: 4.1, status: "cut", reason: "manual" },
+      { start: 4.1, end: 6, status: "cut", reason: "silence" },
+      { start: 6, end: 10, status: "keep", reason: null },
+    ]);
+  });
+
+  it("leaves a sliver alone when a transcript word overlaps it", () => {
+    const edl = edlWithSliver({ start: 4, end: 4.2 });
+    const result = absorbCutResidue(edl, [word(4.02, 4.18)]);
+    expect(result).toBe(edl);
+  });
+
+  it("leaves keeps at or above the threshold alone", () => {
+    const edl = edlWithSliver({ start: 4, end: 4.5 });
+    expect(absorbCutResidue(edl, [])).toBe(edl);
+  });
+
+  it("never absorbs a protected (user-restored) sliver", () => {
+    const edl: EDL = {
+      ...edlWithSliver({ start: 4, end: 4.1 }),
+      protectedKeeps: [{ start: 4, end: 4.1 }],
+    };
+    expect(absorbCutResidue(edl, [])).toBe(edl);
+  });
+
+  it("ignores keeps that touch the timeline edge or a kept neighbour", () => {
+    const edl: EDL = {
+      segments: [
+        { start: 0, end: 0.1, status: "keep", reason: null }, // leading edge
+        { start: 0.1, end: 5, status: "cut", reason: "manual" },
+        { start: 5, end: 10, status: "keep", reason: null },
+      ],
+    };
+    expect(absorbCutResidue(edl, [])).toBe(edl);
+  });
+});
+
+describe("absorbCutResidue — span scoping", () => {
+  const edl: EDL = {
+    segments: [
+      { start: 0, end: 2, status: "keep", reason: null },
+      { start: 2, end: 4, status: "cut", reason: "manual" },
+      // Deliberate tiny wordless keep, away from where the next edit lands.
+      { start: 4, end: 4.1, status: "keep", reason: null },
+      { start: 4.1, end: 6, status: "cut", reason: "silence" },
+      { start: 6, end: 10, status: "keep", reason: null },
+    ],
+  };
+
+  it("leaves slivers outside the span untouched", () => {
+    expect(absorbCutResidue(edl, [], { start: 7, end: 9 })).toBe(edl);
+  });
+
+  it("absorbs slivers inside the span", () => {
+    const result = absorbCutResidue(edl, [], { start: 3, end: 5 });
+    expect(result.segments).toContainEqual({
+      start: 2,
+      end: 4.1,
+      status: "cut",
+      reason: "manual",
+    });
+  });
+
+  it("no-ops on a null span (nothing changed)", () => {
+    expect(absorbCutResidue(edl, [], null)).toBe(edl);
+  });
+});
+
+describe("changedSpan", () => {
+  it("bounds the segments the edit actually touched", () => {
+    const prev = keep(10);
+    const next: EDL = {
+      segments: [
+        { start: 0, end: 3, status: "keep", reason: null },
+        { start: 3, end: 5, status: "cut", reason: "manual" },
+        { start: 5, end: 10, status: "keep", reason: null },
+      ],
+    };
+    // Every segment changed shape (the single keep was split three ways).
+    expect(changedSpan(prev, next)).toEqual({ start: 0, end: 10 });
+
+    // A follow-up edit that only touches the middle reports just that region.
+    const next2: EDL = {
+      segments: [
+        { start: 0, end: 3, status: "keep", reason: null },
+        { start: 3, end: 5.5, status: "cut", reason: "manual" },
+        { start: 5.5, end: 10, status: "keep", reason: null },
+      ],
+    };
+    expect(changedSpan(next, next2)).toEqual({ start: 3, end: 10 });
+  });
+
+  it("returns null when nothing changed", () => {
+    const a = keep(10);
+    expect(changedSpan(a, { segments: [...a.segments] })).toBeNull();
   });
 });

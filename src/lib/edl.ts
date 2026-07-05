@@ -300,6 +300,75 @@ export function setRangeStatus(
   return { ...edl, segments: mergeAdjacent(result), protectedKeeps };
 }
 
+/**
+ * Longest a kept segment may be and still count as cut residue. Word-boundary
+ * cuts (transcript, AI, retake) end exactly at word edges while silence cuts
+ * are padded inward by silencePadSeconds — when the two land side by side they
+ * trap a pad-width "keep" sliver that's invisible at normal zoom and useless
+ * on playback.
+ */
+export const MAX_RESIDUE_SECONDS = 0.3;
+
+/**
+ * Span covering every segment of `next` that isn't present verbatim in
+ * `prev` — a tight bound on where an edit actually landed. Null when the two
+ * EDLs are segment-identical.
+ */
+export function changedSpan(prev: EDL, next: EDL): TimeRange | null {
+  const keys = new Set(
+    prev.segments.map((s) => `${s.start}|${s.end}|${s.status}|${s.reason}`)
+  );
+  let start = Infinity;
+  let end = -Infinity;
+  for (const s of next.segments) {
+    if (keys.has(`${s.start}|${s.end}|${s.status}|${s.reason}`)) continue;
+    start = Math.min(start, s.start);
+    end = Math.max(end, s.end);
+  }
+  return start < end ? { start, end } : null;
+}
+
+/**
+ * Sweep out cut residue: kept slivers shorter than MAX_RESIDUE_SECONDS that sit
+ * between two cuts, contain no transcript word (a genuine short word — "yes" —
+ * is never absorbed), and aren't protected by a user restore. Each sliver takes
+ * its left neighbour's status/reason so mergeAdjacent heals it into that cut.
+ *
+ * `span` bounds the sweep to where the triggering edit landed (see
+ * changedSpan): only slivers overlapping it are touched, so a tiny keep the
+ * user deliberately trimmed elsewhere can never be absorbed by an unrelated
+ * later edit. Passing `null` no-ops; omitting it sweeps the whole timeline.
+ */
+export function absorbCutResidue(
+  edl: EDL,
+  words: TranscriptWord[],
+  span?: TimeRange | null
+): EDL {
+  if (span === null) return edl;
+  const clean = sanitizeWords(words);
+  const segs = edl.segments;
+  let changed = false;
+
+  const result = segs.map((seg, i) => {
+    if (seg.status !== "keep") return seg;
+    if (seg.end - seg.start >= MAX_RESIDUE_SECONDS) return seg;
+    if (span && (seg.end <= span.start || seg.start >= span.end)) return seg;
+    const left = segs[i - 1];
+    const right = segs[i + 1];
+    if (left?.status !== "cut" || right?.status !== "cut") return seg;
+    const hasWord = clean.some((w) => w.start < seg.end && w.end > seg.start);
+    if (hasWord) return seg;
+    const isProtected = (edl.protectedKeeps ?? []).some(
+      (r) => r.start < seg.end && r.end > seg.start
+    );
+    if (isProtected) return seg;
+    changed = true;
+    return { ...seg, status: "cut" as const, reason: left.reason, split: undefined };
+  });
+
+  return changed ? { ...edl, segments: mergeAdjacent(result) } : edl;
+}
+
 /** Cut the time range spanned by the given words (manual cut, e.g. via Delete key). */
 export function cutWords(edl: EDL, words: TranscriptWord[]): EDL {
   if (words.length === 0) return edl;

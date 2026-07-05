@@ -10,7 +10,18 @@ import {
   useSyncExternalStore,
 } from "react";
 import type { ReactNode } from "react";
-import { EyeOff, Eye, Search, Sparkles, RotateCcw, Scissors, Play } from "lucide-react";
+import {
+  EyeOff,
+  Eye,
+  Search,
+  Sparkles,
+  RotateCcw,
+  Scissors,
+  Play,
+  Wand2,
+  Loader2,
+  X,
+} from "lucide-react";
 import type { EDLSegment, TranscriptWord } from "@/lib/edl";
 import { findSegmentAt, groupWordsIntoParagraphs, type EDL } from "@/lib/edl";
 import { formatDuration } from "@/lib/utils";
@@ -24,6 +35,16 @@ interface TranscriptPanelProps {
   onCutWords: (words: TranscriptWord[]) => void;
   onRestoreSegment: (segment: EDLSegment) => void;
   onOpenRetakeReview: () => void;
+  /** Last completed cut pass — each new event re-shows the summary card. */
+  cutEvent: { kind: "rough" | "ai"; at: number } | null;
+  /** Kick off the paid AI pass (the card's "Enhance with AI Cut" upsell). */
+  onEnhanceAi: () => void;
+  aiBusy: boolean;
+  /** Human-readable AI Cut price, e.g. "12:34 of credits". */
+  aiCostLabel: string;
+  /** Whether stored AI cuts are already applied to this project — the card
+   *  must not upsell a pass whose results the user already has. */
+  hasAiCuts: boolean;
 }
 
 interface ContextMenuState {
@@ -86,9 +107,9 @@ const WordSpan = memo(function WordSpan({
                   ? "text-teal-400/70 line-through decoration-teal-400/50 hover:text-emerald-300/80 hover:decoration-transparent"
                   : "text-red-400/70 line-through decoration-red-400/50 hover:text-emerald-300/80 hover:decoration-transparent"
             : isActive
-              ? "bg-violet-600 text-white shadow-sm shadow-violet-500/40 ring-1 ring-violet-300/60"
+              ? "bg-blue-600 text-white shadow-sm shadow-blue-500/40 ring-1 ring-blue-300/60"
               : "text-foreground/90 hover:bg-foreground/10"
-        } ${isSelected && !isActive ? "bg-violet-500/30" : ""} ${
+        } ${isSelected && !isActive ? "bg-blue-500/30" : ""} ${
           isMatch && !isSelected && !isActive ? "bg-amber-400/25" : ""
         }`}
         title={
@@ -145,6 +166,11 @@ export default function TranscriptPanel({
   onCutWords,
   onRestoreSegment,
   onOpenRetakeReview,
+  cutEvent,
+  onEnhanceAi,
+  aiBusy,
+  aiCostLabel,
+  hasAiCuts,
 }: TranscriptPanelProps) {
   const [anchorIndex, setAnchorIndex] = useState<number | null>(null);
   const [selection, setSelection] = useState<Set<number>>(new Set());
@@ -163,6 +189,21 @@ export default function TranscriptPanel({
   const toggleHideCut = useCallback(() => {
     writeHideCutPreference(!readHideCutPreference());
   }, []);
+
+  // Post-cut summary card: re-shows on each completed cut pass, then gets out
+  // of the way — auto-collapses after a few seconds so the transcript keeps
+  // its space. Retake review stays reachable from the tool rail afterwards.
+  // "Dismissed" is keyed to the event's timestamp, so a new event (new `at`)
+  // is visible again without any state reset in the effect.
+  const [dismissedAt, setDismissedAt] = useState<number | null>(null);
+  useEffect(() => {
+    // While the AI pass is running the card is the thing showing its spinner —
+    // hold it open and restart the countdown when the run settles.
+    if (!cutEvent || aiBusy) return;
+    const timer = setTimeout(() => setDismissedAt(cutEvent.at), 10_000);
+    return () => clearTimeout(timer);
+  }, [cutEvent, aiBusy]);
+  const showCard = cutEvent !== null && cutEvent.at !== dismissedAt;
 
   const containerRef = useRef<HTMLDivElement>(null);
   const activeWordRef = useRef<HTMLSpanElement>(null);
@@ -419,7 +460,7 @@ export default function TranscriptPanel({
           title={hideCut ? "Show removed text" : "Hide removed text"}
           className={`rounded-md p-1.5 transition-colors ${
             hideCut
-              ? "bg-violet-500/15 text-violet-300"
+              ? "bg-blue-500/15 text-blue-300"
               : "text-foreground/40 hover:bg-foreground/10 hover:text-foreground/70"
           }`}
         >
@@ -435,7 +476,7 @@ export default function TranscriptPanel({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search transcript…"
-            className="w-full rounded-lg border border-foreground/10 bg-foreground/[0.03] py-2 pl-9 pr-16 text-sm text-foreground placeholder:text-foreground/30 focus:border-violet-500/50 focus:outline-none"
+            className="w-full rounded-lg border border-foreground/10 bg-foreground/[0.03] py-2 pl-9 pr-16 text-sm text-foreground placeholder:text-foreground/30 focus:border-blue-500/50 focus:outline-none"
           />
           {normalizedQuery && (
             <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-foreground/40">
@@ -477,20 +518,7 @@ export default function TranscriptPanel({
           </div>
         )}
 
-        {/* Speaker label */}
-        {words.length > 0 && (
-          <div className="mb-3 flex items-center gap-2 pt-1">
-            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-violet-500 to-fuchsia-500 text-xs font-bold text-white">
-              S1
-            </span>
-            <span className="text-sm font-semibold text-foreground/80">Speaker 1</span>
-            <span className="font-mono text-xs text-foreground/30">
-              {formatDuration((words[0]?.start ?? 0) * 1000)}
-            </span>
-          </div>
-        )}
-
-        <div className="pb-6 text-base leading-loose">
+        <div className="pb-6 pt-1 text-base leading-loose">
           {words.length === 0 ? (
             <p className="text-foreground/30">No transcript available.</p>
           ) : (
@@ -571,7 +599,7 @@ export default function TranscriptPanel({
                     type="button"
                     onClick={() => onSeek(words[paragraph.startIndex].start)}
                     title="Jump to this paragraph"
-                    className="mb-0.5 block select-none font-mono text-[10px] text-foreground/30 transition-colors hover:text-violet-400"
+                    className="mb-0.5 block select-none font-mono text-[10px] text-foreground/30 transition-colors hover:text-blue-400"
                   >
                     {formatDuration(words[paragraph.startIndex].start * 1000)}
                   </button>
@@ -583,42 +611,86 @@ export default function TranscriptPanel({
         </div>
       </div>
 
-      {/* Suggestion card */}
-      <div className="m-4 rounded-xl border border-violet-500/20 bg-violet-500/[0.07] p-3">
-        <div className="flex items-center gap-3">
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-violet-500/20 text-violet-300">
-            <Sparkles className="h-4 w-4" />
-          </span>
-          <div className="min-w-0 flex-1">
-            <p className="text-sm font-semibold text-foreground">
-              {silenceCount} silence{silenceCount === 1 ? "" : "s"} auto-removed
-            </p>
-            <p className="truncate text-xs text-foreground/50">
-              {retakeCount > 0
-                ? `${retakeCount} retake${retakeCount === 1 ? "" : "s"} auto-cut — kept the later take`
-                : "No repeated takes detected"}
-            </p>
-            {aiCount > 0 && (
-              <p className="truncate text-xs text-sky-300/70">
-                {aiCount} AI cut{aiCount === 1 ? "" : "s"} — retakes, stumbles & spoken directions
-              </p>
+      {/* Post-cut summary card — event-driven, auto-collapses (see showCard) */}
+      {showCard && (
+        <div className="m-4 rounded-xl border border-blue-500/20 bg-blue-500/[0.07] p-3">
+          <div className="flex items-start gap-3">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-500/20 text-blue-300">
+              <Sparkles className="h-4 w-4" />
+            </span>
+            <div className="min-w-0 flex-1">
+              {cutEvent.kind === "rough" ? (
+                <>
+                  <p className="text-sm font-semibold text-foreground">
+                    Rough cut done — {silenceCount} silence{silenceCount === 1 ? "" : "s"} removed
+                  </p>
+                  <p className="truncate text-xs text-foreground/50">
+                    {retakeCount > 0
+                      ? `${retakeCount} retake${retakeCount === 1 ? "" : "s"} auto-cut — kept the later take`
+                      : "No repeated takes detected"}
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="text-sm font-semibold text-foreground">
+                    AI cut applied — {aiCount} mistake{aiCount === 1 ? "" : "s"} removed
+                  </p>
+                  <p className="truncate text-xs text-foreground/50">
+                    Click any struck-through word to restore it.
+                  </p>
+                </>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => setDismissedAt(cutEvent.at)}
+              aria-label="Dismiss"
+              className="rounded-md p-1 text-foreground/40 hover:bg-foreground/10 hover:text-foreground/80"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          <div className="mt-3 flex items-center gap-2">
+            {cutEvent.kind === "rough" && !hasAiCuts && (
+              <button
+                type="button"
+                onClick={onEnhanceAi}
+                disabled={aiBusy}
+                title={`AI pass — remove false starts, stumbles & flubbed takes (uses ${aiCostLabel})`}
+                className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {aiBusy ? (
+                  <Loader2 className="h-3.5 w-3.5 motion-safe:animate-spin" />
+                ) : (
+                  <Wand2 className="h-3.5 w-3.5" />
+                )}
+                {aiBusy ? "AI is working…" : "Enhance with AI Cut"}
+              </button>
+            )}
+            {retakeCount > 0 && (
+              <button
+                type="button"
+                onClick={onOpenRetakeReview}
+                title="Review detected retakes one by one"
+                className="rounded-lg bg-amber-500/20 px-3 py-1.5 text-xs font-medium text-amber-300 hover:bg-amber-500/30"
+              >
+                Review retakes
+              </button>
             )}
           </div>
-          <button
-            type="button"
-            disabled={retakeCount === 0}
-            onClick={onOpenRetakeReview}
-            title={retakeCount === 0 ? "No retakes to review" : "Review detected retakes"}
-            className={
-              retakeCount === 0
-                ? "cursor-not-allowed rounded-lg bg-foreground/10 px-3 py-1.5 text-xs font-medium text-foreground/40"
-                : "rounded-lg bg-amber-500/20 px-3 py-1.5 text-xs font-medium text-amber-300 hover:bg-amber-500/30"
-            }
-          >
-            Review
-          </button>
+          {cutEvent.kind === "rough" &&
+            (hasAiCuts ? (
+              <p className="mt-1.5 text-center text-[10px] text-foreground/35">
+                Your AI cuts are already included — re-run anytime from the AI
+                Cut tool (uses {aiCostLabel})
+              </p>
+            ) : (
+              <p className="mt-1.5 text-center text-[10px] text-foreground/35">
+                Uses {aiCostLabel} · you&apos;ll keep full undo
+              </p>
+            ))}
         </div>
-      </div>
+      )}
 
       {/* Context menu */}
       {menu && (

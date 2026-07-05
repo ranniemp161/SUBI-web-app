@@ -32,9 +32,8 @@ async function refundAiCutQuietly(userId: string, projectId: string, costSeconds
  * POST /api/projects/:id/ai-cut — run (or re-run) the AI mistake-detection
  * pass over the project's transcript, store the result, and return it.
  *
- * This is the on-demand path behind the studio's "AI Cut" button: the retry
- * when the automatic post-transcription pass failed, and the way projects
- * transcribed before the feature existed get AI cuts at all.
+ * This is the only path that runs the AI pass: it's strictly opt-in behind
+ * the studio's "AI Cut" button (no automatic pass at transcription time).
  */
 export async function POST(
   _request: Request,
@@ -77,11 +76,8 @@ export async function POST(
       );
     }
 
-    // Each run is a real Gemini call the account pays for; the automatic
-    // first pass right after transcription is already priced into the
-    // original per-second transcription charge (see lib/credits.ts), so only
-    // this on-demand path (re-runs, and the retry when that first pass
-    // failed) is charged here.
+    // Each run is a real Gemini call the account pays for, and this opt-in
+    // route is the only place the pass ever runs — so every run is charged.
     const costSeconds = costSecondsForDurationMs(project.durationMs);
     const charge = await chargeAiCut(project.userId, id, costSeconds);
     if (charge.status === "insufficient") {

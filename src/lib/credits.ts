@@ -25,13 +25,13 @@ export const FALLBACK_HOLD_SECONDS = 60;
  * to populate credit_ledger.cost_micros for margin visibility — not billed
  * to the user, who's charged in credit-seconds regardless.
  *
- * TRANSCRIPTION is the blended Deepgram + Gemini rough-cut estimate
- * ($0.083/min ÷ 60). AI_CUT is the Gemini-only portion for an on-demand
- * re-run (no Deepgram call), estimated at ~88% of the blended rate per the
- * cost breakdown that set these numbers — refine both once real
- * `cost_micros` data accumulates.
+ * TRANSCRIPTION is Deepgram-only: the AI pass no longer runs automatically
+ * at transcription time (it's strictly opt-in from the studio, charged via
+ * AI_CUT), so its cost lives entirely on the ai_cut ledger rows. The two
+ * values are the split of the original blended $0.083/min estimate — refine
+ * both once real `cost_micros` data accumulates.
  */
-export const TRANSCRIPTION_COST_MICROS_PER_SECOND = 1383;
+export const TRANSCRIPTION_COST_MICROS_PER_SECOND = 166;
 export const AI_CUT_COST_MICROS_PER_SECOND = 1217;
 
 /**
@@ -308,14 +308,14 @@ export type AiCutChargeResult =
   | { status: "insufficient" };
 
 /**
- * Charge `costSeconds` for an on-demand AI Cut (re-)run — a single eager
+ * Charge `costSeconds` for an on-demand AI Cut run — a single eager
  * deduction, unlike reserveCredits' hold/settle pair, since this is one
  * synchronous Gemini call rather than an async job. Same CHECK-constraint
  * mechanism guards against overdraft.
  *
- * Only on-demand re-runs are charged here; the automatic first pass right
- * after transcription is already priced into the original per-second
- * transcription hold (see reserveCredits) — charging both would double-bill.
+ * Every AI Cut run is charged here: the pass is strictly opt-in from the
+ * studio (there is no automatic pass at transcription time), so each run is
+ * a Gemini call the user explicitly asked — and pays — for.
  */
 export async function chargeAiCut(
   userId: string,

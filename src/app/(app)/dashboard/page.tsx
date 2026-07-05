@@ -6,6 +6,7 @@ import { Toaster, toast } from "sonner";
 import { upload } from "@vercel/blob/client";
 import FilePicker, { type VideoMetadata } from "@/components/file-picker";
 import CreditsPanel, { type CreditsInfo } from "@/components/credits-panel";
+import ProgressRing from "@/components/progress-ring";
 import { formatDuration, formatDate } from "@/lib/utils";
 import { extractAudioForTranscription } from "@/lib/audio-extract";
 import { uploadPathnameForProject } from "@/lib/blob";
@@ -154,6 +155,22 @@ async function startDeepgramTranscription(
 }
 
 /**
+ * Estimated transcription progress. Deepgram gives no progress signal — it's
+ * one async job — so this is a duration-calibrated estimate (Deepgram runs at
+ * roughly 30× realtime, floored/capped to stay sane on tiny/huge files) that
+ * climbs to 95% and holds there until the status poll reports the real result.
+ */
+function estimateTranscribePercent(
+  startedAt: number,
+  durationMs: number | null,
+  now: number
+): number {
+  const expectedSeconds = Math.min(90, Math.max(8, (durationMs ?? 60_000) / 1000 / 30));
+  const elapsed = (now - startedAt) / 1000;
+  return Math.min(95, (elapsed / expectedSeconds) * 100);
+}
+
+/**
  * Dashboard page — the user's home screen after login.
  *
  * Shows existing projects and a file picker for creating new ones.
@@ -165,11 +182,33 @@ export default function DashboardPage() {
   const [isCreating, setIsCreating] = useState(false);
   const [credits, setCredits] = useState<CreditsInfo | null>(null);
   const [buyOpen, setBuyOpen] = useState(false);
+  // Per-project in-flight work, shown as a prominent centered percentage on
+  // the card poster. Extraction/upload report real progress; the transcribing
+  // phase has no server progress signal (Deepgram is a single async job), so
+  // its percent is a duration-calibrated estimate that completes when the
+  // status poll flips to ready.
   const [activeUploads, setActiveUploads] = useState<
-    Record<string, { step: "extracting" | "uploading"; percent: number }>
+    Record<
+      string,
+      | { step: "extracting" | "uploading"; percent: number }
+      | { step: "transcribing"; startedAt: number }
+    >
   >({});
+  // 500ms heartbeat that advances the estimated transcription percentages;
+  // only runs while at least one project is in the transcribing phase.
+  const [nowTick, setNowTick] = useState(() => Date.now());
 
   const [isDraggingPage, setIsDraggingPage] = useState(false);
+
+  // Advance the estimated transcription percentages while any are in flight.
+  const hasTranscribing = Object.values(activeUploads).some(
+    (job) => job.step === "transcribing"
+  );
+  useEffect(() => {
+    if (!hasTranscribing) return;
+    const interval = setInterval(() => setNowTick(Date.now()), 500);
+    return () => clearInterval(interval);
+  }, [hasTranscribing]);
 
   const fetchCredits = useCallback(async () => {
     const data = await fetchCreditsInfo();
@@ -182,8 +221,21 @@ export default function DashboardPage() {
       try {
         const response = await fetch("/api/projects");
         if (response.ok) {
-          const data = await response.json();
+          const data: Project[] = await response.json();
           setProjects(data);
+          // A project already mid-transcription (dashboard reloaded while a
+          // job was in flight) gets its progress estimate started now, so its
+          // card shows a number instead of a mystery.
+          const inFlight = data.filter((p) => p.transcriptStatus === "processing");
+          if (inFlight.length > 0) {
+            setActiveUploads((prev) => {
+              const next = { ...prev };
+              for (const p of inFlight) {
+                next[p.id] ??= { step: "transcribing", startedAt: Date.now() };
+              }
+              return next;
+            });
+          }
         }
       } catch (error) {
         console.error("Failed to fetch projects:", error);
@@ -318,11 +370,12 @@ export default function DashboardPage() {
         id: toastId,
         description: "This can take a minute — the status updates here when it's ready.",
       });
-      setActiveUploads((prev) => {
-        const copy = { ...prev };
-        delete copy[projectId];
-        return copy;
-      });
+      // Hand the card over to the transcribing phase: the estimated percent
+      // ticks from here until the status poll reports the real outcome.
+      setActiveUploads((prev) => ({
+        ...prev,
+        [projectId]: { step: "transcribing", startedAt: Date.now() },
+      }));
       // The reserve just changed the balance — reflect it in the header chip.
       fetchCredits();
     } catch (error) {
@@ -568,9 +621,29 @@ export default function DashboardPage() {
             )
           );
           // A finished job settled its credit hold (reconcile or refund) —
-          // pick up the corrected balance.
+          // pick up the corrected balance, clear the card's progress overlay,
+          // and tell the user the outcome.
           if (updated.transcriptStatus !== "processing") {
             fetchCredits();
+            setActiveUploads((prev) => {
+              const copy = { ...prev };
+              delete copy[id];
+              return copy;
+            });
+            const fileName = projects.find((p) => p.id === id)?.fileName;
+            if (updated.transcriptStatus === "ready") {
+              toast.success("Transcript ready", {
+                description: fileName
+                  ? `"${fileName}" is ready to edit — open it to create your rough cut.`
+                  : "Open the project to create your rough cut.",
+              });
+            } else if (updated.transcriptStatus === "failed") {
+              toast.error("Transcription failed", {
+                description: fileName
+                  ? `"${fileName}" couldn't be transcribed — retry it from its card.`
+                  : "Retry it from the project card.",
+              });
+            }
           }
         } catch (error) {
           if (error instanceof DOMException && error.name === "AbortError") continue;
@@ -710,6 +783,25 @@ export default function DashboardPage() {
             {projects.map((project) => {
               const status = STATUS_META[project.transcriptStatus];
               const activeUpload = activeUploads[project.id];
+              // One number for whatever phase the card is in: real progress
+              // for extract/upload, a duration-calibrated estimate while
+              // Deepgram works. null when the card is idle.
+              const jobPercent =
+                activeUpload == null
+                  ? null
+                  : activeUpload.step === "transcribing"
+                    ? estimateTranscribePercent(
+                        activeUpload.startedAt,
+                        project.durationMs,
+                        nowTick
+                      )
+                    : activeUpload.percent;
+              const jobLabel =
+                activeUpload?.step === "extracting"
+                  ? "Extracting audio…"
+                  : activeUpload?.step === "uploading"
+                    ? "Uploading media…"
+                    : "Transcribing…";
               return (
                 <div
                   key={project.id}
@@ -723,18 +815,29 @@ export default function DashboardPage() {
                         project.id
                       )}`}
                     >
-                      {/* Play glyph */}
-                      <div className="absolute inset-0 flex items-center justify-center">
-                        <div className="flex h-14 w-14 items-center justify-center rounded-full bg-black/30 text-white/90 ring-1 ring-inset ring-white/10 backdrop-blur-md transition-transform duration-300 group-hover:scale-110">
-                          <svg
-                            className="ml-0.5 h-6 w-6"
-                            fill="currentColor"
-                            viewBox="0 0 24 24"
-                          >
-                            <path d="M8 5v14l11-7z" />
-                          </svg>
+                      {/* Center of the poster: while work is in flight, a
+                          big unmissable percentage; otherwise the play glyph.
+                          Disappears the moment the job finishes. */}
+                      {jobPercent != null ? (
+                        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/50 backdrop-blur-[2px]">
+                          <ProgressRing percent={jobPercent} size={72} />
+                          <span className="text-[11px] font-semibold text-white/90">
+                            {jobLabel}
+                          </span>
                         </div>
-                      </div>
+                      ) : (
+                        <div className="absolute inset-0 flex items-center justify-center">
+                          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-black/30 text-white/90 ring-1 ring-inset ring-white/10 backdrop-blur-md transition-transform duration-300 group-hover:scale-110">
+                            <svg
+                              className="ml-0.5 h-6 w-6"
+                              fill="currentColor"
+                              viewBox="0 0 24 24"
+                            >
+                              <path d="M8 5v14l11-7z" />
+                            </svg>
+                          </div>
+                        </div>
+                      )}
 
                       {/* Status badge */}
                       {status && (
@@ -769,46 +872,24 @@ export default function DashboardPage() {
                         {formatDate(project.createdAt)}
                       </p>
 
-                      {project.transcriptStatus === "processing" && (
+                      {project.transcriptStatus === "processing" && jobPercent != null && (
                         <div className="mt-3.5 space-y-1.5">
-                          {activeUpload ? (
-                            <>
-                              <div className="flex items-center justify-between text-[11px] font-medium text-zinc-400">
-                                <span>
-                                  {activeUpload.step === "extracting"
-                                    ? "Extracting audio…"
-                                    : "Uploading media…"}
-                                </span>
-                                <span className="tabular-nums font-semibold text-blue-400">
-                                  {activeUpload.percent}%
-                                </span>
-                              </div>
-                              <div
-                                role="progressbar"
-                                aria-label="Upload/Extraction progress"
-                                className="h-1.5 w-full overflow-hidden rounded-full bg-white/5"
-                              >
-                                <div
-                                  className="h-full rounded-full bg-blue-500 transition-all duration-300"
-                                  style={{ width: `${activeUpload.percent}%` }}
-                                />
-                              </div>
-                            </>
-                          ) : (
-                            <>
-                              <div className="flex items-center justify-between text-[11px] font-medium text-zinc-400">
-                                <span>Transcribing…</span>
-                                <span className="animate-pulse font-semibold text-blue-400">AI working</span>
-                              </div>
-                              <div
-                                role="progressbar"
-                                aria-label="Transcription in progress"
-                                className="h-1.5 w-full overflow-hidden rounded-full bg-white/5"
-                              >
-                                <div className="h-full w-1/3 animate-indeterminate-progress rounded-full bg-blue-500" />
-                              </div>
-                            </>
-                          )}
+                          <div className="flex items-center justify-between text-[11px] font-medium text-zinc-400">
+                            <span>{jobLabel}</span>
+                            <span className="tabular-nums font-semibold text-blue-400">
+                              {Math.round(jobPercent)}%
+                            </span>
+                          </div>
+                          <div
+                            role="progressbar"
+                            aria-label={jobLabel}
+                            className="h-1.5 w-full overflow-hidden rounded-full bg-white/5"
+                          >
+                            <div
+                              className="h-full rounded-full bg-blue-500 transition-all duration-300"
+                              style={{ width: `${jobPercent}%` }}
+                            />
+                          </div>
                         </div>
                       )}
                     </div>
@@ -891,7 +972,7 @@ export default function DashboardPage() {
             </div>
             <h3 className="text-2xl font-bold text-white tracking-tight">Drop your video here</h3>
             <p className="mt-2 text-zinc-400 text-sm">
-              We'll instantly extract the audio and start generating your transcription.
+              We&apos;ll instantly extract the audio and start generating your transcription.
             </p>
           </div>
         </div>
