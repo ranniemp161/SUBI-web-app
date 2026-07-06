@@ -34,19 +34,19 @@ export const users = pgTable(
     clerkId: text("clerk_id").notNull().unique(),
     email: text("email").notNull(),
     /**
-     * Cached credit balance in seconds of transcription audio; the source of
-     * truth is SUM(credit_ledger.delta_seconds). The CHECK below is what makes
+     * Cached token balance; the source of
+     * truth is SUM(credit_ledger.delta_tokens). The CHECK below is what makes
      * concurrent spends safe without transactions: an overdraft raises 23514
      * and rolls back the whole (single-statement) credit mutation.
      */
-    creditSeconds: integer("credit_seconds").notNull().default(0),
+    tokens: integer("tokens").notNull().default(0),
     /** Skool community member — receives the monthly credit grant. */
     isMember: boolean("is_member").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
   },
-  (t) => [check("users_credit_seconds_nonneg", sql`${t.creditSeconds} >= 0`)]
+  (t) => [check("users_tokens_nonneg", sql`${t.tokens} >= 0`)]
 );
 
 /**
@@ -70,11 +70,11 @@ export const projects = pgTable("projects", {
   /** Random per-request secret checked on the Deepgram callback — Deepgram callbacks aren't signed. */
   transcriptCallbackToken: text("transcript_callback_token"),
   /**
-   * Seconds of credit reserved for the in-flight transcription job; NULL when
-   * no job holds credits. Doubles as the double-kickoff gate and as the
+   * Tokens reserved for the in-flight transcription job; NULL when
+   * no job holds tokens. Doubles as the double-kickoff gate and as the
    * exactly-once gate for settling (see lib/credits.ts).
    */
-  creditHoldSeconds: integer("credit_hold_seconds"),
+  tokensHold: integer("tokens_hold"),
   edl: jsonb("edl"),
   /** AI rough-cut suggestions (shape: AiCuts in lib/ai-cuts.ts), written server-side only. */
   aiCuts: jsonb("ai_cuts"),
@@ -97,7 +97,7 @@ export const creditLedgerReasonEnum = pgEnum("credit_ledger_reason", [
 
 /**
  * Append-only credit ledger — the source of truth for balances.
- * `users.credit_seconds` is a cache of SUM(delta_seconds) per user; every
+ * `users.tokens` is a cache of SUM(delta_tokens) per user; every
  * mutation writes a ledger row and bumps the cache in one atomic statement.
  */
 export const creditLedger = pgTable(
@@ -108,7 +108,7 @@ export const creditLedger = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     /** Positive = deposit, negative = charge. */
-    deltaSeconds: integer("delta_seconds").notNull(),
+    deltaTokens: integer("delta_tokens").notNull(),
     reason: creditLedgerReasonEnum("reason").notNull(),
     projectId: uuid("project_id").references(() => projects.id, {
       onDelete: "set null",
