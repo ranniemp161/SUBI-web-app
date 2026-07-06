@@ -2,7 +2,7 @@ import { auth } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import { getAuthorizedDbUser } from "@/lib/authz";
 import { db } from "@repo/db";
-import { creditLedger, users } from "@repo/db/schema";
+import { creditLedger } from "@repo/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { getBundles } from "@/lib/stripe";
 import { CheckoutButton } from "./checkout-button";

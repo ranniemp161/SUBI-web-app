@@ -2,7 +2,15 @@
 
 import { useState } from "react";
 
-export function CheckoutButton({ bundle }: { bundle: any }) {
+type Bundle = {
+  priceId: string;
+  tokens: number;
+  amount: number;
+  currency: string;
+  name?: string;
+};
+
+export function CheckoutButton({ bundle }: { bundle: Bundle }) {
   const [loading, setLoading] = useState(false);
 
   async function handleCheckout() {
@@ -22,7 +30,7 @@ export function CheckoutButton({ bundle }: { bundle: any }) {
         alert(data.error || "Failed to start checkout");
         setLoading(false);
       }
-    } catch (err) {
+    } catch {
       alert("Failed to start checkout");
       setLoading(false);
     }
