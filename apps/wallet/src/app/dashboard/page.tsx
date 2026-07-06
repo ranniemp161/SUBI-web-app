@@ -49,7 +49,7 @@ export default async function DashboardPage() {
               <form key={bundle.priceId} action="/api/billing/checkout" method="POST">
                 <input type="hidden" name="priceId" value={bundle.priceId} />
                 <button
-                  type="button"
+                  type="submit"
                   className="w-full flex items-center justify-between p-3 rounded-lg border dark:border-zinc-700 hover:border-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
                 >
                   <span className="font-medium">{bundle.tokens} Tokens</span>

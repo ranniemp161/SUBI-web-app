@@ -33,7 +33,15 @@ export default function RootLayout({
           <header className="border-b dark:border-zinc-800 bg-white dark:bg-zinc-900">
             <div className="max-w-4xl mx-auto px-8 h-16 flex items-center justify-between">
               <span className="font-bold text-xl tracking-tight">SUBI Wallet</span>
-              <UserButton />
+              <div className="flex items-center gap-4">
+                <a
+                  href={process.env.NEXT_PUBLIC_ROUGH_CUT_URL || "http://localhost:3001"}
+                  className="text-sm font-medium text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100 transition-colors"
+                >
+                  Back to Rough Cut
+                </a>
+                <UserButton />
+              </div>
             </div>
           </header>
           <main className="flex-1">
