@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
 
 export default function Home() {
-  redirect("/dashboard");
+  redirect(process.env.NEXT_PUBLIC_ROUGH_CUT_URL || "http://localhost:3001");
 }
