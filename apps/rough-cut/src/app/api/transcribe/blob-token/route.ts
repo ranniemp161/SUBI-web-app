@@ -63,7 +63,7 @@ export async function POST(request: Request): Promise<NextResponse> {
 
         // Soft credit check — saves the user a doomed upload. The
         // authoritative reserve happens in /api/transcribe/deepgram.
-        if (user.creditSeconds < costSecondsForDurationMs(project.durationMs)) {
+        if (user.tokens < costSecondsForDurationMs(project.durationMs)) {
           throw new Error("Not enough credits to transcribe this video.");
         }
 

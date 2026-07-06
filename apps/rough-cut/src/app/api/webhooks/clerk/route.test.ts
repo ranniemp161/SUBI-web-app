@@ -47,7 +47,7 @@ vi.mock("@/lib/access-codes", () => ({
     async (clerkId: string, email: string, code: string | undefined) => {
       state.provisionCalls.push({ clerkId, email, code });
       if (code !== state.validCode) return null;
-      return { id: "db-user-1", clerkId, email, isMember: true, creditSeconds: 0 };
+      return { id: "db-user-1", clerkId, email, isMember: true, tokens: 0 };
     }
   ),
 }));

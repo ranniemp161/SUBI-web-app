@@ -1,8 +1,8 @@
 import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
-import { db, withDbRetry } from "@/db";
-import { users } from "@/db/schema";
+import { db, withDbRetry } from "@repo/db";
+import { users } from "@repo/db/schema";
 import { getAuthorizedDbUser } from "@/lib/authz";
 import { ensureMonthlyGrant, memberGrantSeconds } from "@/lib/credits";
 import { reportError } from "@/lib/observability";
@@ -35,7 +35,7 @@ export async function GET() {
     );
 
     return NextResponse.json({
-      creditSeconds: fresh?.creditSeconds ?? user.creditSeconds,
+      tokens: fresh?.tokens ?? user.tokens,
       isMember: fresh?.isMember ?? user.isMember,
     });
   } catch (error) {

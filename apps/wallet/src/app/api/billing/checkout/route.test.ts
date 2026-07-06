@@ -4,7 +4,7 @@ const state = vi.hoisted(() => ({
   clerkId: null as string | null,
   dbUser: null as { id: string; email: string } | null,
   rateAllowed: true,
-  priceMetadata: { tokens: "18000" } as Record<string, string>,
+  priceMetadata: { credit_seconds: "18000" } as Record<string, string>,
   createdSessions: [] as Record<string, unknown>[],
 }));
 
@@ -27,8 +27,8 @@ vi.mock("@/lib/rate-limit", () => ({
 
 vi.mock("@/lib/stripe", () => ({
   allowedPriceIds: vi.fn(() => ["price_small", "price_large"]),
-  tokensFromPrice: vi.fn((price: { metadata?: Record<string, string> }) => {
-    const n = Number(price.metadata?.tokens);
+  creditSecondsFromPrice: vi.fn((price: { metadata?: Record<string, string> }) => {
+    const n = Number(price.metadata?.credit_seconds);
     return Number.isInteger(n) && n > 0 ? n : null;
   }),
   getStripe: () => ({
@@ -63,7 +63,7 @@ beforeEach(() => {
   state.clerkId = null;
   state.dbUser = null;
   state.rateAllowed = true;
-  state.priceMetadata = { tokens: "18000" };
+  state.priceMetadata = { credit_seconds: "18000" };
   state.createdSessions = [];
   vi.clearAllMocks();
 });
@@ -109,7 +109,7 @@ describe("POST /api/billing/checkout", () => {
     expect(state.createdSessions).toHaveLength(0);
   });
 
-  it("500 when the allowlisted price is missing tokens metadata", async () => {
+  it("500 when the allowlisted price is missing credit_seconds metadata", async () => {
     state.clerkId = "clerk_1";
     state.dbUser = { id: "db-user-1", email: "a@b.com" };
     state.priceMetadata = {};
@@ -132,7 +132,7 @@ describe("POST /api/billing/checkout", () => {
     const session = state.createdSessions[0];
     expect(session.mode).toBe("payment");
     expect(session.client_reference_id).toBe("db-user-1");
-    expect(session.metadata).toEqual({ userId: "db-user-1", tokens: "18000" });
+    expect(session.metadata).toEqual({ userId: "db-user-1", creditSeconds: "18000" });
     expect(session.customer_email).toBe("a@b.com");
     // Trailing slash on PUBLIC_APP_URL is normalized away.
     expect(session.success_url).toBe("https://ruffcut.example.com/dashboard?checkout=success");

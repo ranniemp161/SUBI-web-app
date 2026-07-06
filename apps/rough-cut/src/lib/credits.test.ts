@@ -7,7 +7,7 @@ const state = vi.hoisted(() => ({
   reported: [] as string[],
 }));
 
-vi.mock("@/db", () => ({
+vi.mock("@repo/db", () => ({
   db: {
     execute: vi.fn(async (query: unknown) => {
       state.executed.push(query);
@@ -37,7 +37,7 @@ import {
   chargeAiCut,
   refundAiCut,
 } from "@/lib/credits";
-import { db } from "@/db";
+import { db } from "@repo/db";
 
 beforeEach(() => {
   state.rows = [];
@@ -201,7 +201,7 @@ describe("settleHold", () => {
 
 describe("depositPurchase", () => {
   it("returns true when the deposit landed", async () => {
-    state.rows = [{ credit_seconds: 3900 }];
+    state.rows = [{ tokens: 3900 }];
     await expect(depositPurchase("u1", 300, "cs_123")).resolves.toBe(true);
   });
 
@@ -213,7 +213,7 @@ describe("depositPurchase", () => {
 
 describe("chargeAiCut", () => {
   it("returns charged when the deduction matched a user row", async () => {
-    state.rows = [{ credit_seconds: 3480 }];
+    state.rows = [{ tokens: 3480 }];
     await expect(chargeAiCut("u1", "p1", 120)).resolves.toEqual({
       status: "charged",
     });
@@ -238,7 +238,7 @@ describe("chargeAiCut", () => {
 
 describe("refundAiCut", () => {
   it("issues the refund statement", async () => {
-    state.rows = [{ credit_seconds: 3600 }];
+    state.rows = [{ tokens: 3600 }];
     await refundAiCut("u1", "p1", 120);
     expect(db.execute).toHaveBeenCalledTimes(1);
   });

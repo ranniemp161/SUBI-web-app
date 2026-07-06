@@ -1,7 +1,7 @@
 import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
-import { db } from "@/db";
-import { projects } from "@/db/schema";
+import { db } from "@repo/db";
+import { projects } from "@repo/db/schema";
 import { eq } from "drizzle-orm";
 import { getOwnedProject } from "@/lib/projects";
 import { rateLimit } from "@/lib/rate-limit";

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const state = vi.hoisted(() => ({
   clerkId: null as string | null,
-  dbUser: null as { id: string; creditSeconds: number } | null,
+  dbUser: null as { id: string; tokens: number } | null,
   rateAllowed: true,
   ownedProject: null as
     | { id: string; durationMs?: number | null; transcriptStatus?: string }
@@ -72,7 +72,7 @@ vi.mock("@vercel/blob", () => ({
 
 vi.mock("@/lib/observability", () => ({ reportError: vi.fn() }));
 
-vi.mock("@/db", () => ({
+vi.mock("@repo/db", () => ({
   db: {
     update: () => ({
       set: (v: Record<string, unknown>) => {
@@ -117,7 +117,7 @@ beforeEach(() => {
 
 function authorize() {
   state.clerkId = "clerk_1";
-  state.dbUser = { id: "user-1", creditSeconds: 3600 };
+  state.dbUser = { id: "user-1", tokens: 3600 };
 }
 
 describe("POST /api/transcribe/deepgram — request guards", () => {

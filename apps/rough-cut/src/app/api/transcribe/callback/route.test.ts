@@ -22,7 +22,7 @@ vi.mock("@vercel/blob", () => ({
 // Minimal chainable + thenable Drizzle stand-in: every builder method returns
 // the same proxy, and awaiting it resolves to the configured result. `.set()`
 // captures the update payload so tests can assert what was written.
-vi.mock("@/db", () => {
+vi.mock("@repo/db", () => {
   function chain(getResult: () => unknown, onSet?: (v: Record<string, unknown>) => void) {
     const proxy: unknown = new Proxy(function () {}, {
       get(_t, prop) {

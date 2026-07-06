@@ -51,7 +51,7 @@ vi.mock("@/lib/credits", () => ({
   }),
 }));
 
-vi.mock("@/db", () => {
+vi.mock("@repo/db", () => {
   function chain(getResult: () => unknown, onSet?: (v: Record<string, unknown>) => void) {
     const proxy: unknown = new Proxy(function () {}, {
       get(_t, prop) {

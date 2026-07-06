@@ -40,11 +40,20 @@ export interface Bundle {
 }
 
 /** Positive-int parse of a Price's metadata.tokens; null if malformed. */
-export function tokensFromPrice(price: {
-  metadata?: Record<string, string>;
-}): number | null {
-  const n = Number(price.metadata?.tokens);
-  return Number.isInteger(n) && n > 0 ? n : null;
+export function tokensFromPrice(price: Stripe.Price): number | null {
+  const product = price.product as Stripe.Product | string;
+  const productMetadata = typeof product === "object" ? product.metadata : null;
+  
+  // Check price metadata first, then product metadata. Support legacy 'credit_seconds'.
+  for (const metadata of [price.metadata, productMetadata]) {
+    if (!metadata) continue;
+    const val = metadata.tokens || metadata.credit_seconds;
+    if (val) {
+      const n = Number(val);
+      if (Number.isInteger(n) && n > 0) return n;
+    }
+  }
+  return null;
 }
 
 // Per-serverless-instance cache. Bundles change rarely (dashboard edits), so
@@ -59,11 +68,18 @@ export async function getBundles(): Promise<Bundle[]> {
 
   const stripe = getStripe();
   const prices = await Promise.all(
-    allowedPriceIds().map((id) => stripe.prices.retrieve(id, { expand: ["product"] }))
+    allowedPriceIds().map((id) => 
+      stripe.prices.retrieve(id, { expand: ["product"] })
+      .catch((err) => {
+        reportError("Failed to retrieve Stripe price", err instanceof Error ? err : new Error(String(err)), { priceId: id });
+        return null;
+      })
+    )
   );
 
   const bundles: Bundle[] = [];
   for (const price of prices) {
+    if (!price) continue;
     const tokens = tokensFromPrice(price);
     if (!tokens || price.unit_amount == null) {
       reportError(

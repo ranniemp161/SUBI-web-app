@@ -1,6 +1,7 @@
-import { sql, eq, and, isNull } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { db, withDbRetry } from "@repo/db";
 import { users, accessCodes, type User } from "@repo/db/schema";
+import { sql } from "drizzle-orm";
 
 /**
  * Per-member Skool access codes (see db/schema.ts accessCodes). A code is

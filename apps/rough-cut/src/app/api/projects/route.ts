@@ -1,7 +1,7 @@
 import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
-import { db, withDbRetry } from "@/db";
-import { projects, users } from "@/db/schema";
+import { db, withDbRetry } from "@repo/db";
+import { projects, users } from "@repo/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { getAuthorizedDbUser } from "@/lib/authz";
 import { createProjectSchema } from "@/lib/validation";

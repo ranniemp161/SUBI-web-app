@@ -1,8 +1,8 @@
 import { timingSafeEqual } from "crypto";
 import { NextResponse } from "next/server";
 import { del } from "@vercel/blob";
-import { db } from "@/db";
-import { projects } from "@/db/schema";
+import { db } from "@repo/db";
+import { projects } from "@repo/db/schema";
 import { eq } from "drizzle-orm";
 import { normalizeDeepgram } from "@/lib/deepgram";
 import { secondsFromDeepgramDuration, settleHold } from "@/lib/credits";

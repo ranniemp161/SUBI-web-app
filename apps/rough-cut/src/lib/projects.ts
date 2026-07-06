@@ -1,5 +1,5 @@
-import { db, withDbRetry } from "@/db";
-import { projects, users } from "@/db/schema";
+import { db, withDbRetry } from "@repo/db";
+import { projects, users } from "@repo/db/schema";
 import { eq, and } from "drizzle-orm";
 
 /**

@@ -420,10 +420,10 @@ export default function DashboardPage() {
     (durationMs: number | null | undefined): boolean => {
       if (credits == null || durationMs == null || durationMs <= 0) return false;
       const needed = Math.ceil(durationMs / 1000);
-      if (needed <= credits.creditSeconds) return false;
+      if (needed <= credits.tokens) return false;
       toast.error("Not enough credits for this video", {
         description: `It needs ${formatDuration(durationMs)} of credit — you have ${formatDuration(
-          credits.creditSeconds * 1000
+          credits.tokens * 1000
         )}.`,
         action: { label: "Buy credits", onClick: () => setBuyOpen(true) },
       });

@@ -25,7 +25,7 @@ beforeEach(() => {
 describe("GET /api/billing/bundles", () => {
   it("returns the bundle list with an edge-cacheable header", async () => {
     state.bundles = [
-      { priceId: "price_small", name: "60 minutes", amount: 500, currency: "usd", tokens: 3600 },
+      { priceId: "price_small", name: "60 minutes", amount: 500, currency: "usd", creditSeconds: 3600 },
     ];
     const res = await GET();
     expect(res.status).toBe(200);

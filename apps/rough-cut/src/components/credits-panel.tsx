@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { formatDuration } from "@/lib/utils";
 
 export interface CreditsInfo {
-  creditSeconds: number;
+  tokens: number;
   isMember: boolean;
 }
 
@@ -15,7 +15,7 @@ interface Bundle {
   /** Smallest currency unit (cents). */
   amount: number;
   currency: string;
-  creditSeconds: number;
+  tokens: number;
 }
 
 /** Balance below which the chip turns amber to nudge a top-up. */
@@ -106,7 +106,7 @@ export default function CreditsPanel({
     }
   }
 
-  const low = credits != null && credits.creditSeconds < LOW_BALANCE_SECONDS;
+  const low = credits != null && credits.tokens < LOW_BALANCE_SECONDS;
 
   return (
     <div ref={panelRef} className="relative flex items-center gap-2">
@@ -127,7 +127,7 @@ export default function CreditsPanel({
           />
         </svg>
         <span>
-          {credits == null ? "—" : formatDuration(credits.creditSeconds * 1000)}
+          {credits == null ? "—" : formatDuration(credits.tokens * 1000)}
         </span>
       </span>
 
@@ -192,7 +192,7 @@ export default function CreditsPanel({
             ) : (
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 py-6">
                 {bundles.map((bundle) => {
-                  const minutes = Math.round(bundle.creditSeconds / 60);
+                  const minutes = Math.round(bundle.tokens / 60);
                   const isPopular = bundle.name.toLowerCase().includes("standard");
                   
                   return (
@@ -229,7 +229,7 @@ export default function CreditsPanel({
                             <svg className="h-3.5 w-3.5 text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                             </svg>
-                            <span>${(bundle.amount / 100 / (bundle.creditSeconds / 3600)).toFixed(2)}/hr transcribing</span>
+                            <span>${(bundle.amount / 100 / (bundle.tokens / 3600)).toFixed(2)}/hr transcribing</span>
                           </div>
                         </div>
                       </div>

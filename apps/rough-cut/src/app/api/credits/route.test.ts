@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const state = vi.hoisted(() => ({
   clerkId: null as string | null,
-  dbUser: null as { id: string; creditSeconds: number; isMember: boolean } | null,
+  dbUser: null as { id: string; tokens: number; isMember: boolean } | null,
   freshRows: [] as Record<string, unknown>[],
   grantCalls: [] as Array<{ userId: string; seconds: number }>,
 }));
@@ -25,7 +25,7 @@ vi.mock("@/lib/credits", () => ({
 
 vi.mock("@/lib/observability", () => ({ reportError: vi.fn() }));
 
-vi.mock("@/db", () => {
+vi.mock("@repo/db", () => {
   function chain(result: () => unknown) {
     const proxy: unknown = new Proxy(function () {}, {
       get(_t, prop) {
@@ -69,26 +69,26 @@ describe("GET /api/credits", () => {
 
   it("applies the lazy grant, then returns the post-grant balance", async () => {
     state.clerkId = "clerk_1";
-    state.dbUser = { id: "db-user-1", creditSeconds: 0, isMember: true };
-    state.freshRows = [{ creditSeconds: 3600, isMember: true }];
+    state.dbUser = { id: "db-user-1", tokens: 0, isMember: true };
+    state.freshRows = [{ tokens: 3600, isMember: true }];
 
     const res = await GET();
     const body = await res.json();
 
     expect(res.status).toBe(200);
     expect(state.grantCalls).toEqual([{ userId: "db-user-1", seconds: 3600 }]);
-    expect(body).toEqual({ creditSeconds: 3600, isMember: true });
+    expect(body).toEqual({ tokens: 3600, isMember: true });
   });
 
   it("falls back to the pre-grant row if the re-read comes back empty", async () => {
     state.clerkId = "clerk_1";
-    state.dbUser = { id: "db-user-1", creditSeconds: 120, isMember: false };
+    state.dbUser = { id: "db-user-1", tokens: 120, isMember: false };
     state.freshRows = [];
 
     const res = await GET();
     const body = await res.json();
 
     expect(res.status).toBe(200);
-    expect(body).toEqual({ creditSeconds: 120, isMember: false });
+    expect(body).toEqual({ tokens: 120, isMember: false });
   });
 });

@@ -46,12 +46,21 @@ export async function POST(request: Request) {
       );
     }
 
-    const parsed = checkoutSchema.safeParse(await request.json().catch(() => null));
-    if (!parsed.success) {
-      return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
+    const contentType = request.headers.get("content-type") || "";
+    let priceId: string | null = null;
+    
+    if (contentType.includes("application/x-www-form-urlencoded") || contentType.includes("multipart/form-data")) {
+      const formData = await request.formData().catch(() => null);
+      const parsed = checkoutSchema.safeParse({ priceId: formData?.get("priceId") });
+      if (parsed.success) priceId = parsed.data.priceId;
+    } else {
+      const parsed = checkoutSchema.safeParse(await request.json().catch(() => null));
+      if (parsed.success) priceId = parsed.data.priceId;
     }
 
-    const { priceId } = parsed.data;
+    if (!priceId) {
+      return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
+    }
     if (!allowedPriceIds().includes(priceId)) {
       return NextResponse.json({ error: "Unknown bundle." }, { status: 400 });
     }
@@ -84,6 +93,10 @@ export async function POST(request: Request) {
       customer_email: user.email || undefined,
     });
 
+    if (contentType.includes("application/x-www-form-urlencoded") || contentType.includes("multipart/form-data")) {
+      if (!session.url) throw new Error("No session URL returned");
+      return NextResponse.redirect(session.url, 303);
+    }
     return NextResponse.json({ url: session.url });
   } catch (error) {
     reportError("Failed to create Stripe checkout session", error);

@@ -17,7 +17,7 @@ vi.mock("@/lib/projects", () => ({
 
 vi.mock("@/lib/observability", () => ({ reportError: vi.fn() }));
 
-vi.mock("@/db", () => {
+vi.mock("@repo/db", () => {
   function chain(getResult: () => unknown) {
     const proxy: unknown = new Proxy(function () {}, {
       get(_t, prop) {

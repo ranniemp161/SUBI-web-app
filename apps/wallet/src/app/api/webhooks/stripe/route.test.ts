@@ -67,7 +67,7 @@ function completedSession(overrides: Record<string, unknown> = {}) {
         id: "cs_test_123",
         payment_status: "paid",
         client_reference_id: null,
-        metadata: { userId: "db-user-1", tokens: "18000" },
+        metadata: { userId: "db-user-1", creditSeconds: "18000" },
         ...overrides,
       },
     },
@@ -145,7 +145,7 @@ describe("POST /api/webhooks/stripe — checkout.session.completed", () => {
   });
 
   it("200 + Sentry report on malformed metadata — a retry can never fix it", async () => {
-    completedSession({ metadata: { userId: "db-user-1", tokens: "banana" } });
+    completedSession({ metadata: { userId: "db-user-1", creditSeconds: "banana" } });
     const res = await POST(req());
     expect(res.status).toBe(200);
     expect(depositPurchase).not.toHaveBeenCalled();
@@ -154,7 +154,7 @@ describe("POST /api/webhooks/stripe — checkout.session.completed", () => {
 
   it("falls back to client_reference_id when metadata has no userId", async () => {
     completedSession({
-      metadata: { tokens: "3600" },
+      metadata: { creditSeconds: "3600" },
       client_reference_id: "db-user-2",
     });
     const res = await POST(req());

@@ -6,7 +6,7 @@ const state = vi.hoisted(() => ({
     id: "db-user-1",
     clerkId: "clerk_1",
     email: "a@b.com",
-    creditSeconds: 0,
+    tokens: 0,
     isMember: false,
   } as Record<string, unknown>,
   redeemRows: [] as Record<string, unknown>[],
@@ -14,7 +14,7 @@ const state = vi.hoisted(() => ({
   deleteCount: 0,
 }));
 
-vi.mock("@/db", () => {
+vi.mock("@repo/db", () => {
   // Minimal fluent stub: covers select().from().where().limit(),
   // insert().values().onConflictDoUpdate().returning(), delete().where().
   function chain(result: () => unknown) {
@@ -57,7 +57,7 @@ beforeEach(() => {
     id: "db-user-1",
     clerkId: "clerk_1",
     email: "a@b.com",
-    creditSeconds: 0,
+    tokens: 0,
     isMember: false,
   };
   vi.clearAllMocks();

@@ -107,7 +107,7 @@ export type ReserveResult =
  * Reserve `costSeconds` for a transcription job: set the project's hold,
  * charge the balance, and write the ledger row — one statement.
  *
- * The hold UPDATE's `tokens_hold IS NULL` qual is the double-kickoff
+ * The hold UPDATE's `credit_hold_seconds IS NULL` qual is the double-kickoff
  * gate: a concurrent second call matches zero rows and gets `already_held`.
  * An overdraft trips the CHECK (23514) and rolls the whole statement back,
  * hold included → `insufficient`.
@@ -254,7 +254,7 @@ export async function settleHold(
       SELECT user_id, delta,
              (CASE WHEN delta < 0 THEN 'transcription' ELSE 'refund' END)::credit_ledger_reason,
              ${projectId},
-             delta * ${TRANSCRIPTION_COST_MICROS_PER_SECOND}
+             -delta * ${TRANSCRIPTION_COST_MICROS_PER_SECOND}
       FROM adj WHERE delta <> 0
       RETURNING user_id, delta_tokens
     ),
