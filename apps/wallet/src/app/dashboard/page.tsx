@@ -5,6 +5,7 @@ import { db } from "@repo/db";
 import { creditLedger, users } from "@repo/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { getBundles } from "@/lib/stripe";
+import { CheckoutButton } from "./checkout-button";
 
 export default async function DashboardPage() {
   const { userId: clerkId } = await auth();
@@ -46,21 +47,7 @@ export default async function DashboardPage() {
           <h2 className="text-xl font-semibold mb-4">Add Tokens</h2>
           <div className="flex flex-col gap-3">
             {bundles.map((bundle) => (
-              <form key={bundle.priceId} action="/api/billing/checkout" method="POST">
-                <input type="hidden" name="priceId" value={bundle.priceId} />
-                <button
-                  type="submit"
-                  className="w-full flex items-center justify-between p-3 rounded-lg border dark:border-zinc-700 hover:border-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
-                >
-                  <span className="font-medium">{bundle.tokens} Tokens</span>
-                  <span className="text-zinc-600 dark:text-zinc-300 font-semibold">
-                    {(bundle.amount / 100).toLocaleString("en-US", {
-                      style: "currency",
-                      currency: bundle.currency.toUpperCase(),
-                    })}
-                  </span>
-                </button>
-              </form>
+              <CheckoutButton key={bundle.priceId} bundle={bundle} />
             ))}
           </div>
         </div>
