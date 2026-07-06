@@ -14,7 +14,8 @@ const attemptSignal = new AsyncLocalStorage<AbortSignal>();
 
 neonConfig.fetchFunction = (input: RequestInfo | URL, init?: RequestInit) => {
   const signal = attemptSignal.getStore();
-  return fetch(input, signal ? { ...init, signal } : init);
+  const fetchInit = signal ? { ...init, signal, cache: "no-store" as RequestCache } : { ...init, cache: "no-store" as RequestCache };
+  return fetch(input, fetchInit);
 };
 
 /**
