@@ -854,7 +854,7 @@ export default function DashboardPage() {
               // for extract/upload, a duration-calibrated estimate while
               // Deepgram works. null when the card is idle.
               const jobPercent =
-                activeUpload == null
+                activeUpload == null || project.transcriptStatus !== "processing"
                   ? null
                   : activeUpload.step === "transcribing"
                     ? estimateTranscribePercent(

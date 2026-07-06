@@ -1,47 +1,45 @@
-# Memory — Studio Rough-Cut UX Overhaul + Progress UX + Waveform Fix
+# Memory — Status-Poll UX Fixes + Delete Confirmation Modal
 
-Last updated: 2026-07-05 (late evening)
+Last updated: 2026-07-06 (evening)
 
 ## What was built
 
-All committed and pushed (`db9b27a` dashboard glass UI redesign, `e1a29a5` studio overhaul — working tree clean, main pushed to origin).
+All in the working tree, **NOT yet committed** (user was asked and hasn't said yes). Also uncommitted from before: a small pre-existing `M src/app/(app)/dashboard/page.tsx` was already in git status at session start.
 
-- **Opt-in rough cut flow** ([src/app/(app)/dashboard/[id]/page.tsx](src/app/(app)/dashboard/[id]/page.tsx)): projects open with the full *uncut* timeline (keep-all EDL, no auto-build on load). A dismissible `RoughCutHero` card floats over the video preview with a sensitivity picker (light/balanced/aggressive) + "Create rough cut" button. After the run, a summary card in the transcript panel shows what was removed and upsells "Enhance with AI Cut" with the credit cost stated; the card auto-collapses after 10s (held open while AI runs) and is suppressed/reframed when the project already has stored `aiCuts` (no double-pay upsell). Hero is dismissed by any accepted edit (incl. trim drags/splits) and never shows for projects with a saved EDL.
-- **AI Cut strictly opt-in**: removed the automatic Gemini pass from [src/app/api/transcribe/callback/route.ts](src/app/api/transcribe/callback/route.ts) (regression test asserts `runAiRoughCut` is never called there). Every AI Cut run charges via `chargeAiCut`; rate-limited 10/user/hour; refund on failure. Removed dead `buildInitialEDLWithAi` from ai-cuts.ts.
-- **Timeline fixes** ([src/components/timeline-bar.tsx](src/components/timeline-bar.tsx)): zoom-to-fit computes `viewportWidth / totalDuration`; dynamic zoom-out floor so any video length fits on screen (wheel + buttons + `0` key).
-- **Cut residue fix** ([src/lib/edl.ts](src/lib/edl.ts)): `absorbCutResidue` folds wordless kept slivers < 0.3s trapped between two cuts into the left cut; `changedSpan(prev, next)` scopes the sweep to where the edit landed so deliberate tiny keeps elsewhere survive. Runs inside `applyEdl`'s setState updater. Tests in edl.test.ts cover word-safety, protection, span scoping.
-- **Dead UI removed**: placeholder rail tools (Select/Trim/Captions/Audio/Titles/Settings), Share button, Ripple delete, track-header Eye/Lock icons, fake "Speaker 1" label, duplicate timecode. Rail is now AI Cut / Filler / Review (Review opens the retake queue).
-- **Visual unification**: studio violet → dashboard blue (classes, waveform canvas color, scrollbars, focus rings); shared `--color-surface: #0c0c0e` token in globals.css used by hero + buy-credits modal.
-- **Progress UX**: new [src/components/progress-ring.tsx](src/components/progress-ring.tsx) (centered radial % indicator). Dashboard cards show a big centered ring on the poster through extract (real %) → upload (real %) → transcribe (duration-calibrated estimate, ~30× realtime, holds at 95%); ready/failed toasts fire when the 4s status poll flips. Studio shows a centered `AiCutOverlay` ring while Gemini runs (transcript-length-calibrated estimate).
-- **Waveform reliability** ([src/lib/waveform.ts](src/lib/waveform.ts)): rewritten to stream-decode via mediabunny `AudioSampleSink` (WebCodecs) — flat memory, no size cap, handles MOV/MP4 variants that `decodeAudioData` chokes on. Old Web Audio whole-file decode kept as fallback (1.5GB cap applies only there).
+Fixes came out of a `/review` of two user complaints: "card stuck at 95% after transcription is actually done" and "delete has no confirmation".
+
+- **Dashboard poll rewrite** ([src/app/(app)/dashboard/page.tsx](src/app/(app)/dashboard/page.tsx)): the transcript-status poll now keys off a stable `processingKey` string (sorted joined ids) instead of the `projects` array, so the 4s interval is no longer torn down/recreated every tick. It fires immediately on start, and re-checks on `visibilitychange` + window `focus` (background-tab timer throttling was the likely real cause of the "stuck 95%"). A `projectsRef` mirrors `projects` for toast file names without being an effect dependency.
+- **Latent status bug closed**: the server keeps `transcriptStatus: "idle"` during the client-side extract/upload phases (project creation doesn't set it; only the Deepgram kickoff flips it to processing). The poll now treats only `ready`/`failed` as terminal — previously any poll tick during extraction would have flipped the optimistic "processing" card back to idle and killed the progress UI.
+- **Asymptotic progress estimate**: `estimateTranscribePercent` is now `min(99, (1 − e^(−2·elapsed/expected)) · 100)` — ~86% at the expected finish, then a visible crawl toward 99% instead of parking dead at 95%.
+- **Studio processing screen self-updates** ([src/app/(app)/dashboard/[id]/page.tsx](src/app/(app)/dashboard/[id]/page.tsx)): while `transcriptStatus === "processing"`, a poll (4s + tab-return listeners) checks `/api/projects/:id/status`; on ready/failed it bumps a `reloadNonce` state that re-runs the mount fetch effect, so the editor opens automatically. Screen copy updated to say so.
+- **Delete confirmation modal** (dashboard): trash button now sets `confirmDeleteProject`; a modal styled on the buy-credits pattern (`bg-surface/95`, `role="alertdialog"`) names the file, warns it's permanent, offers Cancel / Delete project. Escape + backdrop-click cancel (both blocked while deleting). `handleConfirmedDelete` shows an error toast with the server reason on failure, a success toast on success, disables buttons + spinner while in flight, and also clears the project's `activeUploads` entry.
 
 ## Decisions made
 
-- **Both cut passes are explicit user actions**: mechanical rough cut is a free button (hero), AI Cut is a paid button — nothing auto-runs, nothing bills without a click. Chosen over auto-mechanical partly for the visible "watch the cuts happen" value moment.
-- **Cost constants split** ([src/lib/credits.ts](src/lib/credits.ts)): `TRANSCRIPTION_COST_MICROS_PER_SECOND` = 166 (Deepgram-only, was 1383 blended), `AI_CUT_COST_MICROS_PER_SECOND` = 1217 — transcription no longer carries Gemini cost since the pass is opt-in and always charged.
-- **Transcription/AI progress percentages are time-based estimates** (no real progress signal from Deepgram/Gemini) — climb to 95%, complete on real result. Extraction/upload percentages are real.
-- **Bandwidth architecture reconfirmed**: filmstrip thumbnails + waveform are generated client-side from the local File; dashboard posters are CSS gradients — zero server bandwidth for all of them.
-- Sensitivity + "Re-run rough cut" stayed in the studio status bar for re-runs (hero carries the first run) — deliberate deviation from the original plan.
+- Poll cadence stays 4s; "instant" is achieved via immediate-first-check + tab-return re-check, not websockets/SSE — no server changes needed.
+- Studio reload uses a `reloadNonce` state re-triggering the inline fetch effect, NOT an extracted `loadProject` useCallback — the repo's `react-hooks/set-state-in-effect` lint rule rejects calling an outside-defined state-setting callback from an effect body (third time this rule shaped a design; pattern: keep state-writing fetchers defined inside the effect, trigger re-runs via deps).
+- Delete confirmation is an in-page modal matching the buy-credits panel, not `window.confirm`.
 
 ## Problems solved
 
-- **Cut residue root cause**: silence cuts are padded inward by `silencePadSeconds` (0.06–0.15s) while word-boundary cuts end exactly at word edges — adjacent cuts trapped a pad-width kept sliver. Fixed via absorbCutResidue (see above).
-- **Waveform "often empty"**: `decodeAudioData` can't parse many video containers (MOV especially) and needed the whole file in memory. Fixed by streaming mediabunny decode.
-- **react-hooks/set-state-in-effect lint** bit twice: fixed by keying card dismissal to the event timestamp (transcript panel) and seeding transcribe-progress entries in fetch/poll handlers instead of a reactive effect (dashboard).
+- The "stuck at 95%" had three stacked causes: no push signal + interval reset on every poll tick (projects identity churn) + background-tab timer throttling; plus the estimate curve made even healthy waits look frozen. All addressed client-side.
+- The idle-vs-processing mismatch (server idle during extract/upload while client shows processing) — see above; only ready/failed are terminal now.
 
 ## Current state
 
-- Everything above is committed and pushed to origin/main. Typecheck, lint, and 222 tests green.
-- **Not yet eyeball-tested end to end** — the full arc (upload → extract/upload rings → transcribe estimate → ready toast → studio → hero → rough cut → summary card → AI Cut overlay → waveform on a previously-failing MOV) has only unit-level verification.
-- Production rollout still pending (see auto-memory `project_credits_rollout`): prod DB needs migrations 0003+0004, Vercel prod env needs live-mode Stripe keys/webhook + price IDs. If Vercel auto-deploys main, the new code is live against whatever prod env exists — credit flow won't work there until that setup is done.
+- Typecheck, ESLint, and all 222 tests green with the changes in the working tree.
+- **Uncommitted.** User was offered a commit and hasn't responded — commit these two files first thing (feat/fix commit, e.g. "fix: instant transcript status updates and delete confirmation modal").
+- Still not eyeball-tested end to end (carried over): upload → progress rings → tab away/back → instant ready flip → studio auto-open → delete flow with modal → waveform on a previously-failing MOV.
+- Production rollout still pending (see auto-memory `project_credits_rollout`): prod DB migrations 0003+0004, live-mode Stripe products/prices/webhook, Vercel prod env vars.
 
 ## Next session starts with
 
-1. Eyeball test the full flow with a real video (ideally a MOV that previously showed an empty waveform).
-2. Then production rollout: apply migrations 0003+0004 to prod DB, create live-mode Stripe products/prices/webhook, set Vercel prod env vars.
+1. Ask/confirm committing the working-tree changes (dashboard page + studio page), then push.
+2. Eyeball test the full flow with a real video, specifically verifying the new behaviors: return-to-tab instant status flip, crawling (not frozen) percent, studio auto-open when ready, delete confirmation modal incl. failure toast.
+3. Then the production rollout steps.
 
 ## Open questions
 
-1. Cost-per-second estimates (166 / 1217 micros) are still estimates — validate against real `credit_ledger.cost_micros` data post-launch.
-2. Whether/when to open signup to non-Skool members (carried over).
-3. AI Cut progress estimate calibration (40 words/s review rate) is a guess — tune after watching real runs.
+1. Cost-per-second estimates (166 / 1217 micros) still need validation against real `credit_ledger.cost_micros` post-launch.
+2. AI Cut progress calibration (40 words/s) still a guess.
+3. Whether/when to open signup to non-Skool members (carried over).
