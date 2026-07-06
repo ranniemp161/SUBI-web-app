@@ -2,6 +2,7 @@
   "name": "subi-ecosystem",
   "version": "1.0.0",
   "private": true,
+  "packageManager": "npm@10.8.1",
   "workspaces": [
     "apps/*",
     "packages/*"
