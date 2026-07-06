@@ -20,7 +20,8 @@ export default function CreditsPanel({
   credits: CreditsInfo | null;
 }) {
   const low = credits != null && credits.tokens < LOW_BALANCE_SECONDS;
-  const walletUrl = process.env.NEXT_PUBLIC_WALLET_URL || "http://localhost:3000";
+  const walletUrlBase = process.env.NEXT_PUBLIC_WALLET_URL || "http://localhost:3000";
+  const walletUrl = `${walletUrlBase.replace(/\/$/, '')}/dashboard`;
 
   return (
     <div className="relative flex items-center gap-2">
