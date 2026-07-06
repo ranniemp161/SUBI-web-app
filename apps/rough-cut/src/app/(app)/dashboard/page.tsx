@@ -183,7 +183,6 @@ export default function DashboardPage() {
   const [isLoadingProjects, setIsLoadingProjects] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
   const [credits, setCredits] = useState<CreditsInfo | null>(null);
-  const [buyOpen, setBuyOpen] = useState(false);
   // Per-project in-flight work, shown as a prominent centered percentage on
   // the card poster. Extraction/upload report real progress; the transcribing
   // phase has no server progress signal (Deepgram is a single async job), so
@@ -394,7 +393,7 @@ export default function DashboardPage() {
           id: toastId,
           description:
             error instanceof Error ? error.message : String(error),
-          action: { label: "Buy credits", onClick: () => setBuyOpen(true) },
+          action: { label: "Buy credits", onClick: () => window.open(process.env.NEXT_PUBLIC_WALLET_URL || "http://localhost:3000", "_blank") },
         });
         setProjects((prev) =>
           prev.map((p) =>
@@ -425,7 +424,7 @@ export default function DashboardPage() {
         description: `It needs ${formatDuration(durationMs)} of credit — you have ${formatDuration(
           credits.tokens * 1000
         )}.`,
-        action: { label: "Buy credits", onClick: () => setBuyOpen(true) },
+        action: { label: "Buy credits", onClick: () => window.open(process.env.NEXT_PUBLIC_WALLET_URL || "http://localhost:3000", "_blank") },
       });
       return true;
     },
@@ -767,7 +766,7 @@ export default function DashboardPage() {
           </p>
         </div>
         <div className="flex flex-col items-end gap-2">
-          <CreditsPanel credits={credits} buyOpen={buyOpen} onBuyOpenChange={setBuyOpen} />
+          <CreditsPanel credits={credits} />
           {!isLoadingProjects && projects.length > 0 && (
             <div className="flex items-center gap-2 text-xs">
               <span className="inline-flex items-center gap-1.5 rounded-full bg-foreground/[0.04] px-3 py-1.5 font-medium text-foreground/60 ring-1 ring-inset ring-foreground/10">

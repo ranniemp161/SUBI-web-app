@@ -1,0 +1,10 @@
+
+> wallet@0.1.0 lint
+> eslint
+
+
+C:\Users\USER\OneDrive\Desktop\SUBI-web-app\apps\wallet\src\app\dashboard\page.tsx
+  5:24  warning  'users' is defined but never used  @typescript-eslint/no-unused-vars
+
+✖ 1 problem (0 errors, 1 warning)
+
