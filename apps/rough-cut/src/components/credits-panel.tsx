@@ -1,6 +1,6 @@
 "use client";
 
-import { WALLET_URL, WALLET_DASHBOARD_URL } from "@/lib/env";
+import { WALLET_DASHBOARD_URL } from "@/lib/env";
 import { formatDuration } from "@/lib/utils";
 
 export interface CreditsInfo {

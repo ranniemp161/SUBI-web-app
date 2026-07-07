@@ -7,7 +7,7 @@ import { upload } from "@vercel/blob/client";
 import FilePicker, { type VideoMetadata } from "@/components/file-picker";
 import CreditsPanel, { type CreditsInfo } from "@/components/credits-panel";
 import ProgressRing from "@/components/progress-ring";
-import { WALLET_URL, WALLET_DASHBOARD_URL } from "@/lib/env";
+import { WALLET_DASHBOARD_URL } from "@/lib/env";
 import { formatDuration, formatDate } from "@/lib/utils";
 import { extractAudioForTranscription } from "@/lib/audio-extract";
 import { uploadPathnameForProject } from "@/lib/blob";

@@ -38,7 +38,7 @@ import VideoPlayer, {
 } from "@/components/video-player";
 import TranscriptPanel from "@/components/transcript-panel";
 import TimelineBar, { type TimelineHandle } from "@/components/timeline-bar";
-import { WALLET_URL, WALLET_DASHBOARD_URL } from "@/lib/env";
+import { WALLET_DASHBOARD_URL } from "@/lib/env";
 import { formatDuration } from "@/lib/utils";
 import {
   isExportSupported,
@@ -737,7 +737,7 @@ export default function EditorPage() {
       aiCutIdempotencyKey.current = null;
       setAiBusy(false);
     }
-  }, [edl, aiBusy, id, words, applyEdl, undo, router]);
+  }, [edl, aiBusy, id, words, applyEdl, undo]);
   // Signal the in-flight export to stop. Only reachable once a handle exists
   // (the Cancel control is shown only in "exporting"/"cancelling"); the guard
   // is belt-and-suspenders. The worker throws ExportError("cancelled"), which

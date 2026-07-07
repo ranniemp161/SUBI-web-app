@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { rateLimit } from './rate-limit';
-import { Ratelimit } from '@upstash/ratelimit';
 import { Redis } from '@upstash/redis';
 
 vi.mock('@upstash/redis', () => ({

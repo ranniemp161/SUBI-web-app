@@ -22,7 +22,7 @@ function getRatelimiter(limit: number, windowSeconds: number): Ratelimit | null 
   const cacheKey = `${limit}:${windowSeconds}`;
   if (!ratelimiters.has(cacheKey)) {
     // Ratelimit expects the duration formatted as `${number} s`
-    const window = `${windowSeconds} s` as any;
+    const window = `${windowSeconds} s` as const;
     ratelimiters.set(
       cacheKey,
       new Ratelimit({

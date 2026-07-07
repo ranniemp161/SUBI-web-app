@@ -8,7 +8,7 @@ const state = vi.hoisted(() => ({
   tokens: 0,
   mockPayloadProjectId: "proj-1" as string | undefined,
   mockPathname: "projects/proj-1/audio" as string,
-  onBeforeGenerateTokenResult: null as any,
+  onBeforeGenerateTokenResult: null as { maximumSizeInBytes?: number; access?: string; addRandomSuffix?: boolean; allowedContentTypes?: string[]; tokenPayload?: string } | null,
 }));
 
 vi.mock("@clerk/nextjs/server", () => ({

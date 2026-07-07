@@ -3,10 +3,10 @@ import proxyMiddleware, { config } from './proxy';
 import { NextResponse } from 'next/server';
 
 const { getMiddlewareHandler, setMiddlewareHandler } = vi.hoisted(() => {
-  let handler: any;
+  let handler: Function;
   return {
     getMiddlewareHandler: () => handler,
-    setMiddlewareHandler: (h: any) => { handler = h; },
+    setMiddlewareHandler: (h: Function) => { handler = h; },
   };
 });
 
@@ -16,7 +16,7 @@ vi.mock('@clerk/nextjs/server', () => {
       setMiddlewareHandler(handler);
       return handler;
     }),
-    createRouteMatcher: vi.fn((routes) => {
+    createRouteMatcher: vi.fn(() => {
       return vi.fn((req) => {
         const path = req.nextUrl.pathname;
         if (path === '/' || path.startsWith('/sign-in') || path.startsWith('/sign-up') || path === '/api/auth/verify-code' || path === '/api/webhooks/clerk' || path === '/api/transcribe/callback') {
