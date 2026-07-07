@@ -1,6 +1,5 @@
-import { sql } from "drizzle-orm";
-import { db } from "@repo/db";
-import { rateLimits } from "@repo/db/schema";
+import { Redis } from "@upstash/redis";
+import { Ratelimit } from "@upstash/ratelimit";
 
 export interface RateLimitResult {
   allowed: boolean;
@@ -9,13 +8,37 @@ export interface RateLimitResult {
   limit: number;
 }
 
+// Cache ratelimiters by their config
+const ratelimiters = new Map<string, Ratelimit>();
+
+function getRatelimiter(limit: number, windowSeconds: number): Ratelimit | null {
+  if (!process.env.KV_REST_API_URL || !process.env.KV_REST_API_TOKEN) {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("KV_REST_API_URL and KV_REST_API_TOKEN must be set in production.");
+    }
+    return null;
+  }
+
+  const cacheKey = `${limit}:${windowSeconds}`;
+  if (!ratelimiters.has(cacheKey)) {
+    // Ratelimit expects the duration formatted as `${number} s`
+    const window = `${windowSeconds} s` as any;
+    ratelimiters.set(
+      cacheKey,
+      new Ratelimit({
+        redis: new Redis({
+          url: process.env.KV_REST_API_URL,
+          token: process.env.KV_REST_API_TOKEN,
+        }),
+        limiter: Ratelimit.fixedWindow(limit, window),
+      })
+    );
+  }
+  return ratelimiters.get(cacheKey)!;
+}
+
 /**
- * Fixed-window rate limiter backed by a single Postgres row per key.
- *
- * The whole check is one atomic upsert: insert the key at count 1, or on
- * conflict either reset it (if the stored window has elapsed) or increment it.
- * Because the read-modify-write happens inside one statement, concurrent
- * requests can't race past the limit. Returned count > limit ⇒ blocked.
+ * Fixed-window rate limiter backed by Vercel KV (Upstash Redis).
  *
  * `key` should namespace the bucket and the subject, e.g. `transcribe:<userId>`.
  */
@@ -24,21 +47,24 @@ export async function rateLimit(
   limit: number,
   windowSeconds: number
 ): Promise<RateLimitResult> {
-  // True when the stored window has already elapsed and the counter should reset.
-  const expired = sql`${rateLimits.windowStart} < now() - (interval '1 second' * ${windowSeconds})`;
+  const limiter = getRatelimiter(limit, windowSeconds);
 
-  const [row] = await db
-    .insert(rateLimits)
-    .values({ key, count: 1, windowStart: sql`now()` })
-    .onConflictDoUpdate({
-      target: rateLimits.key,
-      set: {
-        count: sql`case when ${expired} then 1 else ${rateLimits.count} + 1 end`,
-        windowStart: sql`case when ${expired} then now() else ${rateLimits.windowStart} end`,
-      },
-    })
-    .returning({ count: rateLimits.count });
+  // If KV is not configured (e.g. local dev without env vars), allow the request.
+  if (!limiter) {
+    console.warn("KV_REST_API_URL is not set. Rate limiting is disabled.");
+    return { allowed: true, remaining: limit, limit };
+  }
 
-  const count = row?.count ?? 1;
-  return { allowed: count <= limit, remaining: Math.max(0, limit - count), limit };
+  try {
+    const { success, remaining } = await limiter.limit(key);
+    
+    return {
+      allowed: success,
+      remaining,
+      limit,
+    };
+  } catch (error) {
+    console.error("Redis rate limit failed, failing open:", error);
+    return { allowed: true, remaining: limit, limit };
+  }
 }

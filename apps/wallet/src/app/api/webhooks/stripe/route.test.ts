@@ -164,6 +164,14 @@ describe("POST /api/webhooks/stripe — checkout.session.completed", () => {
     ]);
   });
 
+  it("200 + Sentry report on negative or zero tokens", async () => {
+    completedSession({ metadata: { userId: "db-user-1", tokens: "-50" } });
+    const res = await POST(req());
+    expect(res.status).toBe(200);
+    expect(depositPurchase).not.toHaveBeenCalled();
+    expect(state.reported).toHaveLength(1);
+  });
+
   it("500 on a transient deposit failure so Stripe retries (idempotent)", async () => {
     completedSession();
     state.depositError = true;

@@ -66,18 +66,23 @@ export async function POST(request: Request) {
 
   if (event.type === "checkout.session.completed") {
     const session = event.data.object;
+    console.log(`[Stripe Webhook] Received checkout.session.completed for session ${session.id}. Payment status: ${session.payment_status}`);
 
     // Card payments are paid at completion; async methods (bank debits etc.)
     // would arrive unpaid here and complete via async_payment_succeeded,
     // which we deliberately don't sell through — card-only scope.
     if (session.payment_status !== "paid") {
+      console.log(`[Stripe Webhook] Ignored because payment_status is '${session.payment_status}', not 'paid'.`);
       return NextResponse.json({ received: true });
     }
 
     const userId = session.metadata?.userId ?? session.client_reference_id;
     const tokens = Number(session.metadata?.tokens);
 
+    console.log(`[Stripe Webhook] Parsed metadata - userId: ${userId}, tokens: ${tokens}`);
+
     if (!userId || !Number.isInteger(tokens) || tokens <= 0) {
+      console.log(`[Stripe Webhook] ERROR: Missing or malformed metadata. Ignored.`);
       reportError(
         "Stripe checkout.session.completed with missing/malformed metadata",
         new Error("unusable checkout session metadata"),
@@ -87,11 +92,15 @@ export async function POST(request: Request) {
     }
 
     try {
+      console.log(`[Stripe Webhook] Attempting depositPurchase for user ${userId}, tokens: ${tokens}`);
       const deposited = await depositPurchase(userId, tokens, session.id);
       if (!deposited) {
-        console.warn(`Duplicate Stripe webhook delivery for session ${session.id} — ignored.`);
+        console.warn(`[Stripe Webhook] Duplicate Stripe webhook delivery for session ${session.id} — ignored.`);
+      } else {
+        console.log(`[Stripe Webhook] SUCCESS: depositPurchase completed for session ${session.id}`);
       }
     } catch (error) {
+      console.error(`[Stripe Webhook] ERROR during depositPurchase:`, error);
       // A transient DB failure IS worth a Stripe retry — the deposit is
       // idempotent, so the retry can only succeed once.
       reportError("Failed to credit Stripe purchase", error, {
@@ -102,6 +111,8 @@ export async function POST(request: Request) {
         { status: 500 }
       );
     }
+  } else {
+    console.log(`[Stripe Webhook] Ignored unhandled event type: ${event.type}`);
   }
 
   return NextResponse.json({ received: true });

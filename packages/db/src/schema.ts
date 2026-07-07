@@ -155,9 +155,9 @@ export const accessCodes = pgTable("access_codes", {
 });
 
 /**
- * Fixed-window rate-limit counters, one row per (bucket + user) key. Kept in
- * Postgres rather than an external store so it needs no extra infra and works
- * regardless of how many app instances run. See `lib/rate-limit.ts`.
+ * @deprecated Slated for removal after the Vercel KV migration finishes rolling out.
+ * Old containers may still write here during the rolling deploy, so this table
+ * MUST remain in the database schema until the next PR.
  */
 export const rateLimits = pgTable("rate_limits", {
   key: text("key").primaryKey(),

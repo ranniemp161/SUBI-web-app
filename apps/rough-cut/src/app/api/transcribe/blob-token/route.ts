@@ -75,11 +75,22 @@ export async function POST(request: Request): Promise<NextResponse> {
           throw new Error("Unexpected upload pathname.");
         }
 
+        // Dynamically cap the upload size based on available credits.
+        // 200KB per token (second) covers even uncompressed 16-bit 48kHz audio.
+        // This prevents an attacker from spoofing durationMs=0 to bypass the 
+        // soft credit check and uploading a massive 2GB file.
+        const MAX_BYTES_PER_TOKEN_SECOND = 200_000;
+        // Provide a 1MB base floor so very small uploads or rounding doesn't fail.
+        const maxAllowedBytes = Math.min(
+          DEEPGRAM_MAX_UPLOAD_BYTES,
+          Math.max(1_000_000, user.tokens * MAX_BYTES_PER_TOKEN_SECOND)
+        );
+
         return {
           access: "public",
           addRandomSuffix: true,
           allowedContentTypes: ["audio/*"],
-          maximumSizeInBytes: DEEPGRAM_MAX_UPLOAD_BYTES,
+          maximumSizeInBytes: maxAllowedBytes,
           tokenPayload: clientPayload,
         };
       },

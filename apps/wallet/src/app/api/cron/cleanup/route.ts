@@ -1,7 +1,4 @@
 import { NextResponse } from "next/server";
-import { db } from "@repo/db";
-import { rateLimits } from "@repo/db/schema";
-import { sql } from "drizzle-orm";
 import { reportError } from "@/lib/observability";
 
 // Allow a generous timeout for the DB deletion.
@@ -18,15 +15,11 @@ export async function GET(request: Request) {
   }
 
   try {
-    // Delete rate limit buckets that are older than 24 hours.
-    // This prevents the table from growing unboundedly under load.
-    await db
-      .delete(rateLimits)
-      .where(sql`${rateLimits.windowStart} < now() - interval '24 hours'`);
-
-    return NextResponse.json({ success: true });
+    // Upstash Redis (Vercel KV) handles rate limit TTLs natively,
+    // so manual cron cleanup is no longer required here.
+    return NextResponse.json({ success: true, message: "No cleanup required" });
   } catch (error) {
-    reportError("Failed to clean up rate limits", error);
+    reportError("Failed to run cleanup cron", error);
     return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
   }
 }
