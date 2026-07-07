@@ -73,7 +73,7 @@ describe('proxy middleware', () => {
 
     expect(auth).toHaveBeenCalled();
     expect(response).toBeInstanceOf(NextResponse);
-    expect(response.status).toBe(401);
+    expect((response as NextResponse).status).toBe(401);
   });
 
   it('allows protected routes when authenticated', async () => {
