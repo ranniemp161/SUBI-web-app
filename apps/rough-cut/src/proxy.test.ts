@@ -3,10 +3,10 @@ import proxyMiddleware, { config } from './proxy';
 import { NextResponse } from 'next/server';
 
 const { getMiddlewareHandler, setMiddlewareHandler } = vi.hoisted(() => {
-  let handler: Function;
+  let handler: (...args: unknown[]) => unknown;
   return {
     getMiddlewareHandler: () => handler,
-    setMiddlewareHandler: (h: Function) => { handler = h; },
+    setMiddlewareHandler: (h: (...args: unknown[]) => unknown) => { handler = h; },
   };
 });
 
