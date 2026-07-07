@@ -1,1 +1,1 @@
-DROP TABLE "rate_limits" CASCADE;
+DROP TABLE IF EXISTS "rate_limits" CASCADE;

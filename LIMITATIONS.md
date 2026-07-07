@@ -56,7 +56,8 @@ pass. These are known and mostly intentional — not bugs. Grouped by area.
 
 ## Rate limits
 
-Per-user fixed-window limits (Postgres-backed, `src/lib/rate-limit.ts`):
+Per-user fixed-window limits (Upstash Redis via Vercel KV, `src/lib/rate-limit.ts`;
+needs `KV_REST_API_URL` / `KV_REST_API_TOKEN`, which it requires in production):
 
 - **Project creation:** 60 / hour.
 - **Transcription starts:** 30 / hour.
@@ -69,7 +70,7 @@ IP-based via `src/lib/ip-rate-limit.ts`):
 
 - **Transcription callback** (`/api/transcribe/callback`): 60 / 10 min.
   Deepgram's servers call this; the per-project random token (checked after
-  the rate limit) is the real gate — this is a cost/DB-read cap, not the
+  the rate limit) is the real gate — this is a cost/read cap, not the
   primary defense.
 - **Access-code verification** (`/api/auth/verify-code`): 10 / 5 min.
 - **Clerk webhook** (`/api/webhooks/clerk`): 120 / 1 min. Verified by a svix
@@ -97,8 +98,10 @@ To enable:
 
 ### Database migrations
 
-Schema is synced with `drizzle-kit` (`npm run db:push`). For changes that
-convert a column with existing data (e.g. the `transcript_status` text→enum
-conversion), prefer the reviewed, in-place scripts under `drizzle/manual/` over
-`push`, which may offer a data-losing drop/recreate. Apply the same changes to
-each environment's database (dev and prod branches are separate).
+Schema changes reach a database through **versioned migrations** run from
+`packages/db` (`npm run db:generate` → review → `npm run db:migrate`). `db:push`
+is a **dev-only** accelerator for throwaway branches — never prod, since its
+schema-diff can offer a data-losing drop/recreate on type conversions. Dev and
+prod are separate Neon branches; migrate each separately, dev first. Full
+workflow, the first-deploy baseline, and history of retired manual scripts:
+[`packages/db/MIGRATIONS.md`](packages/db/MIGRATIONS.md).
