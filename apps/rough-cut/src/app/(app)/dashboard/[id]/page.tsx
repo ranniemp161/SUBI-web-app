@@ -675,19 +675,30 @@ export default function EditorPage() {
   // like any other cut. Also the retry path when the automatic pass at
   // transcription time failed, and the only path for older projects.
   const [aiBusy, setAiBusy] = useState(false);
+  const aiCutIdempotencyKey = useRef<string | null>(null);
+
   const runAiCut = useCallback(async () => {
     if (!edl || aiBusy) return;
     setAiBusy(true);
+    
+    if (!aiCutIdempotencyKey.current) {
+      aiCutIdempotencyKey.current = crypto.randomUUID();
+    }
+    const currentKey = aiCutIdempotencyKey.current;
+
     toast.loading("AI is reviewing your transcript…", { id: "ai-cut" });
     try {
-      const response = await fetch(`/api/projects/${id}/ai-cut`, { method: "POST" });
+      const response = await fetch(`/api/projects/${id}/ai-cut`, {
+        method: "POST",
+        headers: { "Idempotency-Key": currentKey },
+      });
       const data = await response.json().catch(() => null);
       if (!response.ok) {
         if (response.status === 402) {
           toast.error("Not enough credits", {
             id: "ai-cut",
             description: "This AI pass needs more credit than you have left.",
-            action: { label: "Buy credits", onClick: () => router.push("/dashboard") },
+            action: { label: "Buy credits", onClick: () => window.open(`${(process.env.NEXT_PUBLIC_WALLET_URL || "http://localhost:3001").replace(/\/$/, '')}/dashboard`, "_blank") },
           });
           return;
         }
@@ -722,6 +733,7 @@ export default function EditorPage() {
         description: "Check your connection and try again.",
       });
     } finally {
+      aiCutIdempotencyKey.current = null;
       setAiBusy(false);
     }
   }, [edl, aiBusy, id, words, applyEdl, undo, router]);

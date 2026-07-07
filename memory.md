@@ -1,41 +1,35 @@
-# Memory — Splitting the Wallet App & DB Tokens Migration
+# Memory — Wallet App Hardening & Security Fixes
 
-Last updated: 2026-07-06 (evening)
+Last updated: 2026-07-07
 
 ## What was built
 
-- **Standalone Wallet App (`apps/wallet`)**: Scaffolding complete; core dashboard, Stripe checkout logic (with `FormData` support), and token calculation logic implemented and verified.
-- **Centralized Database (`packages/db`)**: Extracted all database definitions to a shared Drizzle package `packages/db`.
-- **Database Schema Currency Rename**: Renamed the base currency representation across the schema from `credit_seconds` to a generalized `tokens` unit.
-- **Production Database Fix**: Safely migrated the production Neon database. `drizzle-kit push` interactive prompts blocked column renames in CI; executed raw SQL migration scripts (`ALTER TABLE ... RENAME COLUMN ...`) on production to preserve data.
-- **Rough Cut Refactor**: Refactored `apps/rough-cut` (25+ files) to pull from the shared `@repo/db` package and renamed all instances of `credit_seconds` to `tokens`. 221/221 unit tests passing.
+- Fixed an AI Cut double-charging race condition by implementing an atomic idempotency guard. Updated `apps/rough-cut/src/app/api/projects/[id]/ai-cut/route.ts` to check an `Idempotency-Key` header against the Postgres `rate_limits` table.
+- Updated the frontend `runAiCut` flow in `apps/rough-cut/src/app/(app)/dashboard/[id]/page.tsx` to safely generate and pass a UUID as the `Idempotency-Key` header, preventing duplicate requests on double-clicks.
+- Created a serverless cron endpoint at `apps/wallet/src/app/api/cron/cleanup/route.ts` to `DELETE` expired rate limit buckets, fixing unbounded database growth. Configured a `vercel.json` cron to trigger this daily.
+- Secured the Stripe checkout flow in `apps/wallet/src/app/api/billing/checkout/route.ts` by strictly enforcing `process.env.PUBLIC_APP_URL` instead of relying on the incoming request `Host` header.
 
 ## Decisions made
 
-- The Wallet app is an entirely isolated app running on port 3000 locally, delegating `rough-cut` to 3001.
-- `apps/wallet` manages Stripe bundle logic and the UI for buying tokens. `apps/rough-cut` solely consumes the tokens balance via `@repo/db` when making transcriptions/ai cuts.
-- Used a backward-compatible fix in Stripe `getBundles()` logic (`tokensFromPrice`) to gracefully parse the legacy `credit_seconds` metadata from older test-mode Stripe products to prevent throwing "misconfigured bundle price".
+- Chose to use the existing `rate_limits` table structure as a 24-hour distributed lock to enforce API idempotency for AI cut generation, avoiding the need for a Drizzle database migration.
+- Decided to fail loudly (returning a 500 error and reporting to Sentry) if `PUBLIC_APP_URL` is unconfigured in production, explicitly averting host header injection phishing risks.
 
 ## Problems solved
 
-- **Database schema drift error**: Solved a 500 error on the dashboard caused by `users` column drift (code sought `tokens`, DB had `credit_seconds`) by safely syncing production without losing data.
-- **Stripe fallback parsing**: Resolved a runtime crash in Wallet by adding fallback logic to correctly parse existing products lacking `tokens` metadata.
-- **Refactoring cross-wiring**: Automated AST/regex replacements fixed `@/db` paths to `@repo/db` within `apps/rough-cut` alongside changing variable names to `tokens`, fixing all TS errors locally.
+- **Concurrency Race Condition**: Eliminated the possibility of the `chargeAiCut` CTE running twice concurrently for the same frontend click event.
+- **Postgres Table Bloat**: Ensured the IP-based rate limiting system won't exhaust DB storage under a distributed botnet attack.
 
 ## Current state
 
-- The Wallet app is working locally and running on `http://localhost:3000`.
-- The Rough Cut app is refactored, type-checked, and passes all 221 unit tests. Currently running on `http://localhost:3001`.
-- Production database safely migrated.
-- Everything is in the working tree / ready for a `git commit`.
+- Hardening fixes are fully implemented, uncommitted in the working tree.
+- TypeScript compiler passes cleanly across the workspace (`turbo run typecheck`).
+- The Wallet app is now significantly more robust against production load and adversarial input.
 
 ## Next session starts with
 
-1. Confirm and commit the working-tree changes ("feat: split wallet app and migrate db to tokens"), then push.
-2. Verify end-to-end token purchasing via the local Wallet app using test Stripe cards.
-3. Test that transcribing a video in the Rough-Cut app correctly reads and decrements the new tokens balance.
+- Commit the hardening fixes to the repository.
+- Verify the fixes against any upcoming integration tests or continue expanding Wallet app features.
 
 ## Open questions
 
-1. Should the "Buy credits" modal that still exists inside the Rough-Cut app be removed or modified to deep-link directly to the separated Wallet app?
-2. Are production Stripe environment variables perfectly mirrored between the separated apps?
+- None at the moment.

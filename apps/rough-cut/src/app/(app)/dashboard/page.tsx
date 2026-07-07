@@ -393,7 +393,7 @@ export default function DashboardPage() {
           id: toastId,
           description:
             error instanceof Error ? error.message : String(error),
-          action: { label: "Buy credits", onClick: () => window.open(process.env.NEXT_PUBLIC_WALLET_URL || "http://localhost:3000", "_blank") },
+          action: { label: "Buy credits", onClick: () => window.open(`${(process.env.NEXT_PUBLIC_WALLET_URL || "http://localhost:3001").replace(/\/$/, '')}/dashboard`, "_blank") },
         });
         setProjects((prev) =>
           prev.map((p) =>
@@ -424,7 +424,7 @@ export default function DashboardPage() {
         description: `It needs ${formatDuration(durationMs)} of credit — you have ${formatDuration(
           credits.tokens * 1000
         )}.`,
-        action: { label: "Buy credits", onClick: () => window.open(process.env.NEXT_PUBLIC_WALLET_URL || "http://localhost:3000", "_blank") },
+        action: { label: "Buy credits", onClick: () => window.open(`${(process.env.NEXT_PUBLIC_WALLET_URL || "http://localhost:3001").replace(/\/$/, '')}/dashboard`, "_blank") },
       });
       return true;
     },

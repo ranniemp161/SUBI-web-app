@@ -27,9 +27,13 @@ export default function RootLayout({
     <ClerkProvider>
       <html
         lang="en"
+        suppressHydrationWarning
         className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
       >
-        <body className="min-h-full flex flex-col bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100">
+        <body
+          suppressHydrationWarning
+          className="min-h-full flex flex-col bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100"
+        >
           <header className="border-b dark:border-zinc-800 bg-white dark:bg-zinc-900">
             <div className="max-w-4xl mx-auto px-8 h-16 flex items-center justify-between">
               <span className="font-bold text-xl tracking-tight">SUBI Wallet</span>

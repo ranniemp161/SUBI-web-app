@@ -80,8 +80,14 @@ export async function POST(request: Request) {
       );
     }
 
-    // Same origin convention as the deepgram route's callback URL.
-    const origin = (process.env.PUBLIC_APP_URL ?? new URL(request.url).origin).replace(/\/+$/, "");
+    if (!process.env.PUBLIC_APP_URL) {
+      reportError("PUBLIC_APP_URL is not set in the environment", new Error("Missing PUBLIC_APP_URL"));
+      return NextResponse.json(
+        { error: "Server configuration error." },
+        { status: 500 }
+      );
+    }
+    const origin = process.env.PUBLIC_APP_URL.replace(/\/+$/, "");
 
     const session = await stripe.checkout.sessions.create({
       mode: "payment",

@@ -53,6 +53,18 @@ export async function POST(
     );
   }
 
+  const idempotencyKey = _request.headers.get("Idempotency-Key");
+  if (idempotencyKey) {
+    // Treat the rate limit bucket as a distributed lock/idempotency guard (24 hours)
+    const idempotency = await rateLimit(`idempotency:${idempotencyKey}`, 1, 86400);
+    if (!idempotency.allowed) {
+      return NextResponse.json(
+        { error: "This AI pass was already requested." },
+        { status: 409 }
+      );
+    }
+  }
+
   try {
     const { id } = await params;
     const project = await getOwnedProject(id, clerkId);
