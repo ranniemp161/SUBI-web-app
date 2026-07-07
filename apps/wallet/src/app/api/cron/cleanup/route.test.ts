@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { GET } from "./route";
-import { reportError } from "@/lib/observability";
+
 
 vi.mock("@/lib/observability", () => ({
   reportError: vi.fn(),

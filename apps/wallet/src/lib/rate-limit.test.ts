@@ -21,7 +21,7 @@ vi.mock("@upstash/ratelimit", () => {
       }),
     };
   });
-  (Ratelimit as any).fixedWindow = vi.fn(() => "fixed-window-limiter");
+  (Ratelimit as typeof Ratelimit).fixedWindow = vi.fn(() => "fixed-window-limiter");
   return { Ratelimit };
 });
 

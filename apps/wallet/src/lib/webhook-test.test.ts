@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { depositPurchase } from "./credits";
 import { db } from "@repo/db";
 import { users, creditLedger } from "@repo/db/schema";
