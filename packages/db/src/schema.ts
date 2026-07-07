@@ -154,19 +154,6 @@ export const accessCodes = pgTable("access_codes", {
   revokedAt: timestamp("revoked_at", { withTimezone: true }),
 });
 
-/**
- * @deprecated Slated for removal after the Vercel KV migration finishes rolling out.
- * Old containers may still write here during the rolling deploy, so this table
- * MUST remain in the database schema until the next PR.
- */
-export const rateLimits = pgTable("rate_limits", {
-  key: text("key").primaryKey(),
-  count: integer("count").notNull().default(0),
-  windowStart: timestamp("window_start", { withTimezone: true })
-    .defaultNow()
-    .notNull(),
-});
-
 /** TypeScript types inferred from the schema for use across the app. */
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
