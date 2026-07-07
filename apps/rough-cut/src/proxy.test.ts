@@ -55,8 +55,7 @@ describe('proxy middleware', () => {
 
   it('protects non-public non-api routes by redirecting', async () => {
     const protect = vi.fn();
-    const auth = vi.fn().mockResolvedValue({});
-    auth.protect = protect;
+    const auth = Object.assign(vi.fn().mockResolvedValue({}), { protect });
 
     const request = { nextUrl: { pathname: '/dashboard' } };
 
@@ -79,8 +78,7 @@ describe('proxy middleware', () => {
 
   it('allows protected routes when authenticated', async () => {
     const protect = vi.fn();
-    const auth = vi.fn().mockResolvedValue({ userId: 'user_123' });
-    auth.protect = protect;
+    const auth = Object.assign(vi.fn().mockResolvedValue({ userId: 'user_123' }), { protect });
 
     const request = { nextUrl: { pathname: '/api/protected' } };
 

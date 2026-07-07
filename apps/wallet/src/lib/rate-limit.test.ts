@@ -10,18 +10,20 @@ const state = vi.hoisted(() => ({
 }));
 
 vi.mock("@upstash/ratelimit", () => {
-  const Ratelimit = vi.fn(function() {
-    return {
-      limit: vi.fn(async () => {
-        if (state.error) throw state.error;
-        return {
-          success: state.success,
-          remaining: state.remaining,
-        };
-      }),
-    };
-  });
-  (Ratelimit as typeof Ratelimit).fixedWindow = vi.fn(() => "fixed-window-limiter");
+  const Ratelimit = Object.assign(
+    vi.fn(function() {
+      return {
+        limit: vi.fn(async () => {
+          if (state.error) throw state.error;
+          return {
+            success: state.success,
+            remaining: state.remaining,
+          };
+        }),
+      };
+    }),
+    { fixedWindow: vi.fn(() => "fixed-window-limiter") }
+  );
   return { Ratelimit };
 });
 
@@ -96,7 +98,7 @@ describe("rateLimit", () => {
   });
 
   it("throws an error in production if KV_REST_API_URL or KV_REST_API_TOKEN is missing", async () => {
-    process.env.NODE_ENV = "production";
+    vi.stubEnv("NODE_ENV", "production");
     delete process.env.KV_REST_API_URL;
     
     await expect(rateLimit("prod_key", 100, 60)).rejects.toThrow(
