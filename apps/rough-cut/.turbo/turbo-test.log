@@ -1,0 +1,65 @@
+
+> @repo/rough-cut@0.1.0 test
+> vitest run
+
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.9 [39m[90mC:/Users/USER/OneDrive/Desktop/SUBI-web-app/apps/rough-cut[39m
+
+ [32m✓[39m src/lib/blob.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 44[2mms[22m[39m
+ [32m✓[39m src/lib/edl.test.ts [2m([22m[2m44 tests[22m[2m)[22m[32m 43[2mms[22m[39m
+[90mstderr[2m | src/app/api/cron/blob-sweep/route.test.ts[2m > [22m[2mGET /api/cron/blob-sweep[2m > [22m[2m500 when CRON_SECRET isn't configured (sweep disabled, nothing listed)
+[22m[39mCRON_SECRET is not set — blob sweep is disabled.
+
+[90mstdout[2m | src/app/api/cron/blob-sweep/route.test.ts[2m > [22m[2mGET /api/cron/blob-sweep[2m > [22m[2mdeletes only blobs older than the orphan threshold
+[22m[39m[blob-sweep] scanned=2 deleted=1 failed=0
+
+[90mstdout[2m | src/app/api/cron/blob-sweep/route.test.ts[2m > [22m[2mGET /api/cron/blob-sweep[2m > [22m[2mfollows pagination cursors across pages
+[22m[39m[blob-sweep] scanned=2 deleted=2 failed=0
+
+[90mstderr[2m | src/app/api/webhooks/clerk/route.test.ts[2m > [22m[2mPOST /api/webhooks/clerk — request guards[2m > [22m[2m500 when CLERK_WEBHOOK_SECRET is unset (never touches the rate limiter)
+[22m[39mCLERK_WEBHOOK_SECRET environment variable is not set.
+
+ [32m✓[39m src/app/api/cron/blob-sweep/route.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 50[2mms[22m[39m
+[90mstderr[2m | src/app/api/webhooks/clerk/route.test.ts[2m > [22m[2mPOST /api/webhooks/clerk — user.created handling[2m > [22m[2mdeletes the Clerk user when provisioning rejects the code
+[22m[39mDeleted user user_1: invalid or missing access code.
+
+[90mstderr[2m | src/app/api/webhooks/clerk/route.test.ts[2m > [22m[2mPOST /api/webhooks/clerk — user.created handling[2m > [22m[2mdeletes the Clerk user when no code was provided at all
+[22m[39mDeleted user user_3: invalid or missing access code.
+
+ [32m✓[39m src/app/api/webhooks/clerk/route.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 38[2mms[22m[39m
+ [32m✓[39m src/app/api/auth/verify-code/route.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 37[2mms[22m[39m
+ [32m✓[39m src/app/api/transcribe/blob-cleanup/route.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 33[2mms[22m[39m
+ [32m✓[39m src/lib/repetition-detection.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 20[2mms[22m[39m
+ [32m✓[39m src/lib/credits.test.ts [2m([22m[2m27 tests[22m[2m)[22m[32m 47[2mms[22m[39m
+ [32m✓[39m src/lib/export/plan.test.ts [2m([22m[2m12 tests[22m[2m)[22m[32m 16[2mms[22m[39m
+ [32m✓[39m src/lib/retake-detection.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 15[2mms[22m[39m
+ [32m✓[39m src/lib/ai-cuts.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 18[2mms[22m[39m
+[90mstderr[2m | src/app/api/transcribe/deepgram/route.test.ts[2m > [22m[2mPOST /api/transcribe/deepgram — sync mode (localhost)[2m > [22m[2mmarks failed, refunds the hold, and deletes the blob when Deepgram rejects
+[22m[39mDeepgram rejected the transcription request: {"err_msg":"corrupt audio"}
+
+ [32m✓[39m src/app/api/transcribe/deepgram/route.test.ts [2m([22m[2m15 tests[22m[2m)[22m[32m 66[2mms[22m[39m
+ [32m✓[39m src/app/api/transcribe/callback/route.test.ts [2m([22m[2m18 tests[22m[2m)[22m[32m 52[2mms[22m[39m
+ [32m✓[39m src/app/api/projects/[id]/ai-cut/route.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 36[2mms[22m[39m
+[90mstderr[2m | src/lib/audio-extract.test.ts[2m > [22m[2mextractAudioForTranscription (real files)[2m > [22m[2mreports unsupported for a non-media file instead of throwing
+[22m[39mAudio extraction failed — falling back to full-file upload: UnsupportedInputFormatError: Input has an unsupported or unrecognizable format.
+    at file:///C:/Users/USER/OneDrive/Desktop/SUBI-web-app/node_modules/[4mmediabunny[24m/dist/modules/src/input.js:154:19
+[90m    at processTicksAndRejections (node:internal/process/task_queues:105:5)[39m
+    at Input._getTrackBackings (file:///C:/Users/USER/OneDrive/Desktop/SUBI-web-app/node_modules/[4mmediabunny[24m/dist/modules/src/input.js:313:25)
+    at Input.getTracks (file:///C:/Users/USER/OneDrive/Desktop/SUBI-web-app/node_modules/[4mmediabunny[24m/dist/modules/src/input.js:255:26)
+    at Input.getVideoTracks (file:///C:/Users/USER/OneDrive/Desktop/SUBI-web-app/node_modules/[4mmediabunny[24m/dist/modules/src/input.js:262:24)
+    at Input.getPrimaryVideoTrack (file:///C:/Users/USER/OneDrive/Desktop/SUBI-web-app/node_modules/[4mmediabunny[24m/dist/modules/src/input.js:289:24)
+    at Input.getPrimaryAudioTrack (file:///C:/Users/USER/OneDrive/Desktop/SUBI-web-app/node_modules/[4mmediabunny[24m/dist/modules/src/input.js:300:35)
+    at extractAudioForTranscription (C:/Users/USER/OneDrive/Desktop/SUBI-web-app/apps/rough-cut/src/lib/audio-extract.ts:54:24)
+    at C:/Users/USER/OneDrive/Desktop/SUBI-web-app/apps/rough-cut/src/lib/audio-extract.test.ts:80:13
+    at file:///C:/Users/USER/OneDrive/Desktop/SUBI-web-app/node_modules/[4m@vitest/runner[24m/dist/chunk-artifact.js:1903:20
+
+ [32m✓[39m src/lib/audio-extract.test.ts [2m([22m[2m4 tests[22m[2m)[22m[33m 1343[2mms[22m[39m
+ [32m✓[39m src/app/api/credits/route.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 14[2mms[22m[39m
+ [32m✓[39m src/lib/access-codes.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 9[2mms[22m[39m
+ [32m✓[39m src/app/api/projects/[id]/route.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 13[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m18 passed[39m[22m[90m (18)[39m
+[2m      Tests [22m [1m[32m201 passed[39m[22m[90m (201)[39m
+[2m   Start at [22m 19:34:47
+[2m   Duration [22m 2.27s[2m (transform 2.65s, setup 0ms, import 10.48s, tests 1.89s, environment 5ms)[22m
+

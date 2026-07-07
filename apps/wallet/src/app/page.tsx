@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
+import { ROUGH_CUT_URL } from "@/lib/env";
 
 export default function Home() {
-  redirect(process.env.NEXT_PUBLIC_ROUGH_CUT_URL || "http://localhost:3001");
+  redirect(ROUGH_CUT_URL);
 }

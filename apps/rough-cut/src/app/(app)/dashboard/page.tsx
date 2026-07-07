@@ -7,6 +7,7 @@ import { upload } from "@vercel/blob/client";
 import FilePicker, { type VideoMetadata } from "@/components/file-picker";
 import CreditsPanel, { type CreditsInfo } from "@/components/credits-panel";
 import ProgressRing from "@/components/progress-ring";
+import { WALLET_URL, WALLET_DASHBOARD_URL } from "@/lib/env";
 import { formatDuration, formatDate } from "@/lib/utils";
 import { extractAudioForTranscription } from "@/lib/audio-extract";
 import { uploadPathnameForProject } from "@/lib/blob";
@@ -393,7 +394,7 @@ export default function DashboardPage() {
           id: toastId,
           description:
             error instanceof Error ? error.message : String(error),
-          action: { label: "Buy credits", onClick: () => window.open(`${(process.env.NEXT_PUBLIC_WALLET_URL || "http://localhost:3001").replace(/\/$/, '')}/dashboard`, "_blank") },
+          action: { label: "Buy credits", onClick: () => window.open(WALLET_DASHBOARD_URL, "_blank") },
         });
         setProjects((prev) =>
           prev.map((p) =>
@@ -424,7 +425,7 @@ export default function DashboardPage() {
         description: `It needs ${formatDuration(durationMs)} of credit — you have ${formatDuration(
           credits.tokens * 1000
         )}.`,
-        action: { label: "Buy credits", onClick: () => window.open(`${(process.env.NEXT_PUBLIC_WALLET_URL || "http://localhost:3001").replace(/\/$/, '')}/dashboard`, "_blank") },
+        action: { label: "Buy credits", onClick: () => window.open(WALLET_DASHBOARD_URL, "_blank") },
       });
       return true;
     },

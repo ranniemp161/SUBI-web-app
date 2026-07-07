@@ -4,7 +4,7 @@ const state = vi.hoisted(() => ({
   clerkId: null as string | null,
   dbUser: null as { id: string; email: string } | null,
   rateAllowed: true,
-  priceMetadata: { credit_seconds: "18000" } as Record<string, string>,
+  priceMetadata: { credit_seconds: "18000", tokens: "500" } as Record<string, string>,
   createdSessions: [] as Record<string, unknown>[],
 }));
 
@@ -27,6 +27,10 @@ vi.mock("@/lib/rate-limit", () => ({
 
 vi.mock("@/lib/stripe", () => ({
   allowedPriceIds: vi.fn(() => ["price_small", "price_large"]),
+  tokensFromPrice: vi.fn((price: { metadata?: Record<string, string> }) => {
+    const n = Number(price.metadata?.tokens);
+    return Number.isInteger(n) && n > 0 ? n : null;
+  }),
   creditSecondsFromPrice: vi.fn((price: { metadata?: Record<string, string> }) => {
     const n = Number(price.metadata?.credit_seconds);
     return Number.isInteger(n) && n > 0 ? n : null;
@@ -48,6 +52,10 @@ vi.mock("@/lib/stripe", () => ({
 
 vi.mock("@/lib/observability", () => ({ reportError: vi.fn() }));
 
+vi.mock("@/lib/env", () => ({
+  ROUGH_CUT_URL: "https://ruffcut.example.com"
+}));
+
 import { POST } from "./route";
 import { rateLimit } from "@/lib/rate-limit";
 
@@ -59,11 +67,20 @@ function req(body?: unknown) {
   });
 }
 
+function formReq(priceId: string) {
+  const formData = new FormData();
+  formData.append("priceId", priceId);
+  return new Request("http://localhost/api/billing/checkout", {
+    method: "POST",
+    body: formData,
+  });
+}
+
 beforeEach(() => {
   state.clerkId = null;
   state.dbUser = null;
   state.rateAllowed = true;
-  state.priceMetadata = { credit_seconds: "18000" };
+  state.priceMetadata = { credit_seconds: "18000", tokens: "500" };
   state.createdSessions = [];
   vi.clearAllMocks();
 });
@@ -101,6 +118,14 @@ describe("POST /api/billing/checkout", () => {
     expect(res.status).toBe(400);
   });
 
+  it("400 on a missing form-data body", async () => {
+    state.clerkId = "clerk_1";
+    state.dbUser = { id: "db-user-1", email: "a@b.com" };
+    const formData = new FormData();
+    const res = await POST(new Request("http://localhost/api/billing/checkout", { method: "POST", body: formData }));
+    expect(res.status).toBe(400);
+  });
+
   it("400 on a price outside the allowlist", async () => {
     state.clerkId = "clerk_1";
     state.dbUser = { id: "db-user-1", email: "a@b.com" };
@@ -109,7 +134,7 @@ describe("POST /api/billing/checkout", () => {
     expect(state.createdSessions).toHaveLength(0);
   });
 
-  it("500 when the allowlisted price is missing credit_seconds metadata", async () => {
+  it("500 when the allowlisted price is missing tokens metadata", async () => {
     state.clerkId = "clerk_1";
     state.dbUser = { id: "db-user-1", email: "a@b.com" };
     state.priceMetadata = {};
@@ -118,10 +143,9 @@ describe("POST /api/billing/checkout", () => {
     expect(state.createdSessions).toHaveLength(0);
   });
 
-  it("creates the session with server-written metadata and returns its url", async () => {
+  it("creates the session with server-written metadata and returns its url (JSON)", async () => {
     state.clerkId = "clerk_1";
     state.dbUser = { id: "db-user-1", email: "a@b.com" };
-    process.env.PUBLIC_APP_URL = "https://ruffcut.example.com/";
 
     const res = await POST(req({ priceId: "price_small" }));
     const body = await res.json();
@@ -132,10 +156,22 @@ describe("POST /api/billing/checkout", () => {
     const session = state.createdSessions[0];
     expect(session.mode).toBe("payment");
     expect(session.client_reference_id).toBe("db-user-1");
-    expect(session.metadata).toEqual({ userId: "db-user-1", creditSeconds: "18000" });
+    expect(session.metadata).toEqual({ userId: "db-user-1", tokens: "500" });
     expect(session.customer_email).toBe("a@b.com");
-    // Trailing slash on PUBLIC_APP_URL is normalized away.
     expect(session.success_url).toBe("https://ruffcut.example.com/dashboard?checkout=success");
     expect(session.cancel_url).toBe("https://ruffcut.example.com/dashboard?checkout=cancelled");
+  });
+
+  it("redirects 303 when requested via form-data", async () => {
+    state.clerkId = "clerk_1";
+    state.dbUser = { id: "db-user-1", email: "a@b.com" };
+
+    const res = await POST(formReq("price_small"));
+
+    expect(res.status).toBe(303);
+    expect(res.headers.get("Location")).toContain("checkout.stripe.com");
+    expect(state.createdSessions).toHaveLength(1);
+    const session = state.createdSessions[0];
+    expect(session.metadata).toEqual({ userId: "db-user-1", tokens: "500" });
   });
 });

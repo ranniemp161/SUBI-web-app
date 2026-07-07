@@ -38,6 +38,7 @@ import VideoPlayer, {
 } from "@/components/video-player";
 import TranscriptPanel from "@/components/transcript-panel";
 import TimelineBar, { type TimelineHandle } from "@/components/timeline-bar";
+import { WALLET_URL, WALLET_DASHBOARD_URL } from "@/lib/env";
 import { formatDuration } from "@/lib/utils";
 import {
   isExportSupported,
@@ -698,7 +699,7 @@ export default function EditorPage() {
           toast.error("Not enough credits", {
             id: "ai-cut",
             description: "This AI pass needs more credit than you have left.",
-            action: { label: "Buy credits", onClick: () => window.open(`${(process.env.NEXT_PUBLIC_WALLET_URL || "http://localhost:3001").replace(/\/$/, '')}/dashboard`, "_blank") },
+            action: { label: "Buy credits", onClick: () => window.open(WALLET_DASHBOARD_URL, "_blank") },
           });
           return;
         }

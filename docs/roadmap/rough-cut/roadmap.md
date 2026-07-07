@@ -15,5 +15,5 @@ The core video transcription and AI cutting application.
 
 ### 1. Buy Credits Redirect · done
 Redirect the local Stripe checkout modal to the separated Wallet app.
-**Done when:** clicking "Buy credits" anywhere in Rough Cut deep-links the user to the Wallet app (e.g., localhost:3000) instead of opening the local Stripe popover.
+**Done when:** clicking "Buy credits" anywhere in Rough Cut deep-links the user to the Wallet app (e.g., localhost:3001) instead of opening the local Stripe popover.
 - [x] Build it: `/develop buy credits redirect`

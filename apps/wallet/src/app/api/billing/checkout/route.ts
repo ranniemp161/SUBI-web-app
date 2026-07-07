@@ -5,6 +5,7 @@ import { getAuthorizedDbUser } from "@/lib/authz";
 import { rateLimit } from "@/lib/rate-limit";
 import { allowedPriceIds, tokensFromPrice, getStripe } from "@/lib/stripe";
 import { reportError } from "@/lib/observability";
+import { ROUGH_CUT_URL } from "@/lib/env";
 
 // Sessions are free to create but each is a live payment page — cap how many
 // a single user can mint.
@@ -80,14 +81,7 @@ export async function POST(request: Request) {
       );
     }
 
-    if (!process.env.PUBLIC_APP_URL) {
-      reportError("PUBLIC_APP_URL is not set in the environment", new Error("Missing PUBLIC_APP_URL"));
-      return NextResponse.json(
-        { error: "Server configuration error." },
-        { status: 500 }
-      );
-    }
-    const origin = process.env.PUBLIC_APP_URL.replace(/\/+$/, "");
+    const origin = ROUGH_CUT_URL;
 
     const session = await stripe.checkout.sessions.create({
       mode: "payment",

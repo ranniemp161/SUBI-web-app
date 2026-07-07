@@ -14,6 +14,17 @@ const nextConfig: NextConfig = {
 // flags it as unintentionally tracing the whole project — and default builds
 // stay completely Sentry-free.
 const buildConfig = async (): Promise<NextConfig> => {
+  if (process.env.NODE_ENV === "production") {
+    const walletUrl = process.env.NEXT_PUBLIC_WALLET_URL;
+    if (!walletUrl) throw new Error("Missing NEXT_PUBLIC_WALLET_URL during production build");
+    if (process.env.VERCEL) {
+      const url = new URL(walletUrl);
+      if (url.hostname === "localhost" || url.hostname === "127.0.0.1") {
+        throw new Error(`NEXT_PUBLIC_WALLET_URL points to localhost in a production Vercel build`);
+      }
+    }
+  }
+
   if (!process.env.SENTRY_DSN) return nextConfig;
   const { withSentryConfig } = await import("@sentry/nextjs");
   return withSentryConfig(nextConfig, {

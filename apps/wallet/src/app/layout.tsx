@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { ClerkProvider, UserButton } from "@clerk/nextjs";
+import { ROUGH_CUT_URL } from "@/lib/env";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -39,7 +40,7 @@ export default function RootLayout({
               <span className="font-bold text-xl tracking-tight">SUBI Wallet</span>
               <div className="flex items-center gap-4">
                 <a
-                  href={process.env.NEXT_PUBLIC_ROUGH_CUT_URL || "http://localhost:3001"}
+                  href={ROUGH_CUT_URL}
                   className="text-sm font-medium text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100 transition-colors"
                 >
                   Back to Rough Cut

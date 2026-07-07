@@ -1,5 +1,6 @@
 "use client";
 
+import { WALLET_URL, WALLET_DASHBOARD_URL } from "@/lib/env";
 import { formatDuration } from "@/lib/utils";
 
 export interface CreditsInfo {
@@ -20,8 +21,7 @@ export default function CreditsPanel({
   credits: CreditsInfo | null;
 }) {
   const low = credits != null && credits.tokens < LOW_BALANCE_SECONDS;
-  const walletUrlBase = process.env.NEXT_PUBLIC_WALLET_URL || "http://localhost:3000";
-  const walletUrl = `${walletUrlBase.replace(/\/$/, '')}/dashboard`;
+  const walletUrl = WALLET_DASHBOARD_URL;
 
   return (
     <div className="relative flex items-center gap-2">

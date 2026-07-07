@@ -7,7 +7,7 @@ const state = vi.hoisted(() => ({
     type: string;
     data: { object: Record<string, unknown> };
   },
-  deposits: [] as Array<{ userId: string; seconds: number; eventId: string }>,
+  deposits: [] as Array<{ userId: string; tokens: number; eventId: string }>,
   depositResult: true,
   depositError: false,
   reported: [] as string[],
@@ -22,9 +22,9 @@ vi.mock("@/lib/stripe", () => ({
 }));
 
 vi.mock("@/lib/credits", () => ({
-  depositPurchase: vi.fn(async (userId: string, seconds: number, eventId: string) => {
+  depositPurchase: vi.fn(async (userId: string, tokens: number, eventId: string) => {
     if (state.depositError) throw new Error("db down");
-    state.deposits.push({ userId, seconds, eventId });
+    state.deposits.push({ userId, tokens, eventId });
     return state.depositResult;
   }),
 }));
@@ -67,7 +67,7 @@ function completedSession(overrides: Record<string, unknown> = {}) {
         id: "cs_test_123",
         payment_status: "paid",
         client_reference_id: null,
-        metadata: { userId: "db-user-1", creditSeconds: "18000" },
+        metadata: { userId: "db-user-1", tokens: "500" },
         ...overrides,
       },
     },
@@ -126,7 +126,7 @@ describe("POST /api/webhooks/stripe — checkout.session.completed", () => {
     const res = await POST(req());
     expect(res.status).toBe(200);
     expect(state.deposits).toEqual([
-      { userId: "db-user-1", seconds: 18000, eventId: "cs_test_123" },
+      { userId: "db-user-1", tokens: 500, eventId: "cs_test_123" },
     ]);
   });
 
@@ -145,7 +145,7 @@ describe("POST /api/webhooks/stripe — checkout.session.completed", () => {
   });
 
   it("200 + Sentry report on malformed metadata — a retry can never fix it", async () => {
-    completedSession({ metadata: { userId: "db-user-1", creditSeconds: "banana" } });
+    completedSession({ metadata: { userId: "db-user-1", tokens: "banana" } });
     const res = await POST(req());
     expect(res.status).toBe(200);
     expect(depositPurchase).not.toHaveBeenCalled();
@@ -154,13 +154,13 @@ describe("POST /api/webhooks/stripe — checkout.session.completed", () => {
 
   it("falls back to client_reference_id when metadata has no userId", async () => {
     completedSession({
-      metadata: { creditSeconds: "3600" },
+      metadata: { tokens: "100" },
       client_reference_id: "db-user-2",
     });
     const res = await POST(req());
     expect(res.status).toBe(200);
     expect(state.deposits).toEqual([
-      { userId: "db-user-2", seconds: 3600, eventId: "cs_test_123" },
+      { userId: "db-user-2", tokens: 100, eventId: "cs_test_123" },
     ]);
   });
 
