@@ -101,4 +101,19 @@ describe('rateLimit', () => {
       limit: 10,
     });
   });
+
+  it('fails CLOSED when Redis throws and { failClosed: true } is set (the ai-cut idempotency lock)', async () => {
+    process.env.KV_REST_API_URL = 'http://localhost';
+    process.env.KV_REST_API_TOKEN = 'token';
+
+    mockLimit.mockRejectedValueOnce(new Error('Redis connection failed'));
+
+    const result = await rateLimit('error:key', 10, 60, { failClosed: true });
+
+    expect(result).toEqual({
+      allowed: false,
+      remaining: 0,
+      limit: 10,
+    });
+  });
 });

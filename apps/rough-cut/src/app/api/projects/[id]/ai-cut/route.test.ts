@@ -164,7 +164,7 @@ describe("POST /api/projects/:id/ai-cut — credits", () => {
     state.ownedProject = READY_PROJECT;
     state.aiResult = AI_CUTS;
     await POST(request(), { params });
-    expect(chargeAiCut).toHaveBeenCalledWith("user-1", VALID_ID, 5);
+    expect(chargeAiCut).toHaveBeenCalledWith("user-1", VALID_ID, 5, undefined);
     expect(state.chargeCalls).toHaveLength(1);
   });
 
@@ -204,7 +204,7 @@ describe("POST /api/projects/:id/ai-cut — the run itself", () => {
     const res = await POST(request(), { params });
     expect(res.status).toBe(422);
     expect(state.updates).toHaveLength(0);
-    expect(refundAiCut).toHaveBeenCalledWith("user-1", VALID_ID, 5);
+    expect(refundAiCut).toHaveBeenCalledWith("user-1", VALID_ID, 5, undefined);
   });
 
   it("returns 502, stores nothing, and refunds the charge when the Gemini request fails", async () => {
@@ -214,6 +214,6 @@ describe("POST /api/projects/:id/ai-cut — the run itself", () => {
     const res = await POST(request(), { params });
     expect(res.status).toBe(502);
     expect(state.updates).toHaveLength(0);
-    expect(refundAiCut).toHaveBeenCalledWith("user-1", VALID_ID, 5);
+    expect(refundAiCut).toHaveBeenCalledWith("user-1", VALID_ID, 5, undefined);
   });
 });

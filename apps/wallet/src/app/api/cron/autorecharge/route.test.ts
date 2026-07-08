@@ -19,26 +19,37 @@ const state = vi.hoisted(() => ({
   failed: [] as string[],
   notices: [] as unknown[],
   reported: [] as string[],
+  chargeCalls: [] as string[],
 }));
 
 vi.mock("@/lib/stripe", () => ({
-  chargeAutoRechargeOffSession: vi.fn(async () => state.chargeImpl()),
-}));
-vi.mock("@/lib/autorecharge", () => ({
-  selectAutoRechargeCandidates: vi.fn(async () => state.candidates),
-  checkNeedsAutoRecharge: vi.fn(async () => true),
-  countRecentAutoRecharges: vi.fn(async () => state.successesToday),
-  autoRechargeIdempotencyKey: vi.fn(() => "idem-key"),
-  depositAutoRecharge: vi.fn(async (userId: string) => {
-    state.deposited.push(userId);
-    return true;
+  chargeAutoRechargeOffSession: vi.fn(async (params: { idempotencyKey: string }) => {
+    state.chargeCalls.push(params.idempotencyKey);
+    return state.chargeImpl();
   }),
-  recordAutoRechargeFailure: vi.fn(async (userId: string) => {
-    state.failed.push(userId);
-    return { failures: 1, disabled: false };
-  }),
-  AUTORECHARGE_MAX_PER_DAY: 3,
 }));
+// autoRechargeIdempotencyKey is left UNMOCKED (the real implementation, via
+// importOriginal) — it's the single most important double-charge guard, and
+// a test that stubs it to a constant can't catch a regression that breaks
+// its derivation. Everything else here still needs a DB-free mock.
+vi.mock("@/lib/autorecharge", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/autorecharge")>();
+  return {
+    selectAutoRechargeCandidates: vi.fn(async () => state.candidates),
+    checkNeedsAutoRecharge: vi.fn(async () => true),
+    countRecentAutoRecharges: vi.fn(async () => state.successesToday),
+    autoRechargeIdempotencyKey: actual.autoRechargeIdempotencyKey,
+    depositAutoRecharge: vi.fn(async (userId: string) => {
+      state.deposited.push(userId);
+      return true;
+    }),
+    recordAutoRechargeFailure: vi.fn(async (userId: string) => {
+      state.failed.push(userId);
+      return { failures: 1, disabled: false };
+    }),
+    AUTORECHARGE_MAX_PER_DAY: actual.AUTORECHARGE_MAX_PER_DAY,
+  };
+});
 vi.mock("@/lib/notifications", () => ({
   notifyAutoRecharge: vi.fn(async (_id: string, notice: unknown) => {
     state.notices.push(notice);
@@ -75,6 +86,7 @@ beforeEach(() => {
   state.failed = [];
   state.notices = [];
   state.reported = [];
+  state.chargeCalls = [];
   vi.clearAllMocks();
 });
 
@@ -137,5 +149,40 @@ describe("GET /api/cron/autorecharge", () => {
     expect(state.failed).toEqual([]); // not counted as a decline
     expect(state.reported.length).toBeGreaterThan(0);
     expect(body.errored).toBe(1);
+  });
+});
+
+// autoRechargeIdempotencyKey runs unmocked in these — see the vi.mock note
+// above. A regression that flattened its derivation to a constant (or
+// dropped a factor) would pass every other test in this file but fail here.
+describe("GET /api/cron/autorecharge — idempotency key derivation (real, unmocked)", () => {
+  it("derives a key from the user, successesToday, and failures — not a constant", async () => {
+    state.candidates = [candidate({ id: "u1", failures: 2 })];
+    state.successesToday = 1;
+    await GET(req());
+    expect(state.chargeCalls).toEqual(["autorecharge:v1:u1:s1:f2"]);
+  });
+
+  it("reuses the same key on a same-state re-run of the sweep (Stripe-side dedup)", async () => {
+    state.candidates = [candidate({ id: "u1", failures: 0 })];
+    state.successesToday = 0;
+    await GET(req());
+    await GET(req());
+    expect(state.chargeCalls).toEqual([
+      "autorecharge:v1:u1:s0:f0",
+      "autorecharge:v1:u1:s0:f0",
+    ]);
+  });
+
+  it("advances the key once a success changes successesToday, freeing the next attempt", async () => {
+    state.candidates = [candidate({ id: "u1", failures: 0 })];
+    state.successesToday = 0;
+    await GET(req()); // this run's charge succeeds
+    state.successesToday = 1; // reflects the deposit the sweep above just made
+    await GET(req());
+    expect(state.chargeCalls).toEqual([
+      "autorecharge:v1:u1:s0:f0",
+      "autorecharge:v1:u1:s1:f0",
+    ]);
   });
 });

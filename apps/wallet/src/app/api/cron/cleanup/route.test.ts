@@ -55,12 +55,19 @@ describe("GET /api/cron/cleanup", () => {
     expect(response.status).toBe(401);
   });
 
-  it("allows access without authorization if CRON_SECRET is not set in environment", async () => {
+  it("fails closed (401) when CRON_SECRET is not set in environment", async () => {
     delete process.env.CRON_SECRET;
     const response = await GET(req());
-    
-    expect(response.status).toBe(200);
+
+    expect(response.status).toBe(401);
     const data = await response.json();
-    expect(data).toEqual({ success: true, message: "No cleanup required" });
+    expect(data).toEqual({ error: "Unauthorized" });
+  });
+
+  it("fails closed (401) when CRON_SECRET is not set, even with an Authorization header", async () => {
+    delete process.env.CRON_SECRET;
+    const response = await GET(req("Bearer anything"));
+
+    expect(response.status).toBe(401);
   });
 });

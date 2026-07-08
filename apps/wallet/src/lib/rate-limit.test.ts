@@ -108,9 +108,33 @@ describe("rateLimit", () => {
 
   it("fails open and allows the request if Redis throws an error", async () => {
     state.error = new Error("Redis connection failed");
-    
+
     const result = await rateLimit("error_key", 100, 60);
-    
+
+    expect(result).toEqual({
+      allowed: true,
+      remaining: 100,
+      limit: 100,
+    });
+  });
+
+  it("fails CLOSED when Redis throws and { failClosed: true } is set (money-moving paths)", async () => {
+    state.error = new Error("Redis connection failed");
+
+    const result = await rateLimit("error_key", 100, 60, { failClosed: true });
+
+    expect(result).toEqual({
+      allowed: false,
+      remaining: 0,
+      limit: 100,
+    });
+  });
+
+  it("{ failClosed: true } does not affect the unconfigured-KV dev bypass", async () => {
+    delete process.env.KV_REST_API_URL;
+
+    const result = await rateLimit("bypass_key", 100, 60, { failClosed: true });
+
     expect(result).toEqual({
       allowed: true,
       remaining: 100,

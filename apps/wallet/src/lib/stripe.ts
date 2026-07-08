@@ -133,9 +133,13 @@ export function clearBundlesCache() {
 export const AUTORECHARGE_KIND = "auto_recharge";
 
 /**
- * USD micros -> Stripe's minor unit (cents). 10,000 micros = 1 cent. Amounts
- * are validated to be whole-cent multiples of the retail bundles, so this is
- * exact in practice; round to stay safe against a hand-set micro amount.
+ * USD micros -> Stripe's minor unit (cents). 10,000 micros = 1 cent. Retail
+ * bundle amounts are whole-cent multiples, so this is exact there; an
+ * auto-recharge amount is a user-chosen integer that is NOT constrained to
+ * whole cents, so this can genuinely round. That's safe only because the
+ * webhook credits back `amount_received * 10,000` — what Stripe actually
+ * captured after this same rounding — rather than the pre-rounding metadata
+ * value, so the charged and credited amounts can never drift apart.
  */
 export function microsToStripeMinorUnit(micros: number): number {
   return Math.round(micros / 10_000);
@@ -206,21 +210,34 @@ export async function chargeAutoRechargeOffSession(params: {
 }
 
 /**
- * The saved PaymentMethod id from a completed Checkout session, by retrieving
- * its PaymentIntent (the session only holds the PI id). Null if unavailable.
+ * The saved PaymentMethod id and its owning Customer id from a completed
+ * Checkout session, both read off the *same* PaymentIntent retrieval.
+ *
+ * Deliberately not sourced from `session.customer` for the customer id: two
+ * concurrent first-time checkouts (each creating its own Customer) can have
+ * their webhook deliveries interleave, and reading the PM from one session
+ * while separately trusting `session.customer` from the (possibly different,
+ * already-written) event can bind a payment method to the wrong customer —
+ * a later off-session charge then fails with "payment method does not
+ * belong to customer". Sourcing both fields from one PI retrieval makes them
+ * always consistent with each other by construction.
  */
 export async function paymentMethodFromSession(
   session: Stripe.Checkout.Session
-): Promise<string | null> {
+): Promise<{ paymentMethodId: string | null; customerId: string | null }> {
   const piId =
     typeof session.payment_intent === "string"
       ? session.payment_intent
       : session.payment_intent?.id;
-  if (!piId) return null;
+  if (!piId) return { paymentMethodId: null, customerId: null };
   const pi = await getStripe().paymentIntents.retrieve(piId);
-  return typeof pi.payment_method === "string"
-    ? pi.payment_method
-    : pi.payment_method?.id ?? null;
+  const paymentMethodId =
+    typeof pi.payment_method === "string"
+      ? pi.payment_method
+      : pi.payment_method?.id ?? null;
+  const customerId =
+    typeof pi.customer === "string" ? pi.customer : pi.customer?.id ?? null;
+  return { paymentMethodId, customerId };
 }
 
 // ---------------------------------------------------------------------------

@@ -20,9 +20,14 @@ const AI_CUT_LIMIT = 10;
 const AI_CUT_WINDOW_SECONDS = 3600;
 
 /** Best-effort refund — a credits hiccup must never mask the real Gemini error. */
-async function refundAiCutQuietly(userId: string, projectId: string, costSeconds: number) {
+async function refundAiCutQuietly(
+  userId: string,
+  projectId: string,
+  costSeconds: number,
+  idempotencyKey?: string
+) {
   try {
-    await refundAiCut(userId, projectId, costSeconds);
+    await refundAiCut(userId, projectId, costSeconds, idempotencyKey);
   } catch (error) {
     reportError("Failed to refund AI cut charge", error, { projectId });
   }
@@ -53,10 +58,15 @@ export async function POST(
     );
   }
 
-  const idempotencyKey = _request.headers.get("Idempotency-Key");
+  const idempotencyKey = _request.headers.get("Idempotency-Key") ?? undefined;
   if (idempotencyKey) {
-    // Treat the rate limit bucket as a distributed lock/idempotency guard (24 hours)
-    const idempotency = await rateLimit(`idempotency:${idempotencyKey}`, 1, 86400);
+    // Treat the rate limit bucket as a distributed lock/idempotency guard (24
+    // hours). This is the only guard against a retried request re-charging a
+    // paid Gemini call, so a Redis error here must fail closed (refuse) —
+    // failing open would silently disable the sole double-charge protection.
+    const idempotency = await rateLimit(`idempotency:${idempotencyKey}`, 1, 86400, {
+      failClosed: true,
+    });
     if (!idempotency.allowed) {
       return NextResponse.json(
         { error: "This AI pass was already requested." },
@@ -91,7 +101,7 @@ export async function POST(
     // Each run is a real Gemini call the account pays for, and this opt-in
     // route is the only place the pass ever runs — so every run is charged.
     const costSeconds = costSecondsForDurationMs(project.durationMs);
-    const charge = await chargeAiCut(project.userId, id, costSeconds);
+    const charge = await chargeAiCut(project.userId, id, costSeconds, idempotencyKey);
     if (charge.status === "insufficient") {
       return NextResponse.json(
         {
@@ -107,14 +117,14 @@ export async function POST(
     try {
       aiCuts = await runAiRoughCut(transcript.words);
     } catch (error) {
-      await refundAiCutQuietly(project.userId, id, costSeconds);
+      await refundAiCutQuietly(project.userId, id, costSeconds, idempotencyKey);
       throw error;
     }
 
     // Configured + non-empty words were checked above, so null here means the
     // transcript tripped the size guard — no usable result was delivered.
     if (!aiCuts) {
-      await refundAiCutQuietly(project.userId, id, costSeconds);
+      await refundAiCutQuietly(project.userId, id, costSeconds, idempotencyKey);
       return NextResponse.json(
         { error: "This transcript is too long for the AI pass." },
         { status: 422 }

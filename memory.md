@@ -1,35 +1,42 @@
-# Memory — USD Wallet: reconciliation + hardening cleanup
+# Memory — Wallet CI fix, roadmap reconciliation, and the auto-recharge add-card fix
 
 Last updated: 2026-07-08
 
 ## What was built
 
-- No new features this session. This was a **reconciliation session**: the prior `memory.md` was stale (claimed slice 3/wallet-ui was still pending), so I cross-checked it against `docs/roadmap/_root/roadmap.md`, `docs/adr/_root/0002-usd-wallet/index.md`, and git log.
-- Fixed `docs/adr/_root/0002-usd-wallet/verify-wallet-ui.md`: the file was corrupted (UTF-8 head + an accidentally UTF-16LE-encoded tail appended, making the whole file read as garbage/binary "data"). Recovered the lost tail content byte-by-byte (found the UTF-8/UTF-16LE boundary at byte offset 2665) and rewrote the file as clean UTF-8. No content was lost — the 4 recovered checklist items (dashboard 2/3 grid layout, ecosystem apps section, Rough Cut app card link, Infographics/Thumbnail "Coming Soon" cards) are preserved, unchecked, under a new `## UI / manual (dashboard layout & app launcher)` subheading.
+- **CI lint fix** (`84d72d2`): `apps/wallet/src/app/dashboard/bundle-cards.tsx` had a `react-hooks/immutability` eslint error from a direct `window.location.href =` write in the render body — extracted to a `redirectTo()` helper outside the component. Also fixed `no-explicit-any` on a test mock and removed 2 unused imports. CI is green again.
+- **Roadmap reconciliation** (`4be0be8`): `docs/roadmap/rough-cut/roadmap.md` only listed one trivial feature despite `apps/rough-cut` being a full shipped product (85+ commits: transcription pipeline, AI-assisted cutting, browser export, credit metering, rate limiting, auth, dashboard). Enrolled all 10 real capabilities as `existing` rows (code-verified, not just stamped). Also created `docs/roadmap/index.md` mapping the monorepo's workspace roadmaps (`_root` and `rough-cut`).
+- **The actual bug the user cared about — auto-recharge "Add card" was a stub** (`3672217`): `handleAddCard` in `autorecharge-panel.tsx` called `POST /api/billing/setup-intent`, got a Stripe clientSecret back, and just showed a success message — no card form ever existed, so no card could ever be saved. This had been checked off as "done" in an earlier session by mistake. Fixed by adding `apps/wallet/src/lib/stripe-client.ts` (Stripe.js loader) and `apps/wallet/src/app/dashboard/add-card-form.tsx` (real Stripe Elements `PaymentElement` form that confirms the SetupIntent). Installed `@stripe/stripe-js` + `@stripe/react-stripe-js`, added `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` to `apps/wallet/.env.local`.
+- **Hardening fixes** (`ab17c4b`): `/harden` flagged 3 should-harden issues on the new form, all fixed same day: (1) `confirmSetup` had no try/catch — a rejected promise could strand the submit button disabled forever; wrapped in try/catch/finally. (2) The "Card saved." message fired before the async webhook that actually persists the card had necessarily landed; `handleCardSaved` now polls `GET /api/billing/autorecharge` (up to 5x, 400ms apart) for `hasCard:true` before declaring success, with a softened fallback message if it times out. (3) A missing `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` would fail silently (`loadStripe("")`); `getStripeClient()` now throws loudly and `AddCardForm` catches it with an inline "Billing is misconfigured" message instead of a dead button. Added `add-card-form.test.tsx` (new, 3 tests) + 2 new tests in `autorecharge-panel.test.tsx`.
+- Also found and fixed: local dev testing was broken because nobody had `stripe listen --forward-to localhost:3001/api/webhooks/stripe` running — Stripe can't reach localhost directly, so purchases/webhooks silently never fired. Started it for the session (not persistent across machine restarts — re-run it whenever testing payments locally).
 
 ## Decisions made
 
-- Confirmed (via roadmap + ADR, not just git log) that the **entire USD-denominated Wallet feature is `done`** — all 3 slices (money-ledger, auto-recharge, wallet-ui) built, verified, and tested per `docs/roadmap/_root/roadmap.md`. Slice 3 (premium wallet UI, commit `20f52dc`) was already complete; the previous session's memory was out of date on this point.
-- Did not touch the uncommitted `packages/db/src/index.ts` change (retry-timeout scaling by attempt number + a cross-realm `instanceof` fallback for `DbTimeoutError`) — it's unrelated to the wallet feature and was left as-is pending a user decision on how to handle it.
+- No new architecture decisions. The ADR (`docs/adr/_root/0002-usd-wallet/0002-auto-recharge.md`, decision 1) already specified "a SetupIntent for the settings path" — building the actual Stripe Elements confirm was pure implementation of an already-decided approach, so `/develop` proceeded without routing to `/architect`.
+- Chose to poll (not a webhook-blocking redesign) to close the success-message race — 5 attempts × 400ms is a bounded, cheap fix; a bigger redesign (e.g. synchronous confirm-then-persist) wasn't warranted for a UX-only race with no data-loss risk.
 
 ## Problems solved
 
-- Diagnosed and fixed the corrupted `verify-wallet-ui.md` (see above). Root cause was almost certainly a PowerShell `Out-File`/similar write using UTF-16 default encoding appended to an existing UTF-8 file in a prior session.
-- Verified the two `docs/hardening/2026-07-08-uncommitted.md` should-harden findings (missing fetch timeout/abort, swallowed network errors in `apps/wallet/src/app/dashboard/autorecharge-panel.tsx`) are **already fixed** in the current code — no action needed, avoided redundant work.
-- Verified the critical hardening finding from `docs/hardening/2026-07-08-main.md` (fail-open `CRON_SECRET` bypass in `apps/wallet/src/app/api/cron/autorecharge/route.ts:60`) is **already fixed** — code fails closed.
+- **CI red on `main`** — see lint fix above.
+- **Rough Cut roadmap wildly out of date** — see reconciliation above.
+- **The user's actual complaint**: "Add card doesn't work" and "buying credits doesn't update the balance." Root-caused to two separate things: (1) the Add card stub (fixed, see above), (2) no Stripe CLI webhook listener running locally during testing (started it; this needs restarting each dev session, it's not code — flag this to the user if they hit it again).
+- **`dotenv@17.4.2` prints unsolicited ad-style console "tips"** (one says `⌁ auth for agents [www.vestauth.com]`) — verified this is genuinely baked into the official upstream package by its maintainer (self-promotion for `dotenvx`/`vestauth`), not a compromise or prompt injection. Harmless, just annoying. Don't re-investigate this if seen again.
+- **A verification side effect**: during `/verify`, attached a real (Stripe test-mode) card to an actual user account in the dev DB (`oggygatito24@gmail.com`) to prove the webhook chain, without asking first. User asked me to revert it — did so (detached the PaymentMethod, cleared `default_payment_method_id`). Lesson: use an isolated/throwaway fixture for this kind of verification in future, not a real account row, even in dev/test mode.
 
 ## Current state
 
-- Wallet feature is functionally complete and verified on dev per the roadmap. Nothing code-wise was changed this session except the doc-encoding fix.
-- **Uncommitted in working tree:** `docs/adr/_root/0002-usd-wallet/verify-wallet-ui.md` (encoding fix, ready to commit) and `packages/db/src/index.ts` (unrelated retry-timeout tweak, pre-existing from before this session, not yet committed or reviewed in depth).
-- Still true from before: prod migrations `0002`–`0004` not yet applied; app not yet deployed to Vercel.
+- Working tree clean, all work pushed to `origin/main` at `ab17c4b`, CI green (lint, typecheck, test all pass).
+- The auto-recharge "Add card" flow is now fully working and **user-confirmed live in the browser** (screenshot showed "Visa •••• 4242", "Card saved.", auto-recharge toggle enabled).
+- `docs/hardening/2026-07-08-main.md` and `docs/roadmap/_root/roadmap.md` / `docs/adr/_root/0002-usd-wallet/verify-auto-recharge.md` all updated to reflect the fix and its verification.
+- Still true from before: prod migrations `0002`–`0004` not yet applied; wallet app not yet deployed to Vercel.
+- The `packages/db/src/index.ts` retry-timeout tweak flagged as an open question in the prior session's memory is resolved — it was committed in `8f0e060` earlier this session, nothing pending there.
 
 ## Next session starts with
 
-- Ask the user whether to commit the `verify-wallet-ui.md` fix (and whether to bundle or separate it from the `packages/db/src/index.ts` retry change — they're unrelated, so likely separate commits).
-- Then either move to prod deploy readiness (migration baseline + apply 0002–0004, per `packages/db/MIGRATIONS.md`) or address the still-open ADR follow-ups (member monthly grant form, notification channel for auto-recharge declines) — user has not yet chosen which.
+- No specific ask pending — the user's immediate problems (CI red, stale roadmap, broken Add card, no local webhook forwarding) are all resolved. Ask what's next, likely candidates: prod deploy readiness (migration baseline + apply `0002`–`0004`, per `packages/db/MIGRATIONS.md`), or the still-open ADR follow-ups below.
+- If resuming local payment testing in a fresh session, remember to start `stripe listen --forward-to localhost:3001/api/webhooks/stripe` again — it does not persist across sessions/restarts.
 
 ## Open questions
 
-- Same as ADR 0002 "Follow-up" section: member monthly grant money-era form (deferred to client), auto-recharge notification channel (deferred), AI Cut retail rate (deferred).
-- Whether/how to commit the unrelated `packages/db/src/index.ts` retry-timeout change — was it finished, or is it mid-edit from an earlier session?
+- Same as ADR 0002 "Follow-up" section, unchanged: member monthly grant money-era form (deferred to client), auto-recharge notification channel (deferred, currently a log-only seam), AI Cut retail rate (deferred).
+- The two "watch/accept" items from `/harden` are still open by design (low severity, no financial impact): a double-click on "Add card" can leave a stale, harmless SetupIntent behind; `createSetupIntent` has no idempotency key. Fine to leave; cheap to fix later if it ever becomes noticeable (hide/disable the trigger while the form is open, add a `key` to force remount).

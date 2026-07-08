@@ -21,13 +21,21 @@ import { reportError } from "@/lib/observability";
  */
 async function persistSavedCard(session: Stripe.Checkout.Session, userId: string) {
   try {
-    const customerId =
-      typeof session.customer === "string"
-        ? session.customer
-        : session.customer?.id ?? null;
-    if (customerId) await setStripeCustomerId(userId, customerId);
-    const pmId = await paymentMethodFromSession(session);
-    if (pmId) await setDefaultPaymentMethod(userId, pmId);
+    // Both ids come from the same PaymentIntent retrieval so they can never
+    // point at different Stripe customers (see paymentMethodFromSession).
+    const { paymentMethodId, customerId } = await paymentMethodFromSession(session);
+    if (!customerId) return;
+
+    // setStripeCustomerId is first-write-wins (COALESCE). If a concurrent,
+    // earlier-landing checkout already claimed a different customer id for
+    // this user, `stored` won't match `customerId` here — in that case this
+    // payment method belongs to a customer id we're not keeping, so it must
+    // NOT be saved (it would silently attach a PM from the wrong customer,
+    // breaking the next off-session charge with a Stripe-side rejection).
+    const stored = await setStripeCustomerId(userId, customerId);
+    if (paymentMethodId && stored === customerId) {
+      await setDefaultPaymentMethod(userId, paymentMethodId);
+    }
   } catch (error) {
     reportError("Failed to save card from checkout session", error, {
       sessionId: session.id,
@@ -97,23 +105,18 @@ export async function POST(request: Request) {
 
   if (event.type === "checkout.session.completed") {
     const session = event.data.object;
-    console.log(`[Stripe Webhook] Received checkout.session.completed for session ${session.id}. Payment status: ${session.payment_status}`);
 
     // Card payments are paid at completion; async methods (bank debits etc.)
     // would arrive unpaid here and complete via async_payment_succeeded,
     // which we deliberately don't sell through — card-only scope.
     if (session.payment_status !== "paid") {
-      console.log(`[Stripe Webhook] Ignored because payment_status is '${session.payment_status}', not 'paid'.`);
       return NextResponse.json({ received: true });
     }
 
     const userId = session.metadata?.userId ?? session.client_reference_id;
     const creditMicros = Number(session.metadata?.creditMicros);
 
-    console.log(`[Stripe Webhook] Parsed metadata - userId: ${userId}, creditMicros: ${creditMicros}`);
-
     if (!userId || !Number.isInteger(creditMicros) || creditMicros <= 0) {
-      console.log(`[Stripe Webhook] ERROR: Missing or malformed metadata. Ignored.`);
       reportError(
         "Stripe checkout.session.completed with missing/malformed metadata",
         new Error("unusable checkout session metadata"),
@@ -123,15 +126,11 @@ export async function POST(request: Request) {
     }
 
     try {
-      console.log(`[Stripe Webhook] Attempting depositPurchase for user ${userId}, creditMicros: ${creditMicros}`);
       const deposited = await depositPurchase(userId, creditMicros, session.id);
       if (!deposited) {
-        console.warn(`[Stripe Webhook] Duplicate Stripe webhook delivery for session ${session.id} — ignored.`);
-      } else {
-        console.log(`[Stripe Webhook] SUCCESS: depositPurchase completed for session ${session.id}`);
+        console.warn(`[Stripe Webhook] Duplicate checkout.session.completed delivery for ${session.id} — ignored.`);
       }
     } catch (error) {
-      console.error(`[Stripe Webhook] ERROR during depositPurchase:`, error);
       // A transient DB failure IS worth a Stripe retry — the deposit is
       // idempotent, so the retry can only succeed once.
       reportError("Failed to credit Stripe purchase", error, {
@@ -154,7 +153,12 @@ export async function POST(request: Request) {
     const pi = event.data.object;
     if (pi.metadata?.kind === AUTORECHARGE_KIND) {
       const userId = pi.metadata?.userId;
-      const amountMicros = Number(pi.metadata?.amountMicros);
+      // Credit what Stripe actually captured (amount_received, minor units),
+      // not the metadata we wrote at charge time — the two are consistent
+      // today, but sourcing the credited amount from Stripe's own confirmed
+      // capture means they can never silently drift apart (same principle as
+      // bundle purchases: never trust a number that isn't Stripe's).
+      const amountMicros = pi.amount_received * 10_000;
       if (!userId || !Number.isInteger(amountMicros) || amountMicros <= 0) {
         reportError(
           "auto_recharge payment_intent.succeeded with bad metadata",

@@ -41,11 +41,20 @@ function getRatelimiter(limit: number, windowSeconds: number): Ratelimit | null 
  * Fixed-window rate limiter backed by Vercel KV (Upstash Redis).
  *
  * `key` should namespace the bucket and the subject, e.g. `transcribe:<userId>`.
+ *
+ * `failClosed` controls what happens when Redis itself errors mid-request
+ * (not "unconfigured" — that's always a dev-only allow). Leave it false for
+ * ordinary abuse caps, where an outage should degrade to unlimited rather
+ * than lock users out. Set it true for a limiter that is also the only guard
+ * against a money-moving action repeating (an idempotency lock guarding a
+ * paid AI Cut run) — there, "can't prove this is safe" must mean refuse, not
+ * allow, or a Redis blip turns into free double-charges.
  */
 export async function rateLimit(
   key: string,
   limit: number,
-  windowSeconds: number
+  windowSeconds: number,
+  options?: { failClosed?: boolean }
 ): Promise<RateLimitResult> {
   const limiter = getRatelimiter(limit, windowSeconds);
 
@@ -57,13 +66,17 @@ export async function rateLimit(
 
   try {
     const { success, remaining } = await limiter.limit(key);
-    
+
     return {
       allowed: success,
       remaining,
       limit,
     };
   } catch (error) {
+    if (options?.failClosed) {
+      console.error("Redis rate limit failed, failing closed (money-moving path):", error);
+      return { allowed: false, remaining: 0, limit };
+    }
     console.error("Redis rate limit failed, failing open:", error);
     return { allowed: true, remaining: limit, limit };
   }

@@ -71,7 +71,8 @@ export async function PATCH(request: Request) {
     const limit = await rateLimit(
       `autorecharge:${clerkId}`,
       UPDATE_LIMIT,
-      UPDATE_WINDOW_SECONDS
+      UPDATE_WINDOW_SECONDS,
+      { failClosed: true }
     );
     if (!limit.allowed) {
       return NextResponse.json(

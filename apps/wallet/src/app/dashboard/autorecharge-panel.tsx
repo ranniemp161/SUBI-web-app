@@ -40,13 +40,29 @@ export function AutorechargePanel({
   savedCard,
   failures,
 }: AutorechargePanelProps) {
+  const initialThresholdDollars =
+    initialThreshold != null ? String(initialThreshold / MICROS_PER_USD) : "5";
+  const initialAmountDollars =
+    initialAmount != null ? String(initialAmount / MICROS_PER_USD) : "19";
+
   const [enabled, setEnabled] = useState(initialEnabled);
-  const [thresholdDollars, setThresholdDollars] = useState(
-    initialThreshold != null ? String(initialThreshold / MICROS_PER_USD) : "5"
+  // The last-saved values (shown, read-only, once settled) vs. the in-progress
+  // edit (only meaningful while isEditing is true). Keeping them separate is
+  // what lets the fields lock after a save instead of staying open forever.
+  const [savedThresholdDollars, setSavedThresholdDollars] = useState(
+    initialThresholdDollars
   );
-  const [amountDollars, setAmountDollars] = useState(
-    initialAmount != null ? String(initialAmount / MICROS_PER_USD) : "19"
+  const [savedAmountDollars, setSavedAmountDollars] = useState(
+    initialAmountDollars
   );
+  const [draftThresholdDollars, setDraftThresholdDollars] = useState(
+    initialThresholdDollars
+  );
+  const [draftAmountDollars, setDraftAmountDollars] = useState(
+    initialAmountDollars
+  );
+  const [isEditing, setIsEditing] = useState(false);
+  const [fieldError, setFieldError] = useState<string | null>(null);
   const router = useRouter();
   const [saving, setSaving] = useState(false);
   const [addingCard, setAddingCard] = useState(false);
@@ -56,12 +72,31 @@ export function AutorechargePanel({
     text: string;
   } | null>(null);
 
+  const thresholdDollars = isEditing ? draftThresholdDollars : savedThresholdDollars;
+  const amountDollars = isEditing ? draftAmountDollars : savedAmountDollars;
+
   const thresholdMicros = Math.round(
     (parseFloat(thresholdDollars) || 0) * MICROS_PER_USD
   );
   const amountMicros = Math.round(
     (parseFloat(amountDollars) || 0) * MICROS_PER_USD
   );
+
+  /** Mirrors the server's own checks so a bad value never round-trips just to bounce. */
+  const validateDraft = useCallback((): string | null => {
+    const t = parseFloat(draftThresholdDollars);
+    const a = parseFloat(draftAmountDollars);
+    if (!Number.isFinite(t) || t <= 0) {
+      return "Enter a threshold greater than $0.";
+    }
+    if (!Number.isFinite(a) || a <= 0) {
+      return "Enter a recharge amount greater than $0.";
+    }
+    if (a <= t) {
+      return "The recharge amount must be greater than the threshold.";
+    }
+    return null;
+  }, [draftThresholdDollars, draftAmountDollars]);
 
   const save = useCallback(
     async (nextEnabled: boolean) => {
@@ -82,7 +117,7 @@ export function AutorechargePanel({
           signal: controller.signal,
         });
         clearTimeout(timeoutId);
-        
+
         const data = await res.json();
         if (!res.ok) {
           setMessage({
@@ -92,6 +127,12 @@ export function AutorechargePanel({
           return;
         }
         setEnabled(nextEnabled);
+        if (isEditing) {
+          setSavedThresholdDollars(draftThresholdDollars);
+          setSavedAmountDollars(draftAmountDollars);
+          setIsEditing(false);
+          setFieldError(null);
+        }
         setMessage({
           type: "success",
           text: nextEnabled
@@ -108,8 +149,33 @@ export function AutorechargePanel({
         setSaving(false);
       }
     },
-    [thresholdMicros, amountMicros]
+    [thresholdMicros, amountMicros, isEditing, draftThresholdDollars, draftAmountDollars]
   );
+
+  const handleEditClick = useCallback(() => {
+    setDraftThresholdDollars(savedThresholdDollars);
+    setDraftAmountDollars(savedAmountDollars);
+    setFieldError(null);
+    setMessage(null);
+    setIsEditing(true);
+  }, [savedThresholdDollars, savedAmountDollars]);
+
+  const handleCancelClick = useCallback(() => {
+    setDraftThresholdDollars(savedThresholdDollars);
+    setDraftAmountDollars(savedAmountDollars);
+    setFieldError(null);
+    setIsEditing(false);
+  }, [savedThresholdDollars, savedAmountDollars]);
+
+  const handleSaveSettings = useCallback(() => {
+    const err = validateDraft();
+    if (err) {
+      setFieldError(err);
+      return;
+    }
+    setFieldError(null);
+    save(enabled);
+  }, [validateDraft, save, enabled]);
 
   const handleAddCard = useCallback(async () => {
     setAddingCard(true);
@@ -214,10 +280,11 @@ export function AutorechargePanel({
           role="switch"
           aria-checked={enabled}
           aria-label="Toggle auto-recharge"
-          disabled={!hasCard || saving}
+          disabled={!hasCard || saving || isEditing}
+          title={isEditing ? "Finish editing settings first." : undefined}
           onClick={() => save(!enabled)}
           className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors duration-200 ${
-            !hasCard || saving ? "opacity-40 cursor-not-allowed" : "cursor-pointer"
+            !hasCard || saving || isEditing ? "opacity-40 cursor-not-allowed" : "cursor-pointer"
           }`}
           style={{
             background: enabled
@@ -259,8 +326,8 @@ export function AutorechargePanel({
               min="1"
               step="1"
               value={thresholdDollars}
-              onChange={(e) => setThresholdDollars(e.target.value)}
-              disabled={saving}
+              onChange={(e) => setDraftThresholdDollars(e.target.value)}
+              disabled={saving || !isEditing}
               className="w-full rounded-lg py-2 pl-7 pr-3 text-sm tabular-nums"
               style={{
                 background: "var(--wallet-surface-sunken)",
@@ -290,8 +357,8 @@ export function AutorechargePanel({
               min="1"
               step="1"
               value={amountDollars}
-              onChange={(e) => setAmountDollars(e.target.value)}
-              disabled={saving}
+              onChange={(e) => setDraftAmountDollars(e.target.value)}
+              disabled={saving || !isEditing}
               className="w-full rounded-lg py-2 pl-7 pr-3 text-sm tabular-nums"
               style={{
                 background: "var(--wallet-surface-sunken)",
@@ -303,21 +370,88 @@ export function AutorechargePanel({
         </label>
       </div>
 
-      {/* Save settings (when values changed but not toggling) */}
+      {/* Threshold/amount edit state: locked + "Saved" after a successful save,
+          unlocked with Save/Cancel while editing. Stops the settings from being
+          re-submitted indefinitely and makes the saved state visible. */}
       {hasCard && (
-        <div className="mt-4 flex justify-end">
-          <button
-            onClick={() => save(enabled)}
-            disabled={saving}
-            className="rounded-lg px-4 py-1.5 text-xs font-semibold transition-colors"
-            style={{
-              background: "var(--wallet-accent)",
-              color: "#fff",
-              opacity: saving ? 0.5 : 1,
-            }}
-          >
-            {saving ? "Saving…" : "Save settings"}
-          </button>
+        <div className="mt-4 flex items-center justify-between gap-3">
+          {fieldError ? (
+            <p
+              className="text-xs font-medium"
+              style={{ color: "var(--wallet-danger)" }}
+            >
+              {fieldError}
+            </p>
+          ) : (
+            !isEditing && (
+              <p
+                className="flex items-center gap-1 text-xs font-medium"
+                style={{ color: "var(--wallet-success)" }}
+              >
+                <svg
+                  className="h-3.5 w-3.5"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M5 13l4 4L19 7"
+                  />
+                </svg>
+                Saved
+              </p>
+            )
+          )}
+
+          <div className="ml-auto flex gap-2">
+            {isEditing ? (
+              <>
+                <button
+                  onClick={handleCancelClick}
+                  disabled={saving}
+                  className="rounded-lg px-4 py-1.5 text-xs font-semibold transition-colors"
+                  style={{
+                    background: "var(--wallet-surface)",
+                    color: "var(--wallet-text-secondary)",
+                    border: "1px solid var(--wallet-border)",
+                    opacity: saving ? 0.5 : 1,
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSaveSettings}
+                  disabled={saving}
+                  className="rounded-lg px-4 py-1.5 text-xs font-semibold transition-colors"
+                  style={{
+                    background: "var(--wallet-accent)",
+                    color: "#fff",
+                    opacity: saving ? 0.5 : 1,
+                  }}
+                >
+                  {saving ? "Saving…" : "Save settings"}
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={handleEditClick}
+                disabled={saving}
+                className="rounded-lg px-4 py-1.5 text-xs font-semibold transition-colors"
+                style={{
+                  background: "var(--wallet-surface)",
+                  color: "var(--wallet-accent)",
+                  border: "1px solid var(--wallet-border)",
+                  opacity: saving ? 0.5 : 1,
+                }}
+              >
+                Edit
+              </button>
+            )}
+          </div>
         </div>
       )}
 

@@ -33,7 +33,8 @@ export async function POST() {
     const limit = await rateLimit(
       `setup-intent:${clerkId}`,
       SETUP_LIMIT,
-      SETUP_WINDOW_SECONDS
+      SETUP_WINDOW_SECONDS,
+      { failClosed: true }
     );
     if (!limit.allowed) {
       return NextResponse.json(

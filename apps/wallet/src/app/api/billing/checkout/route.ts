@@ -38,7 +38,8 @@ export async function POST(request: Request) {
     const limit = await rateLimit(
       `checkout:${clerkId}`,
       CHECKOUT_LIMIT,
-      CHECKOUT_WINDOW_SECONDS
+      CHECKOUT_WINDOW_SECONDS,
+      { failClosed: true }
     );
     if (!limit.allowed) {
       return NextResponse.json(

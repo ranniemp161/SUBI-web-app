@@ -165,14 +165,25 @@ export async function recordAutoRechargeFailure(
 }
 
 /** Persist the Stripe customer id (first save wins — never overwrite). */
+/**
+ * First-write-wins (COALESCE): once a user has a Stripe customer id, it never
+ * changes. Returns the id that actually ended up stored, so a caller that
+ * also has a payment method for `customerId` can check it still matches
+ * before saving it — otherwise a second concurrent checkout (a different
+ * customer) could end up overwriting the saved card with a payment method
+ * that belongs to a customer id nobody kept.
+ */
 export async function setStripeCustomerId(
   userId: string,
   customerId: string
-): Promise<void> {
-  await db
-    .update(users)
-    .set({ stripeCustomerId: sql`COALESCE(${users.stripeCustomerId}, ${customerId})` })
-    .where(eq(users.id, userId));
+): Promise<string | null> {
+  const rows = await executeRows(sql`
+    UPDATE users
+    SET stripe_customer_id = COALESCE(stripe_customer_id, ${customerId})
+    WHERE id = ${userId}
+    RETURNING stripe_customer_id
+  `);
+  return (rows[0]?.stripe_customer_id as string | undefined) ?? null;
 }
 
 /** Persist the saved card to use off-session. */

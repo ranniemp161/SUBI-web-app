@@ -355,29 +355,45 @@ export type AiCutChargeResult =
  * Every AI Cut run is charged here: the pass is strictly opt-in from the
  * studio (there is no automatic pass at transcription time), so each run is
  * a Gemini call the user explicitly asked — and pays — for.
+ *
+ * `idempotencyKey` (the caller's per-attempt `Idempotency-Key`, when sent)
+ * is written into the same unique `stripe_event_id` column Stripe deposits
+ * use — it's a generic unique/nullable slot, not Stripe-specific — under an
+ * `ai_cut:` prefix so a retried request can never deduct twice. Without a
+ * key (older/other callers), the insert is unconstrained, matching the
+ * previous unconditional-charge behavior.
  */
 export async function chargeAiCut(
   userId: string,
   projectId: string,
-  costSeconds: number
+  costSeconds: number,
+  idempotencyKey?: string
 ): Promise<AiCutChargeResult> {
   const chargeMicros = chargeMicrosForSeconds(costSeconds);
+  const ledgerKey = idempotencyKey ? `ai_cut:${idempotencyKey}` : null;
   try {
     const rows = await executeRows(sql`
-      WITH charged AS (
-        UPDATE users SET balance_micros = balance_micros - ${chargeMicros}
-        WHERE id = ${userId}
-        RETURNING balance_micros
+      WITH ins AS (
+        INSERT INTO credit_ledger (user_id, delta_micros, reason, project_id, cost_micros, stripe_event_id)
+        VALUES (${userId}, ${-chargeMicros}, 'ai_cut', ${projectId},
+                ${costSeconds * AI_CUT_COST_MICROS_PER_SECOND}, ${ledgerKey})
+        ON CONFLICT (stripe_event_id) DO NOTHING
+        RETURNING delta_micros
       ),
-      led AS (
-        INSERT INTO credit_ledger (user_id, delta_micros, reason, project_id, cost_micros)
-        SELECT ${userId}, ${-chargeMicros}, 'ai_cut', ${projectId},
-               ${costSeconds * AI_CUT_COST_MICROS_PER_SECOND}
-        FROM charged
+      charged AS (
+        UPDATE users u SET balance_micros = u.balance_micros + ins.delta_micros
+        FROM ins WHERE u.id = ${userId}
+        RETURNING u.balance_micros
       )
       SELECT balance_micros FROM charged
     `);
-    if (rows.length === 0) throw new Error("ai_cut charge matched no user row");
+    if (rows.length === 0) {
+      // A keyed retry that lost the ON CONFLICT race is already charged —
+      // that is success, not an error. Only a genuinely missing user row
+      // (no idempotency key in play) is the failure case.
+      if (ledgerKey) return { status: "charged" };
+      throw new Error("ai_cut charge matched no user row");
+    }
     return { status: "charged" };
   } catch (error) {
     if (isCheckViolation(error)) return { status: "insufficient" };
@@ -388,22 +404,28 @@ export async function chargeAiCut(
 /**
  * Refund an AI Cut charge that didn't deliver a usable result (Gemini call
  * failed, or the transcript tripped the size guard) — a straight credit-back
- * in USD micros, no hold to reconcile against.
+ * in USD micros, no hold to reconcile against. Keyed the same way as
+ * `chargeAiCut` (a distinct `ai_cut_refund:` prefix) so a retried refund
+ * can't double-credit either.
  */
 export async function refundAiCut(
   userId: string,
   projectId: string,
-  costSeconds: number
+  costSeconds: number,
+  idempotencyKey?: string
 ): Promise<void> {
   const chargeMicros = chargeMicrosForSeconds(costSeconds);
+  const ledgerKey = idempotencyKey ? `ai_cut_refund:${idempotencyKey}` : null;
   await executeRows(sql`
-    WITH led AS (
-      INSERT INTO credit_ledger (user_id, delta_micros, reason, project_id, cost_micros)
+    WITH ins AS (
+      INSERT INTO credit_ledger (user_id, delta_micros, reason, project_id, cost_micros, stripe_event_id)
       VALUES (${userId}, ${chargeMicros}, 'refund', ${projectId},
-              ${costSeconds * AI_CUT_COST_MICROS_PER_SECOND})
+              ${costSeconds * AI_CUT_COST_MICROS_PER_SECOND}, ${ledgerKey})
+      ON CONFLICT (stripe_event_id) DO NOTHING
+      RETURNING delta_micros
     )
-    UPDATE users SET balance_micros = balance_micros + ${chargeMicros}
-    WHERE id = ${userId}
+    UPDATE users u SET balance_micros = u.balance_micros + ins.delta_micros
+    FROM ins WHERE u.id = ${userId}
   `);
 }
 

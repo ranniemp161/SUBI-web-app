@@ -5,10 +5,13 @@ import { reportError } from "@/lib/observability";
 export const maxDuration = 300;
 
 export async function GET(request: Request) {
-  // Enforce Vercel cron authorization
+  // Enforce Vercel cron authorization. Fails closed (matches the autorecharge
+  // cron): a missing CRON_SECRET must never leave the route world-callable,
+  // even though today's body is a no-op — a future deletion added here would
+  // otherwise ship unauthenticated by default.
   const authHeader = request.headers.get("Authorization");
   if (
-    process.env.CRON_SECRET &&
+    !process.env.CRON_SECRET ||
     authHeader !== `Bearer ${process.env.CRON_SECRET}`
   ) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

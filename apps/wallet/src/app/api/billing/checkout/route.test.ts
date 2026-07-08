@@ -104,7 +104,7 @@ describe("POST /api/billing/checkout", () => {
     state.rateAllowed = false;
     const res = await POST(req({ priceId: "price_small" }));
     expect(res.status).toBe(429);
-    expect(rateLimit).toHaveBeenCalledWith("checkout:clerk_1", 10, 3600);
+    expect(rateLimit).toHaveBeenCalledWith("checkout:clerk_1", 10, 3600, { failClosed: true });
   });
 
   it("400 on a missing or malformed body", async () => {

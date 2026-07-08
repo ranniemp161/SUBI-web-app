@@ -15,6 +15,11 @@ const state = vi.hoisted(() => ({
   savedCustomers: [] as Array<{ userId: string; customerId: string }>,
   savedPms: [] as Array<{ userId: string; pmId: string }>,
   sessionPm: "pm_from_session" as string | null,
+  sessionCustomer: "cus_from_pi" as string | null,
+  // What setStripeCustomerId "persists" as (simulates the COALESCE
+  // first-write-wins) — override per test to simulate a concurrent checkout
+  // that already claimed a different customer id for this user.
+  storedCustomerId: null as string | null,
 }));
 
 vi.mock("@/lib/stripe", () => ({
@@ -23,7 +28,10 @@ vi.mock("@/lib/stripe", () => ({
       constructEvent: vi.fn(() => state.constructImpl()),
     },
   }),
-  paymentMethodFromSession: vi.fn(async () => state.sessionPm),
+  paymentMethodFromSession: vi.fn(async () => ({
+    paymentMethodId: state.sessionPm,
+    customerId: state.sessionCustomer,
+  })),
   AUTORECHARGE_KIND: "auto_recharge",
 }));
 
@@ -42,6 +50,9 @@ vi.mock("@/lib/autorecharge", () => ({
   }),
   setStripeCustomerId: vi.fn(async (userId: string, customerId: string) => {
     state.savedCustomers.push({ userId, customerId });
+    // First-write-wins: once storedCustomerId is set, it doesn't change.
+    if (!state.storedCustomerId) state.storedCustomerId = customerId;
+    return state.storedCustomerId;
   }),
   setDefaultPaymentMethod: vi.fn(async (userId: string, pmId: string) => {
     state.savedPms.push({ userId, pmId });
@@ -104,6 +115,8 @@ beforeEach(() => {
   state.savedCustomers = [];
   state.savedPms = [];
   state.sessionPm = "pm_from_session";
+  state.sessionCustomer = "cus_from_pi";
+  state.storedCustomerId = null;
   vi.clearAllMocks();
   process.env.STRIPE_WEBHOOK_SECRET = "whsec_test";
 });
@@ -204,29 +217,49 @@ describe("POST /api/webhooks/stripe — checkout.session.completed", () => {
 });
 
 describe("POST /api/webhooks/stripe — checkout also saves the card", () => {
-  it("persists the customer + payment method from a completed session (AC-5)", async () => {
-    completedSession({ customer: "cus_123" });
+  it("persists the customer + payment method from the same PaymentIntent retrieval (AC-5)", async () => {
+    state.sessionCustomer = "cus_123";
+    completedSession();
     const res = await POST(req());
     expect(res.status).toBe(200);
     expect(state.savedCustomers).toEqual([{ userId: "db-user-1", customerId: "cus_123" }]);
     expect(state.savedPms).toEqual([{ userId: "db-user-1", pmId: "pm_from_session" }]);
   });
+
+  it("does not save the payment method when a concurrent checkout already claimed a different customer id", async () => {
+    // Simulates two interleaved first-time checkouts: an earlier delivery
+    // already won the COALESCE and stuck the user to a different customer.
+    state.storedCustomerId = "cus_won_first";
+    state.sessionCustomer = "cus_this_event";
+    state.sessionPm = "pm_belongs_to_this_event_customer";
+    completedSession();
+    const res = await POST(req());
+    expect(res.status).toBe(200);
+    expect(state.savedCustomers).toEqual([
+      { userId: "db-user-1", customerId: "cus_this_event" },
+    ]);
+    // The payment method belongs to cus_this_event, but cus_won_first is what
+    // stuck — saving it would attach a PM from the wrong customer.
+    expect(state.savedPms).toEqual([]);
+  });
 });
 
 describe("POST /api/webhooks/stripe — auto-recharge PaymentIntent (AC-6)", () => {
-  function pi(metadata: Record<string, unknown>) {
+  function pi(metadata: Record<string, unknown>, amountReceived = 1900) {
     state.constructImpl = () => ({
       type: "payment_intent.succeeded",
-      data: { object: { id: "pi_auto_1", metadata } },
+      data: { object: { id: "pi_auto_1", metadata, amount_received: amountReceived } },
     });
   }
 
-  it("credits an auto_recharge PI (idempotent backstop to the sweep)", async () => {
-    pi({ kind: "auto_recharge", userId: "db-user-1", amountMicros: "19000000" });
+  it("credits an auto_recharge PI from the actually-captured amount, not metadata (idempotent backstop to the sweep)", async () => {
+    // amount_received is in cents; metadata carries no amount at all now —
+    // the credited value is derived only from what Stripe confirms captured.
+    pi({ kind: "auto_recharge", userId: "db-user-1" }, 1900);
     const res = await POST(req());
     expect(res.status).toBe(200);
     expect(state.autoDeposits).toEqual([
-      { userId: "db-user-1", micros: 19000000, eventId: "pi_auto_1" },
+      { userId: "db-user-1", micros: 19_000_000, eventId: "pi_auto_1" },
     ]);
   });
 
@@ -237,8 +270,8 @@ describe("POST /api/webhooks/stripe — auto-recharge PaymentIntent (AC-6)", () 
     expect(state.autoDeposits).toHaveLength(0);
   });
 
-  it("200 + Sentry report on auto_recharge PI with bad metadata", async () => {
-    pi({ kind: "auto_recharge", userId: "db-user-1", amountMicros: "nope" });
+  it("200 + Sentry report when amount_received is missing or zero", async () => {
+    pi({ kind: "auto_recharge", userId: "db-user-1" }, 0);
     const res = await POST(req());
     expect(res.status).toBe(200);
     expect(state.autoDeposits).toHaveLength(0);
