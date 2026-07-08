@@ -36,3 +36,4 @@ Stored in `docs/adr/`. Format: `docs/adr/NNNN-title.md`.
 - [apps/rough-cut/AGENTS.md](./apps/rough-cut/AGENTS.md) — video transcription + AI cutting product app
 - [apps/wallet/AGENTS.md](./apps/wallet/AGENTS.md) — centralized billing/credits app
 - [packages/db/AGENTS.md](./packages/db/AGENTS.md) — shared Drizzle schema, migrations, DB connection
+- [packages/ui/AGENTS.md](./packages/ui/AGENTS.md) — thin shared design tokens + cn() helper
