@@ -1,8 +1,10 @@
 "use client";
 
 import { useState, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { MICROS_PER_USD } from "@repo/ui";
 import type { SavedCard } from "@/lib/stripe";
+import { AddCardForm } from "./add-card-form";
 
 interface AutorechargePanelProps {
   enabled: boolean;
@@ -45,8 +47,10 @@ export function AutorechargePanel({
   const [amountDollars, setAmountDollars] = useState(
     initialAmount != null ? String(initialAmount / MICROS_PER_USD) : "19"
   );
+  const router = useRouter();
   const [saving, setSaving] = useState(false);
   const [addingCard, setAddingCard] = useState(false);
+  const [setupClientSecret, setSetupClientSecret] = useState<string | null>(null);
   const [message, setMessage] = useState<{
     type: "success" | "error";
     text: string;
@@ -119,21 +123,16 @@ export function AutorechargePanel({
         signal: controller.signal,
       });
       clearTimeout(timeoutId);
-      
+
       const data = await res.json();
-      if (!res.ok) {
+      if (!res.ok || !data.clientSecret) {
         setMessage({
           type: "error",
           text: data.error || "Failed to start card setup.",
         });
         return;
       }
-      // In a full integration, the clientSecret would be used with Stripe.js
-      // Elements to confirm the card. For now, surface the intent was created.
-      setMessage({
-        type: "success",
-        text: "Card setup started. Complete the Stripe card form to save your card.",
-      });
+      setSetupClientSecret(data.clientSecret);
     } catch (err) {
       console.error("Add card setup failed:", err);
       const errorText = err instanceof Error && err.name === 'AbortError'
@@ -143,6 +142,16 @@ export function AutorechargePanel({
     } finally {
       setAddingCard(false);
     }
+  }, []);
+
+  const handleCardSaved = useCallback(() => {
+    setSetupClientSecret(null);
+    setMessage({ type: "success", text: "Card saved." });
+    router.refresh();
+  }, [router]);
+
+  const handleCardCancelled = useCallback(() => {
+    setSetupClientSecret(null);
   }, []);
 
   const brandLabel =
@@ -344,6 +353,15 @@ export function AutorechargePanel({
               : "Add card"}
         </button>
       </div>
+
+      {/* Card setup form (Stripe Elements, confirms the SetupIntent) */}
+      {setupClientSecret && (
+        <AddCardForm
+          clientSecret={setupClientSecret}
+          onSuccess={handleCardSaved}
+          onCancel={handleCardCancelled}
+        />
+      )}
 
       {/* No-card prompt */}
       {!hasCard && (

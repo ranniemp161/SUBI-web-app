@@ -46,7 +46,7 @@ Premium here is achieved with hierarchy and restraint on the tokens both apps al
 
 1. [x] **Balance hero + status (AC-1, AC-9).** Build the hero using `formatUsd`, the derived-minutes line, and the auto-recharge state chip.
 2. [x] **Add-funds cards (AC-2, AC-9).** Bundle cards showing pay-vs-get with the bonus surfaced, wired to the existing checkout button.
-3. [x] **Auto-recharge panel (AC-5, AC-9).** The settings card (switch, threshold, amount, saved card, add/replace), wired to child `0002`'s settings API with its validation and no-card disabled state.
+3. [x] **Auto-recharge panel (AC-5, AC-9).** The settings card (switch, threshold, amount, saved card, add/replace), wired to child `0002`'s settings API with its validation and no-card disabled state. **Fix (2026-07-08):** "add/replace card" now actually completes — see child `0002` build plan task 2 for the Stripe Elements form that was missing.
 4. [x] **Low-balance banner (AC-4, AC-9).** The calm inline banner with add-funds / enable-auto-recharge actions.
 5. [x] **History table (AC-9).** Refined ledger table with humanised reasons (including `auto_recharge` and `conversion`), signed `formatUsd`, and an empty state.
 6. [x] **rough-cut prompt (AC-4, AC-9).** Already complete from slices 1+2: `CreditsPanel` header chip shows `$X.XX` balance, goes amber when low, "Add funds" deep-links to wallet; 402 toast includes "Add funds" action.

@@ -5,6 +5,17 @@ import userEvent from "@testing-library/user-event";
 import { expect, test, vi, beforeEach, afterEach, describe, type Mock } from "vitest";
 import { AutorechargePanel } from "./autorecharge-panel";
 
+const mockRefresh = vi.fn();
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ refresh: mockRefresh }),
+}));
+
+vi.mock("./add-card-form", () => ({
+  AddCardForm: ({ onSuccess }: { onSuccess: () => void }) => (
+    <button onClick={onSuccess}>mock-confirm-card</button>
+  ),
+}));
+
 describe("AutorechargePanel", () => {
   let mockFetch: Mock;
 
@@ -110,13 +121,13 @@ describe("AutorechargePanel", () => {
     await screen.findByText("Server error");
   });
   
-  test("starts card setup", async () => {
+  test("starts card setup and renders the card form", async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: async () => ({ clientSecret: "secret" }),
     });
     const user = userEvent.setup();
-    
+
     render(
       <AutorechargePanel
         enabled={false}
@@ -127,14 +138,40 @@ describe("AutorechargePanel", () => {
         failures={0}
       />
     );
-    
+
     const addCardButton = screen.getByRole("button", { name: "Add card" });
     await user.click(addCardButton);
-    
+
     expect(mockFetch).toHaveBeenCalledWith("/api/billing/setup-intent", expect.objectContaining({
       method: "POST",
     }));
-    
-    await screen.findByText(/Card setup started/);
+
+    await screen.findByRole("button", { name: "mock-confirm-card" });
+  });
+
+  test("refreshes the page and shows a success message once the card is confirmed", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ clientSecret: "secret" }),
+    });
+    const user = userEvent.setup();
+
+    render(
+      <AutorechargePanel
+        enabled={false}
+        thresholdMicros={5000000}
+        amountMicros={19000000}
+        hasCard={false}
+        savedCard={null}
+        failures={0}
+      />
+    );
+
+    await user.click(screen.getByRole("button", { name: "Add card" }));
+    await user.click(await screen.findByRole("button", { name: "mock-confirm-card" }));
+
+    expect(mockRefresh).toHaveBeenCalled();
+    await screen.findByText("Card saved.");
+    expect(screen.queryByRole("button", { name: "mock-confirm-card" })).not.toBeInTheDocument();
   });
 });
