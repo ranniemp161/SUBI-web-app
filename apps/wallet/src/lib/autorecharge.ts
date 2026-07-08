@@ -69,6 +69,21 @@ export async function selectAutoRechargeCandidates(
   }));
 }
 
+/**
+ * Check if a user still needs auto-recharge.
+ * Used right before charging Stripe to avoid race conditions with manual deposits.
+ */
+export async function checkNeedsAutoRecharge(userId: string): Promise<boolean> {
+  const [row] = await executeRows(sql`
+    SELECT balance_micros < autorecharge_threshold_micros AS needs_recharge
+    FROM users
+    WHERE id = ${userId}
+      AND autorecharge_enabled = true
+      AND autorecharge_threshold_micros IS NOT NULL
+  `);
+  return row?.needs_recharge === true;
+}
+
 /** Count of successful auto-recharges for a user in the last rolling 24 hours. */
 export async function countRecentAutoRecharges(userId: string): Promise<number> {
   const [row] = await executeRows(sql`

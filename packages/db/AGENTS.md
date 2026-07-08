@@ -4,7 +4,7 @@
 Shared Drizzle ORM package: schema, migrations, and the Neon HTTP DB connection
 used by both `apps/rough-cut` and `apps/wallet` via `@repo/db` / `@repo/db/schema`.
 Guarantees both apps read and write the exact same tables. Currency is
-**tokens** (universal credit unit, see ADR `0001-monorepo-wallet-architecture`),
+**micros** (US dollars, where 1,000,000 micros = $1, see ADR `0002-usd-wallet`),
 tracked by an append-only ledger.
 
 ## Key files
@@ -32,8 +32,8 @@ npm run db:studio     # browse the DB
   the destructive drop/recreate it attempted on a real type conversion).
 - Dev and prod are **separate Neon branches** — migrate each one separately,
   dev first.
-- `users.tokens` is a cached balance; the source of truth is
-  `SUM(credit_ledger.delta_tokens)`. A DB `CHECK` (`users_tokens_nonneg`) makes
+- `users.balance_micros` is a cached balance; the source of truth is
+  `SUM(credit_ledger.delta_micros)`. A DB `CHECK` (`users_balance_micros_nonneg`) makes
   concurrent spends safe without transactions — an overdraft raises Postgres
   error `23514` and rolls back the mutation.
 - `credit_ledger` is append-only; `stripeEventId` is unique and doubles as the
@@ -53,4 +53,5 @@ npm run db:studio     # browse the DB
 
 ## Related ADRs
 - `docs/adr/_root/0001-monorepo-wallet-architecture.md` — why the schema lives
-  in a shared package and why the currency is `tokens` not `credit_seconds`.
+  in a shared package.
+- `docs/adr/_root/0002-usd-wallet/index.md` — why the currency is `micros` (US dollars) instead of tokens, and how auto-recharge is tracked.

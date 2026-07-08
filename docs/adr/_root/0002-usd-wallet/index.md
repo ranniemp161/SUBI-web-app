@@ -1,7 +1,7 @@
 # 0002: USD-denominated Wallet (money balance, auto-recharge, premium UI)
 
 **Date**: 2026-07-08
-**Status**: In Progress
+**Status**: Accepted
 **Scope**: Repo-wide (packages/db, apps/wallet, apps/rough-cut)
 **Supersedes**: Decision 3 (Universal Currency: Tokens) of [0001](../0001-monorepo-wallet-architecture.md)
 

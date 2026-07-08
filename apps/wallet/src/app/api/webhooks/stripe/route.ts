@@ -15,9 +15,9 @@ import { ipRateLimit } from "@/lib/ip-rate-limit";
 import { reportError } from "@/lib/observability";
 
 /**
- * Best-effort: save the Stripe Customer + PaymentMethod from a completed
- * Checkout session onto the user, so auto-recharge can use the card later.
- * Never throws — a save-card hiccup must not fail the (already credited) purchase.
+ * Save the Stripe Customer + PaymentMethod from a completed Checkout session
+ * onto the user, so auto-recharge can use the card later.
+ * Throws on failure to trigger a Stripe webhook retry (depositPurchase is idempotent).
  */
 async function persistSavedCard(session: Stripe.Checkout.Session, userId: string) {
   try {
@@ -32,6 +32,7 @@ async function persistSavedCard(session: Stripe.Checkout.Session, userId: string
     reportError("Failed to save card from checkout session", error, {
       sessionId: session.id,
     });
+    throw error;
   }
 }
 
@@ -142,8 +143,8 @@ export async function POST(request: Request) {
       );
     }
 
-    // Save the card off-session for auto-recharge (ADR 0002/0002). Best-effort,
-    // after the credit has landed, so it can never block the purchase.
+    // Save the card off-session for auto-recharge (ADR 0002/0002).
+    // Throws on failure to trigger a Stripe retry; depositPurchase above is idempotent.
     await persistSavedCard(session, userId);
   } else if (event.type === "payment_intent.succeeded") {
     // Auto-recharge deposit — idempotent backstop to the sweep's own deposit

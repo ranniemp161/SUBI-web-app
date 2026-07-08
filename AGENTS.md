@@ -25,12 +25,13 @@ Tracer Bullet — vertical slices; each feature built end-to-end through every l
 ## Rules
 - Ports are pinned: rough-cut = 3000, wallet = 3001. Cross-app URLs must go through each app's `src/lib/env.ts`, never a raw `process.env.NEXT_PUBLIC_*` read.
 - Schema changes go through `packages/db` only (`db:generate` + `db:migrate`, prod-safe); `db:push` is dev-only, never prod. See `packages/db/AGENTS.md`.
-- Currency is `tokens` (not `credit_seconds` / time-based) — a universal unit multiple future apps can spend against a shared ledger in `@repo/db`.
+- Currency is US dollars stored as `micros` (1,000,000 micros = $1) — a universal unit multiple future apps can spend against a shared ledger in `@repo/db`.
 - The Wallet app (`apps/wallet`) is the sole authority on Stripe billing; other apps never process payments directly, they deep-link to Wallet.
 
 ## ADRs
 Stored in `docs/adr/`. Format: `docs/adr/NNNN-title.md`.
-- [docs/adr/_root/0001-monorepo-wallet-architecture.md](./docs/adr/_root/0001-monorepo-wallet-architecture.md) — monorepo restructuring, shared `packages/db`, universal tokens currency, Clerk SSO, Stripe-in-Wallet
+- [docs/adr/_root/0001-monorepo-wallet-architecture.md](./docs/adr/_root/0001-monorepo-wallet-architecture.md) — monorepo restructuring, shared `packages/db`, universal currency, Clerk SSO, Stripe-in-Wallet
+- [docs/adr/_root/0002-usd-wallet/index.md](./docs/adr/_root/0002-usd-wallet/index.md) — USD-denominated wallet, money ledger in micros, auto-recharge, and premium UI
 
 ## Context files
 - [apps/rough-cut/AGENTS.md](./apps/rough-cut/AGENTS.md) — video transcription + AI cutting product app

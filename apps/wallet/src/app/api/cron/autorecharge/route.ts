@@ -3,6 +3,7 @@ import Stripe from "stripe";
 import { chargeAutoRechargeOffSession } from "@/lib/stripe";
 import {
   selectAutoRechargeCandidates,
+  checkNeedsAutoRecharge,
   countRecentAutoRecharges,
   autoRechargeIdempotencyKey,
   depositAutoRecharge,
@@ -57,7 +58,7 @@ async function noteFailure(userId: string) {
 export async function GET(request: Request) {
   const authHeader = request.headers.get("Authorization");
   if (
-    process.env.CRON_SECRET &&
+    !process.env.CRON_SECRET ||
     authHeader !== `Bearer ${process.env.CRON_SECRET}`
   ) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -71,51 +72,62 @@ export async function GET(request: Request) {
   try {
     const candidates = await selectAutoRechargeCandidates();
 
-    for (const c of candidates) {
-      try {
-        const successesToday = await countRecentAutoRecharges(c.id);
-        if (successesToday >= AUTORECHARGE_MAX_PER_DAY) {
-          capped++;
-          continue;
-        }
+    const BATCH_SIZE = 10;
+    for (let i = 0; i < candidates.length; i += BATCH_SIZE) {
+      const batch = candidates.slice(i, i + BATCH_SIZE);
+      await Promise.all(
+        batch.map(async (c) => {
+          try {
+            const needsRecharge = await checkNeedsAutoRecharge(c.id);
+            if (!needsRecharge) {
+              return;
+            }
 
-        const idempotencyKey = autoRechargeIdempotencyKey(
-          c.id,
-          successesToday,
-          c.failures
-        );
-        const pi = await chargeAutoRechargeOffSession({
-          customerId: c.stripeCustomerId,
-          paymentMethodId: c.defaultPaymentMethodId,
-          amountMicros: c.amountMicros,
-          userId: c.id,
-          idempotencyKey,
-        });
+            const successesToday = await countRecentAutoRecharges(c.id);
+            if (successesToday >= AUTORECHARGE_MAX_PER_DAY) {
+              capped++;
+              return;
+            }
 
-        if (pi.status === "succeeded") {
-          await depositAutoRecharge(c.id, c.amountMicros, pi.id);
-          await notifyAutoRecharge(c.id, {
-            kind: "recharged",
-            amountMicros: c.amountMicros,
-          });
-          charged++;
-        } else {
-          // requires_action / processing etc. — can't complete off-session.
-          await noteFailure(c.id);
-          declined++;
-        }
-      } catch (error) {
-        if (isDecline(error)) {
-          await noteFailure(c.id);
-          declined++;
-        } else {
-          // Network/config error — don't count it against the user's card.
-          reportError("Auto-recharge sweep: unexpected charge error", error, {
-            userId: c.id,
-          });
-          errored++;
-        }
-      }
+            const idempotencyKey = autoRechargeIdempotencyKey(
+              c.id,
+              successesToday,
+              c.failures
+            );
+            const pi = await chargeAutoRechargeOffSession({
+              customerId: c.stripeCustomerId,
+              paymentMethodId: c.defaultPaymentMethodId,
+              amountMicros: c.amountMicros,
+              userId: c.id,
+              idempotencyKey,
+            });
+
+            if (pi.status === "succeeded") {
+              await depositAutoRecharge(c.id, c.amountMicros, pi.id);
+              await notifyAutoRecharge(c.id, {
+                kind: "recharged",
+                amountMicros: c.amountMicros,
+              });
+              charged++;
+            } else {
+              // requires_action / processing etc. — can't complete off-session.
+              await noteFailure(c.id);
+              declined++;
+            }
+          } catch (error) {
+            if (isDecline(error)) {
+              await noteFailure(c.id);
+              declined++;
+            } else {
+              // Network/config error — don't count it against the user's card.
+              reportError("Auto-recharge sweep: unexpected charge error", error, {
+                userId: c.id,
+              });
+              errored++;
+            }
+          }
+        })
+      );
     }
 
     return NextResponse.json({
