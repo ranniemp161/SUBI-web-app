@@ -1,15 +1,15 @@
 "use client";
 
 import { WALLET_DASHBOARD_URL } from "@/lib/env";
-import { formatDuration } from "@/lib/utils";
+import { formatUsd, chargeMicrosForSeconds } from "@repo/ui";
 
 export interface CreditsInfo {
-  tokens: number;
+  balanceMicros: number;
   isMember: boolean;
 }
 
-/** Balance below which the chip turns amber to nudge a top-up. */
-const LOW_BALANCE_SECONDS = 5 * 60;
+/** Balance below which the chip turns amber to nudge a top-up (~5 min of credit). */
+const LOW_BALANCE_MICROS = chargeMicrosForSeconds(5 * 60);
 
 /**
  * Dashboard header widget: the credit balance chip plus a "Buy credits"
@@ -20,13 +20,13 @@ export default function CreditsPanel({
 }: {
   credits: CreditsInfo | null;
 }) {
-  const low = credits != null && credits.tokens < LOW_BALANCE_SECONDS;
+  const low = credits != null && credits.balanceMicros < LOW_BALANCE_MICROS;
   const walletUrl = WALLET_DASHBOARD_URL;
 
   return (
     <div className="relative flex items-center gap-2">
       <span
-        title="Transcription credits remaining"
+        title="Wallet balance remaining"
         className={`inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-semibold tabular-nums border backdrop-blur-md transition-all duration-300 ${
           low
             ? "bg-amber-500/10 text-amber-300 border-amber-500/30 animate-glow-amber"
@@ -42,7 +42,7 @@ export default function CreditsPanel({
           />
         </svg>
         <span>
-          {credits == null ? "—" : formatDuration(credits.tokens * 1000)}
+          {credits == null ? "—" : formatUsd(credits.balanceMicros)}
         </span>
       </span>
 
@@ -60,7 +60,7 @@ export default function CreditsPanel({
             d="M12 9v3m0 0v3m0-3h3m-3 0H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z"
           />
         </svg>
-        Buy credits
+        Add funds
       </a>
     </div>
   );

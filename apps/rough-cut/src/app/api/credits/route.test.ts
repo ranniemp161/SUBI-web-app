@@ -2,9 +2,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const state = vi.hoisted(() => ({
   clerkId: null as string | null,
-  dbUser: null as { id: string; tokens: number; isMember: boolean } | null,
+  dbUser: null as { id: string; balanceMicros: number; isMember: boolean } | null,
   freshRows: [] as Record<string, unknown>[],
-  grantCalls: [] as Array<{ userId: string; seconds: number }>,
+  grantCalls: [] as Array<{ userId: string; micros: number }>,
 }));
 
 vi.mock("@clerk/nextjs/server", () => ({
@@ -17,9 +17,9 @@ vi.mock("@/lib/authz", () => ({
 }));
 
 vi.mock("@/lib/credits", () => ({
-  memberGrantSeconds: vi.fn(() => 3600),
-  ensureMonthlyGrant: vi.fn(async (userId: string, seconds: number) => {
-    state.grantCalls.push({ userId, seconds });
+  memberGrantMicros: vi.fn(() => 19_000_000),
+  ensureMonthlyGrant: vi.fn(async (userId: string, micros: number) => {
+    state.grantCalls.push({ userId, micros });
   }),
 }));
 
@@ -69,26 +69,26 @@ describe("GET /api/credits", () => {
 
   it("applies the lazy grant, then returns the post-grant balance", async () => {
     state.clerkId = "clerk_1";
-    state.dbUser = { id: "db-user-1", tokens: 0, isMember: true };
-    state.freshRows = [{ tokens: 3600, isMember: true }];
+    state.dbUser = { id: "db-user-1", balanceMicros: 0, isMember: true };
+    state.freshRows = [{ balanceMicros: 19_000_000, isMember: true }];
 
     const res = await GET();
     const body = await res.json();
 
     expect(res.status).toBe(200);
-    expect(state.grantCalls).toEqual([{ userId: "db-user-1", seconds: 3600 }]);
-    expect(body).toEqual({ tokens: 3600, isMember: true });
+    expect(state.grantCalls).toEqual([{ userId: "db-user-1", micros: 19_000_000 }]);
+    expect(body).toEqual({ balanceMicros: 19_000_000, isMember: true });
   });
 
   it("falls back to the pre-grant row if the re-read comes back empty", async () => {
     state.clerkId = "clerk_1";
-    state.dbUser = { id: "db-user-1", tokens: 120, isMember: false };
+    state.dbUser = { id: "db-user-1", balanceMicros: 120_000, isMember: false };
     state.freshRows = [];
 
     const res = await GET();
     const body = await res.json();
 
     expect(res.status).toBe(200);
-    expect(body).toEqual({ tokens: 120, isMember: false });
+    expect(body).toEqual({ balanceMicros: 120_000, isMember: false });
   });
 });

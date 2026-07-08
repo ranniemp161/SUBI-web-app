@@ -1,13 +1,16 @@
 import Stripe from "stripe";
+import { chargeMicrosForSeconds } from "@repo/ui";
 import { reportError } from "@/lib/observability";
 
 /**
  * Stripe wiring for one-time credit bundle purchases via Checkout.
  *
  * Bundles are Stripe Prices listed in the STRIPE_PRICE_IDS allowlist, each
- * carrying `metadata.tokens`. Prices/amounts live entirely in the
- * Stripe dashboard — repricing or adding a bundle never needs a deploy, and
- * nothing outside the allowlist can be checked out.
+ * carrying `metadata.credit_micros` — the USD-micros balance to credit, which
+ * is not the same as `unit_amount` (what the user pays) for the bonus tiers.
+ * Prices/amounts and the credited balance live entirely in the Stripe dashboard
+ * — repricing or adding a bundle never needs a deploy, and nothing outside the
+ * allowlist can be checked out.
  */
 
 let stripeSingleton: Stripe | null = null;
@@ -33,24 +36,32 @@ export function allowedPriceIds(): string[] {
 export interface Bundle {
   priceId: string;
   name: string;
-  /** Smallest currency unit (cents). */
+  /** Smallest currency unit (cents) — what the user pays. */
   amount: number;
   currency: string;
-  tokens: number;
+  /** USD micros credited to the balance (1,000,000 = $1); bonus tiers exceed `amount`. */
+  creditMicros: number;
 }
 
-/** Positive-int parse of a Price's metadata.tokens; null if malformed. */
-export function tokensFromPrice(price: Stripe.Price): number | null {
+/**
+ * The USD-micros balance a Price credits, from `metadata.credit_micros`.
+ * Falls back to the legacy `metadata.tokens`/`credit_seconds` (seconds) times
+ * the retail rate for prices not yet migrated to credit_micros. Null if malformed.
+ */
+export function creditMicrosFromPrice(price: Stripe.Price): number | null {
   const product = price.product as Stripe.Product | string;
   const productMetadata = typeof product === "object" ? product.metadata : null;
-  
-  // Check price metadata first, then product metadata. Support legacy 'credit_seconds'.
+
+  // Check price metadata first, then product metadata.
   for (const metadata of [price.metadata, productMetadata]) {
     if (!metadata) continue;
-    const val = metadata.tokens || metadata.credit_seconds;
-    if (val) {
-      const n = Number(val);
-      if (Number.isInteger(n) && n > 0) return n;
+    // Preferred: an explicit USD-micros balance.
+    const micros = Number(metadata.credit_micros);
+    if (Number.isInteger(micros) && micros > 0) return micros;
+    // Legacy: a token/second count — convert at the retail rate.
+    const legacySeconds = Number(metadata.tokens || metadata.credit_seconds);
+    if (Number.isInteger(legacySeconds) && legacySeconds > 0) {
+      return chargeMicrosForSeconds(legacySeconds);
     }
   }
   return null;
@@ -80,10 +91,10 @@ export async function getBundles(): Promise<Bundle[]> {
   const bundles: Bundle[] = [];
   for (const price of prices) {
     if (!price) continue;
-    const tokens = tokensFromPrice(price);
-    if (!tokens || price.unit_amount == null) {
+    const creditMicros = creditMicrosFromPrice(price);
+    if (!creditMicros || price.unit_amount == null) {
       reportError(
-        "Stripe price skipped: missing/malformed tokens metadata or amount",
+        "Stripe price skipped: missing/malformed credit_micros metadata or amount",
         new Error("misconfigured bundle price"),
         { priceId: price.id }
       );
@@ -93,13 +104,13 @@ export async function getBundles(): Promise<Bundle[]> {
     const name =
       typeof product === "object" && product && "name" in product
         ? product.name
-        : "Transcription credits";
+        : "Wallet credit";
     bundles.push({
       priceId: price.id,
       name,
       amount: price.unit_amount,
       currency: price.currency,
-      tokens,
+      creditMicros,
     });
   }
 
@@ -112,4 +123,130 @@ export async function getBundles(): Promise<Bundle[]> {
 /** Test hook: drop the memoized bundle list. */
 export function clearBundlesCache() {
   bundlesCache = null;
+}
+
+// ---------------------------------------------------------------------------
+// Off-session auto-recharge (ADR 0002/0002)
+// ---------------------------------------------------------------------------
+
+/** Metadata key marking a PaymentIntent as an auto-recharge (read by the webhook). */
+export const AUTORECHARGE_KIND = "auto_recharge";
+
+/**
+ * USD micros -> Stripe's minor unit (cents). 10,000 micros = 1 cent. Amounts
+ * are validated to be whole-cent multiples of the retail bundles, so this is
+ * exact in practice; round to stay safe against a hand-set micro amount.
+ */
+export function microsToStripeMinorUnit(micros: number): number {
+  return Math.round(micros / 10_000);
+}
+
+/** Create the Stripe Customer for a user if they don't have one yet; return its id. */
+export async function ensureStripeCustomer(
+  existingCustomerId: string | null,
+  email: string | null,
+  dbUserId: string
+): Promise<string> {
+  if (existingCustomerId) return existingCustomerId;
+  const customer = await getStripe().customers.create({
+    email: email || undefined,
+    metadata: { dbUserId },
+  });
+  return customer.id;
+}
+
+/**
+ * SetupIntent for the settings "add / replace card" path: lets the client
+ * confirm a card for later off-session use without a payment.
+ */
+export async function createSetupIntent(
+  customerId: string,
+  userId: string
+): Promise<{ clientSecret: string | null; setupIntentId: string }> {
+  const si = await getStripe().setupIntents.create({
+    customer: customerId,
+    usage: "off_session",
+    payment_method_types: ["card"],
+    metadata: { userId },
+  });
+  return { clientSecret: si.client_secret, setupIntentId: si.id };
+}
+
+/**
+ * Charge a saved card off-session for an auto-recharge. Idempotent on the
+ * provided key so a sweep re-run cannot double-charge. Metadata carries the
+ * userId + amount so the webhook can deposit reason `auto_recharge`.
+ * Throws a Stripe card error on a synchronous decline (caller handles it).
+ */
+export async function chargeAutoRechargeOffSession(params: {
+  customerId: string;
+  paymentMethodId: string;
+  amountMicros: number;
+  userId: string;
+  idempotencyKey: string;
+}): Promise<Stripe.PaymentIntent> {
+  const { customerId, paymentMethodId, amountMicros, userId, idempotencyKey } =
+    params;
+  return getStripe().paymentIntents.create(
+    {
+      amount: microsToStripeMinorUnit(amountMicros),
+      currency: "usd",
+      customer: customerId,
+      payment_method: paymentMethodId,
+      off_session: true,
+      confirm: true,
+      metadata: {
+        kind: AUTORECHARGE_KIND,
+        userId,
+        amountMicros: String(amountMicros),
+      },
+    },
+    { idempotencyKey }
+  );
+}
+
+/**
+ * The saved PaymentMethod id from a completed Checkout session, by retrieving
+ * its PaymentIntent (the session only holds the PI id). Null if unavailable.
+ */
+export async function paymentMethodFromSession(
+  session: Stripe.Checkout.Session
+): Promise<string | null> {
+  const piId =
+    typeof session.payment_intent === "string"
+      ? session.payment_intent
+      : session.payment_intent?.id;
+  if (!piId) return null;
+  const pi = await getStripe().paymentIntents.retrieve(piId);
+  return typeof pi.payment_method === "string"
+    ? pi.payment_method
+    : pi.payment_method?.id ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// Saved-card display (ADR 0002/0003 — premium wallet UI)
+// ---------------------------------------------------------------------------
+
+export interface SavedCard {
+  brand: string;
+  last4: string;
+}
+
+/**
+ * Retrieve the saved card's brand and last4 for display in the auto-recharge
+ * panel. Returns null if the payment method doesn't exist or has no card data.
+ * Never returns sensitive card details — just the display-safe fields.
+ */
+export async function getSavedCard(
+  paymentMethodId: string | null | undefined
+): Promise<SavedCard | null> {
+  if (!paymentMethodId) return null;
+  try {
+    const pm = await getStripe().paymentMethods.retrieve(paymentMethodId);
+    const card = pm.card;
+    if (!card) return null;
+    return { brand: card.brand, last4: card.last4 };
+  } catch {
+    return null;
+  }
 }

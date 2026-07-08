@@ -16,13 +16,14 @@ vi.mock('@clerk/nextjs/server', () => {
       setMiddlewareHandler(handler);
       return handler;
     }),
-    createRouteMatcher: vi.fn(() => {
+    // Use the REAL patterns passed by proxy.ts (not a hardcoded copy), so this
+    // test actually validates the public-route list and catches a regression in it.
+    createRouteMatcher: vi.fn((patterns: string[]) => {
       return vi.fn((req) => {
         const path = req.nextUrl.pathname;
-        if (path === '/' || path.startsWith('/sign-in') || path.startsWith('/sign-up') || path === '/api/auth/verify-code' || path === '/api/webhooks/clerk' || path === '/api/transcribe/callback') {
-          return true;
-        }
-        return false;
+        return patterns.some((p) =>
+          new RegExp(`^${p.replace('(.*)', '.*')}$`).test(path)
+        );
       });
     }),
   };
@@ -46,6 +47,19 @@ describe('proxy middleware', () => {
   it('allows public routes without authentication', async () => {
     const auth = vi.fn().mockResolvedValue({});
     const request = { nextUrl: { pathname: '/sign-in' } };
+
+    const response = await getMiddlewareHandler()(auth, request);
+
+    expect(auth).not.toHaveBeenCalled();
+    expect(response).toBeUndefined();
+  });
+
+  // Regression: the blob-sweep cron is called by Vercel with no Clerk session
+  // but a CRON_SECRET Bearer token; it must skip Clerk auth or the middleware
+  // 401s it before its own secret check runs.
+  it('treats the cron route as public (self-gates on CRON_SECRET)', async () => {
+    const auth = vi.fn().mockResolvedValue({});
+    const request = { nextUrl: { pathname: '/api/cron/blob-sweep' } };
 
     const response = await getMiddlewareHandler()(auth, request);
 

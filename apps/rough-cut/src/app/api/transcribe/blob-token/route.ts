@@ -3,7 +3,11 @@ import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
 import { NextResponse } from "next/server";
 import { getOwnedProject } from "@/lib/projects";
 import { getAuthorizedDbUser } from "@/lib/authz";
-import { costSecondsForDurationMs } from "@/lib/credits";
+import {
+  costSecondsForDurationMs,
+  chargeMicrosForSeconds,
+  RETAIL_MICROS_PER_MINUTE,
+} from "@/lib/credits";
 import { rateLimit } from "@/lib/rate-limit";
 import { DEEPGRAM_MAX_UPLOAD_BYTES } from "@/lib/deepgram";
 import { uploadPathnameForProject } from "@/lib/blob";
@@ -63,7 +67,10 @@ export async function POST(request: Request): Promise<NextResponse> {
 
         // Soft credit check — saves the user a doomed upload. The
         // authoritative reserve happens in /api/transcribe/deepgram.
-        if (user.tokens < costSecondsForDurationMs(project.durationMs)) {
+        const neededMicros = chargeMicrosForSeconds(
+          costSecondsForDurationMs(project.durationMs)
+        );
+        if (user.balanceMicros < neededMicros) {
           throw new Error("Not enough credits to transcribe this video.");
         }
 
@@ -75,15 +82,19 @@ export async function POST(request: Request): Promise<NextResponse> {
           throw new Error("Unexpected upload pathname.");
         }
 
-        // Dynamically cap the upload size based on available credits.
-        // 200KB per token (second) covers even uncompressed 16-bit 48kHz audio.
-        // This prevents an attacker from spoofing durationMs=0 to bypass the 
-        // soft credit check and uploading a massive 2GB file.
-        const MAX_BYTES_PER_TOKEN_SECOND = 200_000;
+        // Dynamically cap the upload size based on affordable seconds of credit.
+        // 200KB per second covers even uncompressed 16-bit 48kHz audio. This
+        // prevents an attacker from spoofing durationMs=0 to bypass the soft
+        // credit check and uploading a massive 2GB file.
+        const MAX_BYTES_PER_CREDIT_SECOND = 200_000;
+        // Convert the money balance back to the seconds it can buy at the retail rate.
+        const affordableSeconds = Math.floor(
+          (user.balanceMicros * 60) / RETAIL_MICROS_PER_MINUTE
+        );
         // Provide a 1MB base floor so very small uploads or rounding doesn't fail.
         const maxAllowedBytes = Math.min(
           DEEPGRAM_MAX_UPLOAD_BYTES,
-          Math.max(1_000_000, user.tokens * MAX_BYTES_PER_TOKEN_SECOND)
+          Math.max(1_000_000, affordableSeconds * MAX_BYTES_PER_CREDIT_SECOND)
         );
 
         return {

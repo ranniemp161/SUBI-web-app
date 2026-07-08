@@ -15,8 +15,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Wallet App",
-  description: "This page is wallet app dashboard",
+  title: "SUBI Wallet — Billing & Credits",
+  description:
+    "Manage your SUBI balance, purchase credit bundles, and configure auto-recharge. Your centralized billing portal for the SUBI ecosystem.",
 };
 
 export default function RootLayout({
@@ -33,15 +34,30 @@ export default function RootLayout({
       >
         <body
           suppressHydrationWarning
-          className="min-h-full flex flex-col bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100"
+          className="min-h-full flex flex-col"
+          style={{
+            background: "var(--wallet-surface-sunken)",
+            color: "var(--wallet-text-primary)",
+          }}
         >
-          <header className="border-b dark:border-zinc-800 bg-white dark:bg-zinc-900">
-            <div className="max-w-4xl mx-auto px-8 h-16 flex items-center justify-between">
-              <span className="font-bold text-xl tracking-tight">SUBI Wallet</span>
+          <header
+            className="sticky top-0 z-10 backdrop-blur-md"
+            style={{
+              background:
+                "color-mix(in srgb, var(--wallet-surface) 85%, transparent)",
+              borderBottom: "1px solid var(--wallet-border-subtle)",
+              boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+            }}
+          >
+            <div className="max-w-5xl mx-auto px-8 h-16 flex items-center justify-between">
+              <span className="font-bold text-xl tracking-tight">
+                SUBI Wallet
+              </span>
               <div className="flex items-center gap-4">
                 <a
                   href={ROUGH_CUT_URL}
-                  className="text-sm font-medium text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100 transition-colors"
+                  className="text-sm font-medium transition-colors hover:opacity-80"
+                  style={{ color: "var(--wallet-text-secondary)" }}
                 >
                   Back to Rough Cut
                 </a>
@@ -49,9 +65,7 @@ export default function RootLayout({
               </div>
             </div>
           </header>
-          <main className="flex-1">
-            {children}
-          </main>
+          <main className="flex-1">{children}</main>
         </body>
       </html>
     </ClerkProvider>

@@ -34,19 +34,35 @@ export const users = pgTable(
     clerkId: text("clerk_id").notNull().unique(),
     email: text("email").notNull(),
     /**
-     * Cached token balance; the source of
-     * truth is SUM(credit_ledger.delta_tokens). The CHECK below is what makes
+     * Cached money balance in USD micros (1,000,000 = $1); the source of
+     * truth is SUM(credit_ledger.delta_micros). The CHECK below is what makes
      * concurrent spends safe without transactions: an overdraft raises 23514
      * and rolls back the whole (single-statement) credit mutation.
      */
-    tokens: integer("tokens").notNull().default(0),
+    balanceMicros: integer("balance_micros").notNull().default(0),
     /** Skool community member — receives the monthly credit grant. */
     isMember: boolean("is_member").notNull().default(false),
+    /**
+     * Auto-recharge (ADR 0002/0002): buy more automatically off-session when
+     * the balance drops below a user-set line. We store only Stripe ids, never
+     * card data. Off by default; cannot be enabled without a saved card.
+     */
+    stripeCustomerId: text("stripe_customer_id").unique(),
+    defaultPaymentMethodId: text("default_payment_method_id"),
+    autorechargeEnabled: boolean("autorecharge_enabled")
+      .notNull()
+      .default(false),
+    /** Charge when balance_micros drops below this (USD micros). */
+    autorechargeThresholdMicros: integer("autorecharge_threshold_micros"),
+    /** How much to buy each time (USD micros); validated to exceed the threshold. */
+    autorechargeAmountMicros: integer("autorecharge_amount_micros"),
+    /** Consecutive off-session decline counter; auto-disables at the cap. */
+    autorechargeFailures: integer("autorecharge_failures").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
   },
-  (t) => [check("users_tokens_nonneg", sql`${t.tokens} >= 0`)]
+  (t) => [check("users_balance_micros_nonneg", sql`${t.balanceMicros} >= 0`)]
 );
 
 /**
@@ -70,11 +86,11 @@ export const projects = pgTable("projects", {
   /** Random per-request secret checked on the Deepgram callback — Deepgram callbacks aren't signed. */
   transcriptCallbackToken: text("transcript_callback_token"),
   /**
-   * Tokens reserved for the in-flight transcription job; NULL when
-   * no job holds tokens. Doubles as the double-kickoff gate and as the
+   * Money (USD micros) reserved for the in-flight transcription job; NULL when
+   * no job holds funds. Doubles as the double-kickoff gate and as the
    * exactly-once gate for settling (see lib/credits.ts).
    */
-  tokensHold: integer("tokens_hold"),
+  holdMicros: integer("hold_micros"),
   edl: jsonb("edl"),
   /** AI rough-cut suggestions (shape: AiCuts in lib/ai-cuts.ts), written server-side only. */
   aiCuts: jsonb("ai_cuts"),
@@ -93,11 +109,15 @@ export const creditLedgerReasonEnum = pgEnum("credit_ledger_reason", [
   "refund",
   "grant",
   "ai_cut",
+  // One-time token->USD balance conversion (see migration 0003).
+  "conversion",
+  // Off-session auto-recharge deposit (child ADR 0002/0002).
+  "auto_recharge",
 ]);
 
 /**
  * Append-only credit ledger — the source of truth for balances.
- * `users.tokens` is a cache of SUM(delta_tokens) per user; every
+ * `users.balance_micros` is a cache of SUM(delta_micros) per user; every
  * mutation writes a ledger row and bumps the cache in one atomic statement.
  */
 export const creditLedger = pgTable(
@@ -107,8 +127,8 @@ export const creditLedger = pgTable(
     userId: uuid("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    /** Positive = deposit, negative = charge. */
-    deltaTokens: integer("delta_tokens").notNull(),
+    /** Positive = deposit, negative = charge. USD micros (1,000,000 = $1). */
+    deltaMicros: integer("delta_micros").notNull(),
     reason: creditLedgerReasonEnum("reason").notNull(),
     projectId: uuid("project_id").references(() => projects.id, {
       onDelete: "set null",

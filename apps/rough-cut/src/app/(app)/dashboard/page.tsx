@@ -8,6 +8,7 @@ import FilePicker, { type VideoMetadata } from "@/components/file-picker";
 import CreditsPanel, { type CreditsInfo } from "@/components/credits-panel";
 import ProgressRing from "@/components/progress-ring";
 import { WALLET_DASHBOARD_URL } from "@/lib/env";
+import { formatUsd, chargeMicrosForSeconds } from "@repo/ui";
 import { formatDuration, formatDate } from "@/lib/utils";
 import { extractAudioForTranscription } from "@/lib/audio-extract";
 import { uploadPathnameForProject } from "@/lib/blob";
@@ -388,13 +389,13 @@ export default function DashboardPage() {
         return copy;
       });
       if ((error as { insufficientCredits?: boolean })?.insufficientCredits) {
-        // Server-authoritative "out of credits" — offer the fix directly.
+        // Server-authoritative "out of funds" — offer the fix directly.
         fetchCredits();
-        toast.error("Not enough credits", {
+        toast.error("Not enough funds", {
           id: toastId,
           description:
             error instanceof Error ? error.message : String(error),
-          action: { label: "Buy credits", onClick: () => window.open(WALLET_DASHBOARD_URL, "_blank") },
+          action: { label: "Add funds", onClick: () => window.open(WALLET_DASHBOARD_URL, "_blank") },
         });
         setProjects((prev) =>
           prev.map((p) =>
@@ -419,13 +420,13 @@ export default function DashboardPage() {
   const blockedByCredits = useCallback(
     (durationMs: number | null | undefined): boolean => {
       if (credits == null || durationMs == null || durationMs <= 0) return false;
-      const needed = Math.ceil(durationMs / 1000);
-      if (needed <= credits.tokens) return false;
-      toast.error("Not enough credits for this video", {
-        description: `It needs ${formatDuration(durationMs)} of credit — you have ${formatDuration(
-          credits.tokens * 1000
+      const neededMicros = chargeMicrosForSeconds(Math.ceil(durationMs / 1000));
+      if (neededMicros <= credits.balanceMicros) return false;
+      toast.error("Not enough funds for this video", {
+        description: `It needs about ${formatUsd(neededMicros)} of credit — you have ${formatUsd(
+          credits.balanceMicros
         )}.`,
-        action: { label: "Buy credits", onClick: () => window.open(WALLET_DASHBOARD_URL, "_blank") },
+        action: { label: "Add funds", onClick: () => window.open(WALLET_DASHBOARD_URL, "_blank") },
       });
       return true;
     },

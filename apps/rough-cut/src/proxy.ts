@@ -11,6 +11,9 @@ const isPublicRoute = createRouteMatcher([
   "/api/auth/verify-code",
   "/api/webhooks/clerk",
   "/api/transcribe/callback",
+  // Cron sweep is called by Vercel with no Clerk session; it self-gates on
+  // CRON_SECRET, so it must skip Clerk auth (same reason as the webhook above).
+  "/api/cron(.*)",
 ]);
 
 import { NextResponse } from "next/server";

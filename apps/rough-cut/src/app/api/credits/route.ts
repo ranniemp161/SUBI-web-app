@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { db, withDbRetry } from "@repo/db";
 import { users } from "@repo/db/schema";
 import { getAuthorizedDbUser } from "@/lib/authz";
-import { ensureMonthlyGrant, memberGrantSeconds } from "@/lib/credits";
+import { ensureMonthlyGrant, memberGrantMicros } from "@/lib/credits";
 import { reportError } from "@/lib/observability";
 
 /**
@@ -27,7 +27,7 @@ export async function GET() {
       return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
     }
 
-    await ensureMonthlyGrant(user.id, memberGrantSeconds());
+    await ensureMonthlyGrant(user.id, memberGrantMicros());
 
     // Re-read: the grant may have just changed the balance.
     const [fresh] = await withDbRetry(() =>
@@ -35,7 +35,7 @@ export async function GET() {
     );
 
     return NextResponse.json({
-      tokens: fresh?.tokens ?? user.tokens,
+      balanceMicros: fresh?.balanceMicros ?? user.balanceMicros,
       isMember: fresh?.isMember ?? user.isMember,
     });
   } catch (error) {

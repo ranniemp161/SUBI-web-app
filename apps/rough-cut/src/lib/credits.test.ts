@@ -172,20 +172,25 @@ describe("settleHold", () => {
   });
 
   it("is quiet on a normal refund", async () => {
-    state.rows = [{ held: 120, delta: 20 }];
+    // held (120s) exceeds the 100s actually billed -> a refund, no shortfall.
+    // held/delta are USD micros: chargeMicrosForSeconds(120) = 633_334.
+    state.rows = [{ held: 633_334, delta: 105_556 }];
     await settleHold("p1", 100);
     expect(state.reported).toEqual([]);
   });
 
   it("is quiet when the shortfall was fully collected", async () => {
-    state.rows = [{ held: 60, delta: -40 }];
+    // actual (100s) exceeds the 60s hold and the whole shortfall was charged.
+    // held = chargeMicrosForSeconds(60) = 316_667; delta = -(527_778 - 316_667).
+    state.rows = [{ held: 316_667, delta: -211_111 }];
     await settleHold("p1", 100);
     expect(state.reported).toEqual([]);
   });
 
   it("reports a clamped shortfall to Sentry", async () => {
-    // Actual ran 100s over a 10s hold but only 30s could be collected.
-    state.rows = [{ held: 10, delta: -30 }];
+    // Actual ran 110s over a 10s hold but only part could be collected.
+    // held = chargeMicrosForSeconds(10) = 52_778; only ~30s worth was charged.
+    state.rows = [{ held: 52_778, delta: -158_333 }];
     await settleHold("p1", 110);
     expect(state.reported).toEqual([
       "Credit reconciliation shortfall clamped at zero balance",

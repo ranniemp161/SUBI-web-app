@@ -32,6 +32,20 @@ describe("proxy middleware", () => {
     expect(auth).not.toHaveBeenCalled();
   });
 
+  // Regression: the cron sweeps are called by Vercel with no Clerk session but a
+  // CRON_SECRET Bearer token. They must skip Clerk auth or the middleware 401s
+  // them before their own secret check runs, and the sweep never fires.
+  it.each([
+    "/api/cron/autorecharge",
+    "/api/cron/cleanup",
+  ])("treats %s as public (self-gates on CRON_SECRET)", async (pathname) => {
+    const auth = vi.fn();
+    const req = { nextUrl: { pathname } };
+    const res = await (middleware as any)(auth, req as any);
+    expect(auth).not.toHaveBeenCalled();
+    expect(res).toBeUndefined();
+  });
+
   it("calls auth.protect() for private non-API routes when unauthorized", async () => {
     const auth = vi.fn(async () => ({ userId: null }));
     (auth as any).protect = mockProtect;

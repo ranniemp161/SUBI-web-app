@@ -1,12 +1,21 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 
-const isPublicRoute = createRouteMatcher([
+/**
+ * Routes that skip Clerk session auth. Machine-called routes (Stripe webhooks,
+ * the cron sweeps) are public HERE because they carry their own gate — a Stripe
+ * signature or the `CRON_SECRET` Bearer token — and arrive with no Clerk session,
+ * so Clerk's middleware would 401 them before their own check ever runs.
+ */
+export const PUBLIC_ROUTES = [
   "/",
   "/sign-in(.*)",
   "/sign-up(.*)",
   "/api/webhooks(.*)",
   "/api/billing/bundles(.*)",
-]);
+  "/api/cron(.*)",
+];
+
+const isPublicRoute = createRouteMatcher(PUBLIC_ROUTES);
 
 import { NextResponse } from "next/server";
 

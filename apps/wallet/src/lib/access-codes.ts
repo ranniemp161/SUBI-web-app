@@ -92,7 +92,7 @@ export async function provisionMemberWithCode(
       and(
         eq(users.id, user.id),
         eq(users.isMember, false),
-        eq(users.tokens, 0)
+        eq(users.balanceMicros, 0)
       )
     );
   return null;

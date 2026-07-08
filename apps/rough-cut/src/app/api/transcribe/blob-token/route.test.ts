@@ -5,7 +5,7 @@ const state = vi.hoisted(() => ({
   accessOk: false,
   rateAllowed: true,
   ownedProject: null as { id: string; durationMs: number } | null,
-  tokens: 0,
+  balanceMicros: 0,
   mockPayloadProjectId: "proj-1" as string | undefined,
   mockPathname: "projects/proj-1/audio" as string,
   onBeforeGenerateTokenResult: null as { maximumSizeInBytes?: number; access?: string; addRandomSuffix?: boolean; allowedContentTypes?: string[]; tokenPayload?: string } | null,
@@ -17,7 +17,7 @@ vi.mock("@clerk/nextjs/server", () => ({
 
 vi.mock("@/lib/authz", () => ({
   getAuthorizedDbUser: vi.fn(async () =>
-    state.accessOk ? { id: "db-user-1", tokens: state.tokens } : null
+    state.accessOk ? { id: "db-user-1", balanceMicros: state.balanceMicros } : null
   ),
 }));
 
@@ -35,6 +35,10 @@ vi.mock("@/lib/projects", () => ({
 
 vi.mock("@/lib/credits", () => ({
   costSecondsForDurationMs: vi.fn((ms: number) => ms ? Math.ceil(ms / 1000) : 0),
+  RETAIL_MICROS_PER_MINUTE: 316_667,
+  chargeMicrosForSeconds: vi.fn((seconds: number) =>
+    Math.round((seconds * 316_667) / 60)
+  ),
 }));
 
 vi.mock("@/lib/blob", () => ({
@@ -73,7 +77,7 @@ beforeEach(() => {
   state.clerkId = "clerk_1";
   state.accessOk = true;
   state.rateAllowed = true;
-  state.tokens = 1000;
+  state.balanceMicros = 100_000_000; // $100, plenty for the default 120s job
   state.ownedProject = { id: "proj-1", durationMs: 120_000 };
   state.mockPayloadProjectId = "proj-1";
   state.mockPathname = "projects/proj-1/audio";
@@ -123,7 +127,7 @@ describe("POST /api/transcribe/blob-token", () => {
   });
 
   it("returns 400 if not enough credits", async () => {
-    state.tokens = 50; // cost is 120s
+    state.balanceMicros = 100_000; // ~$0.10, well below the 120s job cost (~$0.63)
     const res = await POST(req());
     expect(res.status).toBe(400);
     const data = await res.json();
@@ -138,8 +142,8 @@ describe("POST /api/transcribe/blob-token", () => {
     expect(data.error).toBe("Unexpected upload pathname.");
   });
 
-  it("succeeds and dynamically caps upload size based on tokens", async () => {
-    state.tokens = 10; // 10 * 200_000 = 2,000,000 bytes
+  it("succeeds and dynamically caps upload size based on affordable seconds", async () => {
+    state.balanceMicros = 52_778; // ~10 affordable seconds -> 10 * 200_000 = 2,000,000 bytes
     state.ownedProject = { id: "proj-1", durationMs: 10_000 };
     const res = await POST(req());
     expect(res.status).toBe(200);
@@ -152,8 +156,8 @@ describe("POST /api/transcribe/blob-token", () => {
     });
   });
 
-  it("provides a 1MB floor for small token balances", async () => {
-    state.tokens = 2; // 2 * 200_000 = 400_000 < 1_000_000
+  it("provides a 1MB floor for small balances", async () => {
+    state.balanceMicros = 10_556; // ~2 affordable seconds -> 400_000 < 1_000_000
     state.ownedProject = { id: "proj-1", durationMs: 2_000 };
     const res = await POST(req());
     expect(res.status).toBe(200);
@@ -161,7 +165,7 @@ describe("POST /api/transcribe/blob-token", () => {
   });
 
   it("respects DEEPGRAM_MAX_UPLOAD_BYTES as ceiling", async () => {
-    state.tokens = 99999999;
+    state.balanceMicros = 999_999_999_999;
     const res = await POST(req());
     expect(res.status).toBe(200);
     expect(state.onBeforeGenerateTokenResult?.maximumSizeInBytes).toBe(DEEPGRAM_MAX_UPLOAD_BYTES);

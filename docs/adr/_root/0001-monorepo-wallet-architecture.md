@@ -15,7 +15,7 @@ revised decision below) and is the one remaining piece to build.
 |---|---|
 | 1. Turborepo monorepo | Built (`turbo.json`, npm workspaces `apps/*`, `packages/*`) |
 | 2. Shared `packages/db` | Built (Drizzle schema/connection shared via `@repo/db`) |
-| 3. Universal `tokens` currency | Built (schema uses `tokens`; append-only `credit_ledger`) |
+| 3. Universal `tokens` currency | Built, then **superseded by [0002](0002-usd-wallet/index.md)** — balance is being redenominated from `tokens` to USD (micros) |
 | 4. Clerk multi-domain SSO | Built (both apps on Clerk) |
 | 5. Stripe billing in Wallet | Built (checkout + webhook live in `apps/wallet`) |
 | 6. `packages/ui` shared UI | Revised (thin shared theme, see below) — not yet built |
@@ -44,9 +44,10 @@ We will restructure the `SUBI-web-app` repository into a Turborepo.
 The Drizzle ORM schema, migrations, and database connection logic will be extracted from the main app into a shared internal package (`packages/db`).
 - **Why**: Prevents schema duplication. Both apps can import `@repo/db` and be guaranteed to read/write the exact same data structure.
 
-### 3. Universal Currency: Tokens
+### 3. Universal Currency: Tokens — SUPERSEDED by [0002](0002-usd-wallet/index.md) (2026-07-08)
 We will migrate the database schema from `credit_seconds` to a universal `tokens` currency. 
 - **Why**: A time-based currency ("seconds") cannot be used to purchase static assets like images or infographics. A universal "token" allows each app to define its own exchange rate (e.g., 100 tokens = 1 min video, 50 tokens = 1 image).
+- **Superseded**: The balance is being redenominated directly in **US dollars** (stored as integer USD micros). Money is more universal than a token and still lets each app price its own service, so the token abstraction is collapsed into money. See [0002 USD-denominated Wallet](0002-usd-wallet/index.md). Decisions 1, 2, 4, 5, 6 of this ADR are unaffected.
 
 ### 4. Authentication: Clerk Multi-Domain SSO
 We will configure Clerk for Multi-Domain SSO. 

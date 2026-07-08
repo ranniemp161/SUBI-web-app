@@ -694,10 +694,10 @@ export default function EditorPage() {
       const data = await response.json().catch(() => null);
       if (!response.ok) {
         if (response.status === 402) {
-          toast.error("Not enough credits", {
+          toast.error("Not enough funds", {
             id: "ai-cut",
             description: "This AI pass needs more credit than you have left.",
-            action: { label: "Buy credits", onClick: () => window.open(WALLET_DASHBOARD_URL, "_blank") },
+            action: { label: "Add funds", onClick: () => window.open(WALLET_DASHBOARD_URL, "_blank") },
           });
           return;
         }

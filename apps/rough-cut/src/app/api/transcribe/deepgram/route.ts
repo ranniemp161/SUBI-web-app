@@ -10,7 +10,7 @@ import { getAuthorizedDbUser } from "@/lib/authz";
 import {
   costSecondsForDurationMs,
   ensureMonthlyGrant,
-  memberGrantSeconds,
+  memberGrantMicros,
   reclaimStaleHold,
   reserveCredits,
   secondsFromDeepgramDuration,
@@ -141,7 +141,7 @@ export async function POST(request: Request) {
   // Credits: top up the member grant if a new month started, then atomically
   // reserve this job's cost (charged now, trued up against Deepgram's
   // authoritative duration when the transcript lands — see lib/credits.ts).
-  await ensureMonthlyGrant(user.id, memberGrantSeconds());
+  await ensureMonthlyGrant(user.id, memberGrantMicros());
 
   const costSeconds = costSecondsForDurationMs(project.durationMs);
   let reserved = await reserveCredits(user.id, projectId, costSeconds);

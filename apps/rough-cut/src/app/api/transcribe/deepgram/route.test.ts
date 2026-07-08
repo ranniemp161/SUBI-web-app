@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const state = vi.hoisted(() => ({
   clerkId: null as string | null,
-  dbUser: null as { id: string; tokens: number } | null,
+  dbUser: null as { id: string; balanceMicros: number } | null,
   rateAllowed: true,
   ownedProject: null as
     | { id: string; durationMs?: number | null; transcriptStatus?: string }
@@ -36,7 +36,7 @@ vi.mock("@/lib/credits", () => ({
   secondsFromDeepgramDuration: vi.fn((d: number | null | undefined) =>
     d && d > 0 ? Math.max(1, Math.ceil(d)) : null
   ),
-  memberGrantSeconds: vi.fn(() => 3600),
+  memberGrantMicros: vi.fn(() => 19_000_000),
   ensureMonthlyGrant: vi.fn(async () => {}),
   reserveCredits: vi.fn(async (userId: string, projectId: string, cost: number) => {
     state.reserveCalls.push({ userId, projectId, cost });
@@ -117,7 +117,7 @@ beforeEach(() => {
 
 function authorize() {
   state.clerkId = "clerk_1";
-  state.dbUser = { id: "user-1", tokens: 3600 };
+  state.dbUser = { id: "user-1", balanceMicros: 19_000_000 };
 }
 
 describe("POST /api/transcribe/deepgram — request guards", () => {
@@ -184,7 +184,7 @@ describe("POST /api/transcribe/deepgram — credit gating", () => {
     const body = await res.json();
     expect(body.code).toBe("INSUFFICIENT_CREDITS");
     expect(body.requiredSeconds).toBe(120);
-    expect(ensureMonthlyGrant).toHaveBeenCalledWith("user-1", 3600);
+    expect(ensureMonthlyGrant).toHaveBeenCalledWith("user-1", 19_000_000);
   });
 
   it("reserves the ceil of the client-reported duration", async () => {

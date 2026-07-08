@@ -1,20 +1,26 @@
 import { sql } from "drizzle-orm";
 import { db } from "@repo/db";
+import { RETAIL_MICROS_PER_MINUTE as DEFAULT_RETAIL_MICROS_PER_MINUTE } from "@repo/ui";
 import { reportError } from "@/lib/observability";
 
 /**
- * Credit operations. 1 credit = 1 second of transcription audio.
+ * Credit operations. The balance is real money in USD micros (1,000,000 = $1).
  *
- * The ledger (credit_ledger) is the source of truth; users.tokens is
- * a cache of SUM(delta_tokens). The neon-http driver has no transactions, so
+ * The ledger (credit_ledger) is the source of truth; users.balance_micros is
+ * a cache of SUM(delta_micros). The neon-http driver has no transactions, so
  * every mutation here is a single CTE-pipeline statement (same philosophy as
  * lib/rate-limit.ts): all of it commits or none of it does.
  *
- * Concurrency rests on the users_tokens_nonneg CHECK constraint —
- * deliberately, no `tokens >= cost` qual appears in any UPDATE.
+ * Concurrency rests on the users_balance_micros_nonneg CHECK constraint —
+ * deliberately, no `balance_micros >= cost` qual appears in any UPDATE.
  * Concurrent spends serialize on the users row; whichever statement would
  * overdraft raises 23514 and rolls back in its entirety, earlier CTEs
  * (e.g. the project hold) included.
+ *
+ * Metering is unchanged in spirit: the library still computes billable seconds
+ * exactly as before (client duration for the hold, Deepgram metadata.duration
+ * for the settle); only the final step multiplies those seconds into USD micros
+ * at the retail rate (chargeMicrosForSeconds) before touching the ledger.
  */
 
 /** Seconds held when the project has no client-reported duration. */
@@ -22,8 +28,8 @@ export const FALLBACK_HOLD_SECONDS = 60;
 
 /**
  * Estimated real-world cost, in USD micros per second (1,000,000 = $1), used
- * to populate credit_ledger.cost_micros for margin visibility — not billed
- * to the user, who's charged in credit-seconds regardless.
+ * to populate credit_ledger.cost_micros for margin visibility — this is our
+ * cost, not the retail price the user is charged (that is delta_micros).
  *
  * TRANSCRIPTION is Deepgram-only: the AI pass no longer runs automatically
  * at transcription time (it's strictly opt-in from the studio, charged via
@@ -33,6 +39,20 @@ export const FALLBACK_HOLD_SECONDS = 60;
  */
 export const TRANSCRIPTION_COST_MICROS_PER_SECOND = 166;
 export const AI_CUT_COST_MICROS_PER_SECOND = 1217;
+
+/**
+ * Retail rate: USD micros per minute of service, from the RETAIL_MICROS_PER_MINUTE
+ * env var (so the client can retune pricing without a redeploy), defaulting to
+ * the shared constant in @repo/ui ($19 buys ~60 min). Prices are config, not code.
+ */
+export const RETAIL_MICROS_PER_MINUTE =
+  Number(process.env.RETAIL_MICROS_PER_MINUTE) ||
+  DEFAULT_RETAIL_MICROS_PER_MINUTE;
+
+/** USD micros to charge for a number of billable seconds, at the retail rate. */
+export function chargeMicrosForSeconds(seconds: number): number {
+  return Math.round((seconds * RETAIL_MICROS_PER_MINUTE) / 60);
+}
 
 /**
  * How long a hold must sit untouched — and not "processing" — before it's
@@ -72,10 +92,19 @@ export function currentMonthKey(now = new Date()): string {
   return now.toISOString().slice(0, 7);
 }
 
-/** Monthly member grant from MEMBER_MONTHLY_GRANT_SECONDS, default 3600. */
+/** Monthly member grant in seconds, from MEMBER_MONTHLY_GRANT_SECONDS, default 3600. */
 export function memberGrantSeconds(): number {
   const n = Number(process.env.MEMBER_MONTHLY_GRANT_SECONDS);
   return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 3600;
+}
+
+/**
+ * Monthly member grant in USD micros. The grant is still expressed in seconds
+ * (a placeholder until the client settles the money-era grant — see ADR 0002
+ * Follow-up); this converts it to micros so it deposits like any other credit.
+ */
+export function memberGrantMicros(): number {
+  return chargeMicrosForSeconds(memberGrantSeconds());
 }
 
 /** True when the error (or anything in its cause chain) is a CHECK violation. */
@@ -104,39 +133,42 @@ export type ReserveResult =
   | { status: "already_held" };
 
 /**
- * Reserve `costSeconds` for a transcription job: set the project's hold,
- * charge the balance, and write the ledger row — one statement.
+ * Reserve the cost of a transcription job: set the project's hold, charge the
+ * balance, and write the ledger row — one statement. `costSeconds` is converted
+ * to USD micros (chargeMicrosForSeconds) for the hold, balance, and delta; the
+ * returned `balance` is in micros.
  *
- * The hold UPDATE's `credit_hold_seconds IS NULL` qual is the double-kickoff
- * gate: a concurrent second call matches zero rows and gets `already_held`.
- * An overdraft trips the CHECK (23514) and rolls the whole statement back,
- * hold included → `insufficient`.
+ * The hold UPDATE's `hold_micros IS NULL` qual is the double-kickoff gate: a
+ * concurrent second call matches zero rows and gets `already_held`. An overdraft
+ * trips the CHECK (23514) and rolls the whole statement back, hold included →
+ * `insufficient`.
  */
 export async function reserveCredits(
   userId: string,
   projectId: string,
   costSeconds: number
 ): Promise<ReserveResult> {
+  const holdMicros = chargeMicrosForSeconds(costSeconds);
   try {
     const [row] = await executeRows(sql`
       WITH hold AS (
-        UPDATE projects SET tokens_hold = ${costSeconds}, updated_at = now()
-        WHERE id = ${projectId} AND user_id = ${userId} AND tokens_hold IS NULL
+        UPDATE projects SET hold_micros = ${holdMicros}, updated_at = now()
+        WHERE id = ${projectId} AND user_id = ${userId} AND hold_micros IS NULL
         RETURNING user_id
       ),
       charged AS (
-        UPDATE users u SET tokens = u.tokens - ${costSeconds}
+        UPDATE users u SET balance_micros = u.balance_micros - ${holdMicros}
         FROM hold WHERE u.id = hold.user_id
-        RETURNING u.tokens
+        RETURNING u.balance_micros
       ),
       led AS (
-        INSERT INTO credit_ledger (user_id, delta_tokens, reason, project_id, cost_micros)
-        SELECT user_id, ${-costSeconds}, 'transcription', ${projectId},
+        INSERT INTO credit_ledger (user_id, delta_micros, reason, project_id, cost_micros)
+        SELECT user_id, ${-holdMicros}, 'transcription', ${projectId},
                ${costSeconds * TRANSCRIPTION_COST_MICROS_PER_SECOND}
         FROM hold
       )
       SELECT (SELECT count(*)::int FROM hold) AS held,
-             (SELECT tokens FROM charged) AS balance
+             (SELECT balance_micros FROM charged) AS balance
     `);
 
     if (!row || Number(row.held) === 0) return { status: "already_held" };
@@ -167,30 +199,31 @@ export async function reclaimStaleHold(
 ): Promise<boolean> {
   const [row] = await executeRows(sql`
     WITH prev AS (
-      SELECT id, user_id, tokens_hold AS held
+      SELECT id, user_id, hold_micros AS held
       FROM projects
       WHERE id = ${projectId}
-        AND tokens_hold IS NOT NULL
+        AND hold_micros IS NOT NULL
         AND transcript_status <> 'processing'
         AND updated_at < now() - (interval '1 millisecond' * ${staleAfterMs})
     ),
     hold AS (
-      UPDATE projects p SET tokens_hold = NULL, updated_at = now()
+      UPDATE projects p SET hold_micros = NULL, updated_at = now()
       FROM prev
       WHERE p.id = prev.id
-        AND p.tokens_hold IS NOT NULL
+        AND p.hold_micros IS NOT NULL
         AND p.transcript_status <> 'processing'
         AND p.updated_at < now() - (interval '1 millisecond' * ${staleAfterMs})
       RETURNING prev.user_id, prev.held
     ),
     led AS (
-      INSERT INTO credit_ledger (user_id, delta_tokens, reason, project_id, cost_micros)
-      SELECT user_id, held, 'refund', ${projectId}, held * ${TRANSCRIPTION_COST_MICROS_PER_SECOND}
+      INSERT INTO credit_ledger (user_id, delta_micros, reason, project_id, cost_micros)
+      SELECT user_id, held, 'refund', ${projectId},
+             round(held * 60.0 / ${RETAIL_MICROS_PER_MINUTE})::int * ${TRANSCRIPTION_COST_MICROS_PER_SECOND}
       FROM hold WHERE held <> 0
-      RETURNING user_id, delta_tokens
+      RETURNING user_id, delta_micros
     ),
     bal AS (
-      UPDATE users u SET tokens = u.tokens + led.delta_tokens
+      UPDATE users u SET balance_micros = u.balance_micros + led.delta_micros
       FROM led WHERE u.id = led.user_id
     )
     SELECT (SELECT count(*)::int FROM hold) AS reclaimed
@@ -204,14 +237,17 @@ export async function reclaimStaleHold(
 }
 
 /**
- * Clear the project's hold and true it up against the seconds actually billed:
+ * Clear the project's hold and true it up against what was actually billed:
  * - `actualSeconds = 0`    → full refund (job failed / never ran)
  * - `actualSeconds = n`    → refund the excess, or charge the shortfall
  *                            (clamped at balance 0 — see below)
  * - `actualSeconds = null` → keep the hold as the final charge (duration missing)
  *
+ * The comparison happens in USD micros: `actualSeconds` is converted to its
+ * retail charge and trued up against the stored `hold_micros`.
+ *
  * Exactly-once across Deepgram callback retries and racing failure paths:
- * only the call that flips tokens_hold to NULL produces ledger and
+ * only the call that flips hold_micros to NULL produces ledger and
  * balance effects; every later call matches zero rows and no-ops.
  *
  * The shortfall clamp (LEAST(shortfall, balance)) keeps the ledger consistent
@@ -222,6 +258,8 @@ export async function settleHold(
   projectId: string,
   actualSeconds: number | null
 ): Promise<void> {
+  const actualMicros =
+    actualSeconds == null ? null : chargeMicrosForSeconds(actualSeconds);
   // `prev` snapshots the hold before the UPDATE nulls it — RETURNING yields
   // *new* column values, so reading the hold there would always give NULL.
   // Exactly-once still rests on the UPDATE's re-checked qual: of two racing
@@ -229,76 +267,77 @@ export async function settleHold(
   // nothing, and every downstream CTE is empty.
   const [row] = await executeRows(sql`
     WITH prev AS (
-      SELECT id, user_id, tokens_hold AS held
+      SELECT id, user_id, hold_micros AS held
       FROM projects
-      WHERE id = ${projectId} AND tokens_hold IS NOT NULL
+      WHERE id = ${projectId} AND hold_micros IS NOT NULL
     ),
     hold AS (
-      UPDATE projects p SET tokens_hold = NULL, updated_at = now()
+      UPDATE projects p SET hold_micros = NULL, updated_at = now()
       FROM prev
-      WHERE p.id = prev.id AND p.tokens_hold IS NOT NULL
+      WHERE p.id = prev.id AND p.hold_micros IS NOT NULL
       RETURNING prev.user_id, prev.held
     ),
     adj AS (
       SELECT h.user_id, h.held,
              CASE
-               WHEN ${actualSeconds}::int IS NULL THEN 0
-               WHEN ${actualSeconds}::int >= h.held
-                 THEN -LEAST(${actualSeconds}::int - h.held, u.tokens)
-               ELSE h.held - ${actualSeconds}::int
+               WHEN ${actualMicros}::int IS NULL THEN 0
+               WHEN ${actualMicros}::int >= h.held
+                 THEN -LEAST(${actualMicros}::int - h.held, u.balance_micros)
+               ELSE h.held - ${actualMicros}::int
              END AS delta
       FROM hold h JOIN users u ON u.id = h.user_id
     ),
     led AS (
-      INSERT INTO credit_ledger (user_id, delta_tokens, reason, project_id, cost_micros)
+      INSERT INTO credit_ledger (user_id, delta_micros, reason, project_id, cost_micros)
       SELECT user_id, delta,
              (CASE WHEN delta < 0 THEN 'transcription' ELSE 'refund' END)::credit_ledger_reason,
              ${projectId},
-             -delta * ${TRANSCRIPTION_COST_MICROS_PER_SECOND}
+             -round(delta * 60.0 / ${RETAIL_MICROS_PER_MINUTE})::int * ${TRANSCRIPTION_COST_MICROS_PER_SECOND}
       FROM adj WHERE delta <> 0
-      RETURNING user_id, delta_tokens
+      RETURNING user_id, delta_micros
     ),
     bal AS (
-      UPDATE users u SET tokens = u.tokens + led.delta_tokens
+      UPDATE users u SET balance_micros = u.balance_micros + led.delta_micros
       FROM led WHERE u.id = led.user_id
     )
     SELECT (SELECT held FROM adj) AS held, (SELECT delta FROM adj) AS delta
   `);
 
   // No row / null held ⇒ nothing was settled (already settled earlier) — fine.
-  if (row?.held == null || actualSeconds == null) return;
+  if (row?.held == null || actualMicros == null) return;
 
   const held = Number(row.held);
   const delta = Number(row.delta);
-  const shortfall = actualSeconds - held;
+  const shortfall = actualMicros - held;
   if (shortfall > 0 && -delta < shortfall) {
     reportError(
       "Credit reconciliation shortfall clamped at zero balance",
       new Error("credit shortfall clamped"),
-      { projectId, held, actualSeconds, charged: -delta, uncollected: shortfall + delta }
+      { projectId, held, actualMicros, charged: -delta, uncollected: shortfall + delta }
     );
   }
 }
 
 /**
  * Credit a Stripe purchase, idempotently keyed on the Checkout session id.
- * Returns false on a duplicate delivery (webhook retry) — no double credit.
+ * `micros` is the USD-micros value to add. Returns false on a duplicate
+ * delivery (webhook retry) — no double credit.
  */
 export async function depositPurchase(
   userId: string,
-  seconds: number,
+  micros: number,
   stripeEventId: string
 ): Promise<boolean> {
   const rows = await executeRows(sql`
     WITH ins AS (
-      INSERT INTO credit_ledger (user_id, delta_tokens, reason, stripe_event_id)
-      VALUES (${userId}, ${seconds}, 'purchase', ${stripeEventId})
+      INSERT INTO credit_ledger (user_id, delta_micros, reason, stripe_event_id)
+      VALUES (${userId}, ${micros}, 'purchase', ${stripeEventId})
       ON CONFLICT (stripe_event_id) DO NOTHING
-      RETURNING user_id, delta_tokens
+      RETURNING user_id, delta_micros
     )
-    UPDATE users u SET tokens = u.tokens + ins.delta_tokens
+    UPDATE users u SET balance_micros = u.balance_micros + ins.delta_micros
     FROM ins WHERE u.id = ins.user_id
-    RETURNING u.tokens
+    RETURNING u.balance_micros
   `);
   return rows.length > 0;
 }
@@ -308,10 +347,10 @@ export type AiCutChargeResult =
   | { status: "insufficient" };
 
 /**
- * Charge `costSeconds` for an on-demand AI Cut run — a single eager
- * deduction, unlike reserveCredits' hold/settle pair, since this is one
- * synchronous Gemini call rather than an async job. Same CHECK-constraint
- * mechanism guards against overdraft.
+ * Charge an on-demand AI Cut run — a single eager deduction, unlike
+ * reserveCredits' hold/settle pair, since this is one synchronous Gemini call
+ * rather than an async job. `costSeconds` is converted to USD micros at the
+ * retail rate. Same CHECK-constraint mechanism guards against overdraft.
  *
  * Every AI Cut run is charged here: the pass is strictly opt-in from the
  * studio (there is no automatic pass at transcription time), so each run is
@@ -322,20 +361,21 @@ export async function chargeAiCut(
   projectId: string,
   costSeconds: number
 ): Promise<AiCutChargeResult> {
+  const chargeMicros = chargeMicrosForSeconds(costSeconds);
   try {
     const rows = await executeRows(sql`
       WITH charged AS (
-        UPDATE users SET tokens = tokens - ${costSeconds}
+        UPDATE users SET balance_micros = balance_micros - ${chargeMicros}
         WHERE id = ${userId}
-        RETURNING tokens
+        RETURNING balance_micros
       ),
       led AS (
-        INSERT INTO credit_ledger (user_id, delta_tokens, reason, project_id, cost_micros)
-        SELECT ${userId}, ${-costSeconds}, 'ai_cut', ${projectId},
+        INSERT INTO credit_ledger (user_id, delta_micros, reason, project_id, cost_micros)
+        SELECT ${userId}, ${-chargeMicros}, 'ai_cut', ${projectId},
                ${costSeconds * AI_CUT_COST_MICROS_PER_SECOND}
         FROM charged
       )
-      SELECT tokens FROM charged
+      SELECT balance_micros FROM charged
     `);
     if (rows.length === 0) throw new Error("ai_cut charge matched no user row");
     return { status: "charged" };
@@ -347,45 +387,46 @@ export async function chargeAiCut(
 
 /**
  * Refund an AI Cut charge that didn't deliver a usable result (Gemini call
- * failed, or the transcript tripped the size guard) — a straight credit-back,
- * no hold to reconcile against.
+ * failed, or the transcript tripped the size guard) — a straight credit-back
+ * in USD micros, no hold to reconcile against.
  */
 export async function refundAiCut(
   userId: string,
   projectId: string,
   costSeconds: number
 ): Promise<void> {
+  const chargeMicros = chargeMicrosForSeconds(costSeconds);
   await executeRows(sql`
     WITH led AS (
-      INSERT INTO credit_ledger (user_id, delta_tokens, reason, project_id, cost_micros)
-      VALUES (${userId}, ${costSeconds}, 'refund', ${projectId},
+      INSERT INTO credit_ledger (user_id, delta_micros, reason, project_id, cost_micros)
+      VALUES (${userId}, ${chargeMicros}, 'refund', ${projectId},
               ${costSeconds * AI_CUT_COST_MICROS_PER_SECOND})
     )
-    UPDATE users SET tokens = tokens + ${costSeconds}
+    UPDATE users SET balance_micros = balance_micros + ${chargeMicros}
     WHERE id = ${userId}
   `);
 }
 
 /**
- * Lazy monthly grant: deposits `grantSeconds` once per UTC calendar month for
- * members; a no-op for non-members and already-granted months. Race-safe via
- * the partial unique index credit_ledger_grant_month_uq — of two concurrent
- * calls, one inserts and the other conflicts into a no-op.
+ * Lazy monthly grant: deposits `grantMicros` USD micros once per UTC calendar
+ * month for members; a no-op for non-members and already-granted months.
+ * Race-safe via the partial unique index credit_ledger_grant_month_uq — of two
+ * concurrent calls, one inserts and the other conflicts into a no-op.
  */
 export async function ensureMonthlyGrant(
   userId: string,
-  grantSeconds: number
+  grantMicros: number
 ): Promise<void> {
-  if (grantSeconds <= 0) return;
+  if (grantMicros <= 0) return;
   await executeRows(sql`
     WITH ins AS (
-      INSERT INTO credit_ledger (user_id, delta_tokens, reason, month_key)
-      SELECT id, ${grantSeconds}, 'grant', ${currentMonthKey()}
+      INSERT INTO credit_ledger (user_id, delta_micros, reason, month_key)
+      SELECT id, ${grantMicros}, 'grant', ${currentMonthKey()}
       FROM users WHERE id = ${userId} AND is_member
       ON CONFLICT (user_id, month_key) WHERE reason = 'grant' DO NOTHING
-      RETURNING user_id, delta_tokens
+      RETURNING user_id, delta_micros
     )
-    UPDATE users u SET tokens = u.tokens + ins.delta_tokens
+    UPDATE users u SET balance_micros = u.balance_micros + ins.delta_micros
     FROM ins WHERE u.id = ins.user_id
   `);
 }

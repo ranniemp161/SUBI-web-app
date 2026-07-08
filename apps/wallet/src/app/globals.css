@@ -1,6 +1,120 @@
 @import "tailwindcss";
 @import "@repo/ui/styles/theme.css";
 
-/* All base tokens (background/foreground, fonts, dark mode, body reset, focus
-   ring) come from @repo/ui/styles/theme.css. Add wallet-specific theme
-   extensions below as the app grows. */
+/* ---------------------------------------------------------------------------
+   Wallet-specific theme extensions (ADR 0002/0003).
+   
+   Premium surface, elevation, and accent colours. These complement the base
+   palette in @repo/ui/styles/theme.css — that file owns the ecosystem tokens;
+   these are local to the wallet. Light + dark via prefers-color-scheme.
+   --------------------------------------------------------------------------- */
+
+:root {
+  /* Surface hierarchy */
+  --wallet-surface: #ffffff;
+  --wallet-surface-raised: #f8f9fb;
+  --wallet-surface-sunken: #f1f3f5;
+
+  /* Borders and dividers */
+  --wallet-border: #e5e7eb;
+  --wallet-border-subtle: #f0f0f0;
+
+  /* Accent (calm blue, shared with the ecosystem focus ring) */
+  --wallet-accent: #3b82f6;
+  --wallet-accent-hover: #2563eb;
+  --wallet-accent-subtle: rgba(59, 130, 246, 0.08);
+
+  /* State colours */
+  --wallet-success: #16a34a;
+  --wallet-success-subtle: rgba(22, 163, 74, 0.08);
+  --wallet-warning: #f59e0b;
+  --wallet-warning-subtle: rgba(245, 158, 11, 0.08);
+  --wallet-danger: #ef4444;
+  --wallet-danger-subtle: rgba(239, 68, 68, 0.06);
+
+  /* Text hierarchy */
+  --wallet-text-primary: #111827;
+  --wallet-text-secondary: #6b7280;
+  --wallet-text-tertiary: #9ca3af;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --wallet-surface: #0f0f12;
+    --wallet-surface-raised: #18181b;
+    --wallet-surface-sunken: #09090b;
+
+    --wallet-border: #27272a;
+    --wallet-border-subtle: #1e1e22;
+
+    --wallet-accent: #60a5fa;
+    --wallet-accent-hover: #93bbfd;
+    --wallet-accent-subtle: rgba(96, 165, 250, 0.1);
+
+    --wallet-success: #4ade80;
+    --wallet-success-subtle: rgba(74, 222, 128, 0.1);
+    --wallet-warning: #fbbf24;
+    --wallet-warning-subtle: rgba(251, 191, 36, 0.1);
+    --wallet-danger: #f87171;
+    --wallet-danger-subtle: rgba(248, 113, 113, 0.08);
+
+    --wallet-text-primary: #f4f4f5;
+    --wallet-text-secondary: #a1a1aa;
+    --wallet-text-tertiary: #71717a;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Animations
+   --------------------------------------------------------------------------- */
+
+@keyframes wallet-shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@keyframes wallet-fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes wallet-pulse-subtle {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+/* Utility classes */
+.wallet-shimmer {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--wallet-accent-subtle) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: wallet-shimmer 3s ease-in-out infinite;
+}
+
+.wallet-fade-in {
+  animation: wallet-fade-in 0.4s ease-out both;
+}
+
+.wallet-card {
+  background: var(--wallet-surface);
+  border: 1px solid var(--wallet-border);
+  border-radius: 1rem;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.wallet-card:hover {
+  border-color: var(--wallet-accent);
+  box-shadow: 0 0 0 1px var(--wallet-accent-subtle),
+              0 4px 12px -2px rgba(0, 0, 0, 0.06);
+}
+
+@media (prefers-color-scheme: dark) {
+  .wallet-card:hover {
+    box-shadow: 0 0 0 1px var(--wallet-accent-subtle),
+                0 4px 16px -2px rgba(0, 0, 0, 0.3);
+  }
+}

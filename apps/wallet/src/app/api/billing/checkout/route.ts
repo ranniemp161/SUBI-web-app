@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getAuthorizedDbUser } from "@/lib/authz";
 import { rateLimit } from "@/lib/rate-limit";
-import { allowedPriceIds, tokensFromPrice, getStripe } from "@/lib/stripe";
+import { allowedPriceIds, creditMicrosFromPrice, getStripe } from "@/lib/stripe";
 import { reportError } from "@/lib/observability";
 import { ROUGH_CUT_URL } from "@/lib/env";
 
@@ -17,7 +17,7 @@ const checkoutSchema = z.object({ priceId: z.string().min(1) });
 /**
  * POST /api/billing/checkout — create a Stripe Checkout session for a bundle.
  *
- * The session's metadata (our db userId + the bundle's tokens) is
+ * The session's metadata (our db userId + the bundle's creditMicros) is
  * written HERE, server-side, from the allowlisted Price — that's what makes
  * it trustworthy when the webhook reads it back to credit the purchase.
  * Returns { url } for the client to redirect to Stripe's hosted page.
@@ -67,11 +67,11 @@ export async function POST(request: Request) {
     }
 
     const stripe = getStripe();
-    const price = await stripe.prices.retrieve(priceId);
-    const tokens = tokensFromPrice(price);
-    if (!tokens) {
+    const price = await stripe.prices.retrieve(priceId, { expand: ["product"] });
+    const creditMicros = creditMicrosFromPrice(price);
+    if (!creditMicros) {
       reportError(
-        "Checkout blocked: allowlisted price is missing tokens metadata",
+        "Checkout blocked: allowlisted price is missing credit_micros metadata",
         new Error("misconfigured bundle price"),
         { priceId }
       );
@@ -83,14 +83,21 @@ export async function POST(request: Request) {
 
     const origin = ROUGH_CUT_URL;
 
+    // Save the card off-session so auto-recharge (ADR 0002/0002) can use it
+    // later. Reuse the user's Stripe Customer if they have one; otherwise let
+    // Checkout create one. setup_future_usage persists the PaymentMethod; the
+    // webhook reads the customer + payment method back onto the users row.
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
       line_items: [{ price: priceId, quantity: 1 }],
       success_url: `${origin}/dashboard?checkout=success`,
       cancel_url: `${origin}/dashboard?checkout=cancelled`,
       client_reference_id: user.id,
-      metadata: { userId: user.id, tokens: String(tokens) },
-      customer_email: user.email || undefined,
+      metadata: { userId: user.id, creditMicros: String(creditMicros) },
+      payment_intent_data: { setup_future_usage: "off_session" },
+      ...(user.stripeCustomerId
+        ? { customer: user.stripeCustomerId }
+        : { customer_creation: "always", customer_email: user.email || undefined }),
     });
 
     if (contentType.includes("application/x-www-form-urlencoded") || contentType.includes("multipart/form-data")) {

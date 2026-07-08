@@ -7,10 +7,14 @@ const state = vi.hoisted(() => ({
     type: string;
     data: { object: Record<string, unknown> };
   },
-  deposits: [] as Array<{ userId: string; tokens: number; eventId: string }>,
+  deposits: [] as Array<{ userId: string; creditMicros: number; eventId: string }>,
   depositResult: true,
   depositError: false,
   reported: [] as string[],
+  autoDeposits: [] as Array<{ userId: string; micros: number; eventId: string }>,
+  savedCustomers: [] as Array<{ userId: string; customerId: string }>,
+  savedPms: [] as Array<{ userId: string; pmId: string }>,
+  sessionPm: "pm_from_session" as string | null,
 }));
 
 vi.mock("@/lib/stripe", () => ({
@@ -19,13 +23,28 @@ vi.mock("@/lib/stripe", () => ({
       constructEvent: vi.fn(() => state.constructImpl()),
     },
   }),
+  paymentMethodFromSession: vi.fn(async () => state.sessionPm),
+  AUTORECHARGE_KIND: "auto_recharge",
 }));
 
 vi.mock("@/lib/credits", () => ({
-  depositPurchase: vi.fn(async (userId: string, tokens: number, eventId: string) => {
+  depositPurchase: vi.fn(async (userId: string, creditMicros: number, eventId: string) => {
     if (state.depositError) throw new Error("db down");
-    state.deposits.push({ userId, tokens, eventId });
+    state.deposits.push({ userId, creditMicros, eventId });
     return state.depositResult;
+  }),
+}));
+
+vi.mock("@/lib/autorecharge", () => ({
+  depositAutoRecharge: vi.fn(async (userId: string, micros: number, eventId: string) => {
+    state.autoDeposits.push({ userId, micros, eventId });
+    return true;
+  }),
+  setStripeCustomerId: vi.fn(async (userId: string, customerId: string) => {
+    state.savedCustomers.push({ userId, customerId });
+  }),
+  setDefaultPaymentMethod: vi.fn(async (userId: string, pmId: string) => {
+    state.savedPms.push({ userId, pmId });
   }),
 }));
 
@@ -67,7 +86,7 @@ function completedSession(overrides: Record<string, unknown> = {}) {
         id: "cs_test_123",
         payment_status: "paid",
         client_reference_id: null,
-        metadata: { userId: "db-user-1", tokens: "500" },
+        metadata: { userId: "db-user-1", creditMicros: "19000000" },
         ...overrides,
       },
     },
@@ -81,6 +100,10 @@ beforeEach(() => {
   state.depositResult = true;
   state.depositError = false;
   state.reported = [];
+  state.autoDeposits = [];
+  state.savedCustomers = [];
+  state.savedPms = [];
+  state.sessionPm = "pm_from_session";
   vi.clearAllMocks();
   process.env.STRIPE_WEBHOOK_SECRET = "whsec_test";
 });
@@ -126,7 +149,7 @@ describe("POST /api/webhooks/stripe — checkout.session.completed", () => {
     const res = await POST(req());
     expect(res.status).toBe(200);
     expect(state.deposits).toEqual([
-      { userId: "db-user-1", tokens: 500, eventId: "cs_test_123" },
+      { userId: "db-user-1", creditMicros: 19000000, eventId: "cs_test_123" },
     ]);
   });
 
@@ -145,7 +168,7 @@ describe("POST /api/webhooks/stripe — checkout.session.completed", () => {
   });
 
   it("200 + Sentry report on malformed metadata — a retry can never fix it", async () => {
-    completedSession({ metadata: { userId: "db-user-1", tokens: "banana" } });
+    completedSession({ metadata: { userId: "db-user-1", creditMicros: "banana" } });
     const res = await POST(req());
     expect(res.status).toBe(200);
     expect(depositPurchase).not.toHaveBeenCalled();
@@ -154,18 +177,18 @@ describe("POST /api/webhooks/stripe — checkout.session.completed", () => {
 
   it("falls back to client_reference_id when metadata has no userId", async () => {
     completedSession({
-      metadata: { tokens: "100" },
+      metadata: { creditMicros: "5000000" },
       client_reference_id: "db-user-2",
     });
     const res = await POST(req());
     expect(res.status).toBe(200);
     expect(state.deposits).toEqual([
-      { userId: "db-user-2", tokens: 100, eventId: "cs_test_123" },
+      { userId: "db-user-2", creditMicros: 5000000, eventId: "cs_test_123" },
     ]);
   });
 
-  it("200 + Sentry report on negative or zero tokens", async () => {
-    completedSession({ metadata: { userId: "db-user-1", tokens: "-50" } });
+  it("200 + Sentry report on negative or zero creditMicros", async () => {
+    completedSession({ metadata: { userId: "db-user-1", creditMicros: "-50" } });
     const res = await POST(req());
     expect(res.status).toBe(200);
     expect(depositPurchase).not.toHaveBeenCalled();
@@ -177,6 +200,61 @@ describe("POST /api/webhooks/stripe — checkout.session.completed", () => {
     state.depositError = true;
     const res = await POST(req());
     expect(res.status).toBe(500);
+  });
+});
+
+describe("POST /api/webhooks/stripe — checkout also saves the card", () => {
+  it("persists the customer + payment method from a completed session (AC-5)", async () => {
+    completedSession({ customer: "cus_123" });
+    const res = await POST(req());
+    expect(res.status).toBe(200);
+    expect(state.savedCustomers).toEqual([{ userId: "db-user-1", customerId: "cus_123" }]);
+    expect(state.savedPms).toEqual([{ userId: "db-user-1", pmId: "pm_from_session" }]);
+  });
+});
+
+describe("POST /api/webhooks/stripe — auto-recharge PaymentIntent (AC-6)", () => {
+  function pi(metadata: Record<string, unknown>) {
+    state.constructImpl = () => ({
+      type: "payment_intent.succeeded",
+      data: { object: { id: "pi_auto_1", metadata } },
+    });
+  }
+
+  it("credits an auto_recharge PI (idempotent backstop to the sweep)", async () => {
+    pi({ kind: "auto_recharge", userId: "db-user-1", amountMicros: "19000000" });
+    const res = await POST(req());
+    expect(res.status).toBe(200);
+    expect(state.autoDeposits).toEqual([
+      { userId: "db-user-1", micros: 19000000, eventId: "pi_auto_1" },
+    ]);
+  });
+
+  it("ignores a non-auto-recharge PaymentIntent (bundle PIs are handled at checkout)", async () => {
+    pi({});
+    const res = await POST(req());
+    expect(res.status).toBe(200);
+    expect(state.autoDeposits).toHaveLength(0);
+  });
+
+  it("200 + Sentry report on auto_recharge PI with bad metadata", async () => {
+    pi({ kind: "auto_recharge", userId: "db-user-1", amountMicros: "nope" });
+    const res = await POST(req());
+    expect(res.status).toBe(200);
+    expect(state.autoDeposits).toHaveLength(0);
+    expect(state.reported).toHaveLength(1);
+  });
+});
+
+describe("POST /api/webhooks/stripe — setup_intent saves the card (AC-5)", () => {
+  it("stores the confirmed payment method against the user", async () => {
+    state.constructImpl = () => ({
+      type: "setup_intent.succeeded",
+      data: { object: { id: "seti_1", payment_method: "pm_new", metadata: { userId: "db-user-1" } } },
+    });
+    const res = await POST(req());
+    expect(res.status).toBe(200);
+    expect(state.savedPms).toEqual([{ userId: "db-user-1", pmId: "pm_new" }]);
   });
 });
 
