@@ -17,6 +17,10 @@ interface BundleCardsProps {
   bundles: Bundle[];
 }
 
+function redirectTo(url: string) {
+  window.location.href = url;
+}
+
 /**
  * The add-funds section: bundle cards showing what you pay, what balance you
  * get, and the bonus on larger tiers. Each card triggers the Stripe Checkout
@@ -35,7 +39,7 @@ export function BundleCards({ bundles }: BundleCardsProps) {
       });
       const data = await res.json();
       if (data.url) {
-        window.location.href = data.url;
+        redirectTo(data.url);
       } else {
         alert(data.error || "Failed to start checkout");
         setLoadingId(null);

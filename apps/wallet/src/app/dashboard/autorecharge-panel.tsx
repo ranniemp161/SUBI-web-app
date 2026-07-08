@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import { formatUsd, MICROS_PER_USD } from "@repo/ui";
+import { MICROS_PER_USD } from "@repo/ui";
 import type { SavedCard } from "@/lib/stripe";
 
 interface AutorechargePanelProps {

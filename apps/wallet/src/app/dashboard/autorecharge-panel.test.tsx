@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { render, screen, waitFor, cleanup } from "@testing-library/react";
+import { render, screen, cleanup } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { expect, test, vi, beforeEach, afterEach, describe } from "vitest";
+import { expect, test, vi, beforeEach, afterEach, describe, type Mock } from "vitest";
 import { AutorechargePanel } from "./autorecharge-panel";
 
 describe("AutorechargePanel", () => {
-  let mockFetch: any;
+  let mockFetch: Mock;
 
   beforeEach(() => {
     mockFetch = vi.fn();
