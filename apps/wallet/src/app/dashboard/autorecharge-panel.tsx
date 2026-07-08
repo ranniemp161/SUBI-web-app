@@ -144,9 +144,36 @@ export function AutorechargePanel({
     }
   }, []);
 
-  const handleCardSaved = useCallback(() => {
+  const handleCardSaved = useCallback(async () => {
     setSetupClientSecret(null);
-    setMessage({ type: "success", text: "Card saved." });
+    setMessage({ type: "success", text: "Card confirmed, finishing setup…" });
+
+    // The card isn't actually persisted until Stripe's setup_intent.succeeded
+    // webhook lands (async, no latency guarantee), so a brief poll here avoids
+    // declaring "Card saved" before the panel can actually show it.
+    let persisted = false;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        const res = await fetch("/api/billing/autorecharge");
+        if (res.ok) {
+          const data = await res.json();
+          if (data.hasCard) {
+            persisted = true;
+            break;
+          }
+        }
+      } catch {
+        // Network hiccup mid-poll — just retry.
+      }
+      if (attempt < 4) await new Promise((r) => setTimeout(r, 400));
+    }
+
+    setMessage({
+      type: "success",
+      text: persisted
+        ? "Card saved."
+        : "Card confirmed. It may take a moment to appear below.",
+    });
     router.refresh();
   }, [router]);
 

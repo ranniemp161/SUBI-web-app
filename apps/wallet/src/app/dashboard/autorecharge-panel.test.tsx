@@ -150,9 +150,46 @@ describe("AutorechargePanel", () => {
   });
 
   test("refreshes the page and shows a success message once the card is confirmed", async () => {
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ clientSecret: "secret" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ hasCard: true }),
+      });
+    const user = userEvent.setup();
+
+    render(
+      <AutorechargePanel
+        enabled={false}
+        thresholdMicros={5000000}
+        amountMicros={19000000}
+        hasCard={false}
+        savedCard={null}
+        failures={0}
+      />
+    );
+
+    await user.click(screen.getByRole("button", { name: "Add card" }));
+    await user.click(await screen.findByRole("button", { name: "mock-confirm-card" }));
+
+    await screen.findByText("Card saved.");
+    expect(mockRefresh).toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "mock-confirm-card" })).not.toBeInTheDocument();
+    expect(mockFetch).toHaveBeenCalledWith("/api/billing/autorecharge");
+  });
+
+  test("softens the message if the webhook hasn't persisted the card yet", async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: async () => ({ clientSecret: "secret" }),
+    });
+    // Every poll attempt reports the card not yet persisted.
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({ hasCard: false }),
     });
     const user = userEvent.setup();
 
@@ -170,8 +207,11 @@ describe("AutorechargePanel", () => {
     await user.click(screen.getByRole("button", { name: "Add card" }));
     await user.click(await screen.findByRole("button", { name: "mock-confirm-card" }));
 
+    await screen.findByText(
+      "Card confirmed. It may take a moment to appear below.",
+      {},
+      { timeout: 3000 }
+    );
     expect(mockRefresh).toHaveBeenCalled();
-    await screen.findByText("Card saved.");
-    expect(screen.queryByRole("button", { name: "mock-confirm-card" })).not.toBeInTheDocument();
   });
 });

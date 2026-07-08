@@ -9,10 +9,10 @@ _Steps derived from ADR 0002 acceptance criteria (slice-2 set: AC-5, AC-6, AC-7)
 - [ ] `GET /api/billing/autorecharge` for a fresh user → `enabled:false`, `hasCard:false` → AC-5
 - [ ] `PATCH /api/billing/autorecharge {enabled:true, thresholdMicros:5000000, amountMicros:19000000}` with no card → 400 `NO_CARD` → AC-5
 - [ ] Buy a bundle with Stripe test card `4242 4242 4242 4242` → after the webhook, query the user: `stripe_customer_id` and `default_payment_method_id` are set → AC-5
-- [ ] **Standalone settings path (2026-07-08 fix)**: on the wallet dashboard, click "Add card" (or "Replace card") in the auto-recharge panel with no prior purchase → a Stripe Elements card form appears inline → AC-5
-- [ ] Enter test card `4242 4242 4242 4242`, any future expiry, any CVC, submit "Save card" → form shows "Saving…" then closes with a "Card saved." message, no page-visible error → AC-5
-- [ ] After save, the page refreshes and shows the saved card's brand + last 4 in place of "No card saved"; the auto-recharge toggle is no longer disabled → AC-5
-- [ ] Query the user row directly: `default_payment_method_id` is set to the new PaymentMethod id (confirms the `setup_intent.succeeded` webhook persisted it, not just the client-side confirm) → AC-5
+- [x] **Standalone settings path (2026-07-08 fix)**: on the wallet dashboard, click "Add card" (or "Replace card") in the auto-recharge panel with no prior purchase → a Stripe Elements card form appears inline → AC-5 — **confirmed live by the user 2026-07-08**
+- [x] Enter test card `4242 4242 4242 4242`, any future expiry, any CVC, submit "Save card" → form shows "Saving…" then closes with a "Card saved." message, no page-visible error → AC-5 — **confirmed live by the user 2026-07-08**
+- [x] After save, the page refreshes and shows the saved card's brand + last 4 in place of "No card saved"; the auto-recharge toggle is no longer disabled → AC-5 — **confirmed: panel showed "Visa •••• 4242" and the toggle became interactive**
+- [x] Query the user row directly: `default_payment_method_id` is set to the new PaymentMethod id (confirms the `setup_intent.succeeded` webhook persisted it, not just the client-side confirm) → AC-5 — **confirmed directly against the dev DB during `/verify` (2026-07-08), using an isolated test user**
 - [ ] `PATCH {enabled:true, thresholdMicros:5000000, amountMicros:3000000}` (amount <= threshold) → 400 → AC-5
 - [ ] `PATCH {enabled:true, thresholdMicros:5000000, amountMicros:19000000}` (card present) → 200; DB shows `autorecharge_enabled=true`, threshold + amount set → AC-5
 

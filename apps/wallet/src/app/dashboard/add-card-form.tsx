@@ -26,9 +26,25 @@ export function AddCardForm({
   onSuccess,
   onCancel,
 }: AddCardFormProps) {
+  let stripePromise;
+  try {
+    stripePromise = getStripeClient();
+  } catch (err) {
+    console.error("Stripe client failed to initialize:", err);
+    return (
+      <p
+        className="mt-4 text-xs font-medium"
+        style={{ color: "var(--wallet-danger)" }}
+      >
+        Billing is misconfigured (Stripe key missing). Card setup is
+        unavailable right now.
+      </p>
+    );
+  }
+
   return (
     <Elements
-      stripe={getStripeClient()}
+      stripe={stripePromise}
       options={{ clientSecret, appearance: { theme: "flat" } }}
     >
       <AddCardFormInner onSuccess={onSuccess} onCancel={onCancel} />
@@ -52,24 +68,29 @@ function AddCardFormInner({
     setSubmitting(true);
     setError(null);
 
-    const { error: confirmError, setupIntent } = await stripe.confirmSetup({
-      elements,
-      redirect: "if_required",
-    });
+    try {
+      const { error: confirmError, setupIntent } = await stripe.confirmSetup({
+        elements,
+        redirect: "if_required",
+      });
 
-    if (confirmError) {
-      setError(confirmError.message || "Could not save the card.");
+      if (confirmError) {
+        setError(confirmError.message || "Could not save the card.");
+        return;
+      }
+
+      if (setupIntent?.status === "succeeded") {
+        onSuccess();
+        return;
+      }
+
+      setError("Card setup did not complete. Please try again.");
+    } catch (err) {
+      console.error("Card confirm failed:", err);
+      setError("Something went wrong saving the card. Please try again.");
+    } finally {
       setSubmitting(false);
-      return;
     }
-
-    if (setupIntent?.status === "succeeded") {
-      onSuccess();
-      return;
-    }
-
-    setError("Card setup did not complete. Please try again.");
-    setSubmitting(false);
   }
 
   return (
