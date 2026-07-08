@@ -59,7 +59,7 @@ function isRetryable(err: unknown): boolean {
   // Walk the cause/sourceError chain the Neon driver nests errors under.
   for (let i = 0; i < 6 && e; i++) {
     // Our own timeout may come back wrapped in a NeonDbError.
-    if (e instanceof DbTimeoutError) return true;
+    if (e instanceof DbTimeoutError || (e as Error)?.name === "DbTimeoutError") return true;
     const msg = e instanceof Error ? e.message : String(e);
     if (RETRYABLE.test(msg)) return true;
     e = (e as { cause?: unknown; sourceError?: unknown })?.cause
@@ -111,9 +111,10 @@ export async function withDbRetry<T>(
     try {
       // The async wrapper makes the drizzle thenable execute inside the ALS
       // context, so the driver's fetch picks up this attempt's abort signal.
+      // We scale the timeout by the attempt number to give cold starts a chance.
       return await withTimeout(
         attemptSignal.run(controller.signal, async () => query()),
-        timeoutMs,
+        timeoutMs * attempt,
         () => controller.abort()
       );
     } catch (error) {
