@@ -26,6 +26,7 @@ vi.mock("@/lib/stripe", () => ({
 }));
 vi.mock("@/lib/autorecharge", () => ({
   selectAutoRechargeCandidates: vi.fn(async () => state.candidates),
+  checkNeedsAutoRecharge: vi.fn(async () => true),
   countRecentAutoRecharges: vi.fn(async () => state.successesToday),
   autoRechargeIdempotencyKey: vi.fn(() => "idem-key"),
   depositAutoRecharge: vi.fn(async (userId: string) => {

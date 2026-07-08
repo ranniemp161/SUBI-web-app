@@ -315,3 +315,25 @@ FAQ column); anchor targets use `scroll-mt-20` to clear the sticky nav. The page
 stays a server component — no client JS (FAQ uses native `<details name>`).
 Decorative mockup/diagram blocks are `aria-hidden`. The old landing accent
 (`bg-blue-600` + blue/cyan gradient text) is retired on this surface.
+
+---
+
+## Premium Wallet Card
+
+File: `apps/wallet/src/app/dashboard/bundle-cards.tsx`
+Last updated: 2026-07-08
+
+| Property         | Class           |
+| ---------------- | --------------- |
+| Background       | `bg-[var(--wallet-surface)]` (inner), `bg-gradient-to-br from-blue-400 via-blue-600 to-purple-600` (popular border bg) |
+| Border           | 1px border achieved via `m-[1px]` over a background layer |
+| Border radius    | `rounded-3xl` (outer container), `rounded-[23px]` (inner container) |
+| Text — primary   | `text-[var(--wallet-text-primary)]`, `text-white` on accent |
+| Text — secondary | `text-[var(--wallet-text-secondary)]` |
+| Spacing          | `p-7` |
+| Hover state      | `hover:-translate-y-1 hover:shadow-2xl transition-all duration-500 ease-out` |
+| Shadow           | `shadow-blue-500/20` (popular card), `shadow-[inset_0_1px_0_0_rgba(255,255,255,0.05)]` (inner top-edge highlight) |
+| Accent usage     | `var(--wallet-accent)` for secondary hover state gradients |
+
+**Pattern notes:**
+The "Most popular" card achieves its glowing gradient border by using an outer container with a gradient background (`bg-gradient-to-br...`) and an inner container with `bg-[var(--wallet-surface)]` and `m-[1px]`. The glassy premium feel is enhanced by the top-inner highlight (`shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]`) and a subtle background glow (`blur-3xl`). Price text is heavily tracked (`tracking-tighter`) and very large (`text-5xl font-extrabold tabular-nums`). The popular badge drops from the top edge (`absolute top-0`) with a gradient background, keeping it clean and avoiding floating pills.

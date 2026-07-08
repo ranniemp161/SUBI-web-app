@@ -63,6 +63,9 @@ export function AutorechargePanel({
     async (nextEnabled: boolean) => {
       setSaving(true);
       setMessage(null);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+
       try {
         const res = await fetch("/api/billing/autorecharge", {
           method: "PATCH",
@@ -72,7 +75,10 @@ export function AutorechargePanel({
             thresholdMicros,
             amountMicros,
           }),
+          signal: controller.signal,
         });
+        clearTimeout(timeoutId);
+        
         const data = await res.json();
         if (!res.ok) {
           setMessage({
@@ -88,8 +94,12 @@ export function AutorechargePanel({
             ? "Auto-recharge is on."
             : "Auto-recharge is off.",
         });
-      } catch {
-        setMessage({ type: "error", text: "Something went wrong." });
+      } catch (err) {
+        console.error("Save settings failed:", err);
+        const errorText = err instanceof Error && err.name === 'AbortError'
+          ? "Request timed out. Please try again."
+          : "Something went wrong.";
+        setMessage({ type: "error", text: errorText });
       } finally {
         setSaving(false);
       }
@@ -100,10 +110,16 @@ export function AutorechargePanel({
   const handleAddCard = useCallback(async () => {
     setAddingCard(true);
     setMessage(null);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+
     try {
       const res = await fetch("/api/billing/setup-intent", {
         method: "POST",
+        signal: controller.signal,
       });
+      clearTimeout(timeoutId);
+      
       const data = await res.json();
       if (!res.ok) {
         setMessage({
@@ -118,8 +134,12 @@ export function AutorechargePanel({
         type: "success",
         text: "Card setup started. Complete the Stripe card form to save your card.",
       });
-    } catch {
-      setMessage({ type: "error", text: "Failed to start card setup." });
+    } catch (err) {
+      console.error("Add card setup failed:", err);
+      const errorText = err instanceof Error && err.name === 'AbortError'
+        ? "Request timed out. Please try again."
+        : "Failed to start card setup.";
+      setMessage({ type: "error", text: errorText });
     } finally {
       setAddingCard(false);
     }
@@ -184,7 +204,7 @@ export function AutorechargePanel({
           !hasCard ? "opacity-40 pointer-events-none" : ""
         }`}
       >
-        <label className="flex flex-col gap-1.5">
+        <label className="flex h-full flex-col justify-end gap-1.5">
           <span
             className="text-xs font-medium"
             style={{ color: "var(--wallet-text-secondary)" }}
@@ -215,7 +235,7 @@ export function AutorechargePanel({
           </div>
         </label>
 
-        <label className="flex flex-col gap-1.5">
+        <label className="flex h-full flex-col justify-end gap-1.5">
           <span
             className="text-xs font-medium"
             style={{ color: "var(--wallet-text-secondary)" }}

@@ -11,6 +11,7 @@ import { LowBalanceBanner } from "./low-balance-banner";
 import { BundleCards } from "./bundle-cards";
 import { AutorechargePanel } from "./autorecharge-panel";
 import { TransactionHistory } from "./transaction-history";
+import { AppLauncher } from "./app-launcher";
 
 /**
  * Premium wallet billing dashboard (ADR 0002/0003, slice 3).
@@ -77,21 +78,28 @@ export default async function DashboardPage() {
           autorechargeThresholdMicros={user.autorechargeThresholdMicros}
         />
 
-        {/* 3. Add funds cards */}
-        <BundleCards bundles={bundles} />
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
+          {/* Main Column: Apps & Top-up */}
+          <div className="flex flex-col gap-8 lg:col-span-2">
+            <AppLauncher />
+            
+            <BundleCards bundles={bundles} />
+          </div>
 
-        {/* 4. Auto-recharge settings */}
-        <AutorechargePanel
-          enabled={user.autorechargeEnabled}
-          thresholdMicros={user.autorechargeThresholdMicros}
-          amountMicros={user.autorechargeAmountMicros}
-          hasCard={Boolean(user.defaultPaymentMethodId)}
-          savedCard={savedCard}
-          failures={user.autorechargeFailures}
-        />
+          {/* Side Column: Settings & History */}
+          <div className="flex flex-col gap-8 lg:col-span-1">
+            <AutorechargePanel
+              enabled={user.autorechargeEnabled}
+              thresholdMicros={user.autorechargeThresholdMicros}
+              amountMicros={user.autorechargeAmountMicros}
+              hasCard={Boolean(user.defaultPaymentMethodId)}
+              savedCard={savedCard}
+              failures={user.autorechargeFailures}
+            />
 
-        {/* 5. Transaction history */}
-        <TransactionHistory entries={serializedHistory} />
+            <TransactionHistory entries={serializedHistory} />
+          </div>
+        </div>
       </div>
     </div>
   );
