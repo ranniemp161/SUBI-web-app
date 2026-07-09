@@ -175,6 +175,15 @@ export default function TranscriptPanel({
   hasAiCuts,
   lastAiCutTime,
 }: TranscriptPanelProps) {
+  const [now, setNow] = useState<number | null>(null);
+  useEffect(() => {
+    if (lastAiCutTime) {
+      setNow(Date.now());
+      const timer = setInterval(() => setNow(Date.now()), 60000);
+      return () => clearInterval(timer);
+    }
+  }, [lastAiCutTime]);
+
   const [anchorIndex, setAnchorIndex] = useState<number | null>(null);
   const [selection, setSelection] = useState<Set<number>>(new Set());
   const [query, setQuery] = useState("");
@@ -685,15 +694,15 @@ export default function TranscriptPanel({
             (hasAiCuts ? (
               <p className="mt-1.5 text-center text-[10px] text-foreground/35">
                 Your AI cuts are already included
-                {lastAiCutTime && (
+                {lastAiCutTime && now && (
                   <span title={new Date(lastAiCutTime).toLocaleString()}>
                     {" "}
                     (last run{" "}
                     {new Intl.RelativeTimeFormat("en", { numeric: "auto" }).format(
-                      -Math.round((Date.now() - new Date(lastAiCutTime).getTime()) / 60000) < -60
-                        ? -Math.round((Date.now() - new Date(lastAiCutTime).getTime()) / 3600000)
-                        : -Math.round((Date.now() - new Date(lastAiCutTime).getTime()) / 60000),
-                      -Math.round((Date.now() - new Date(lastAiCutTime).getTime()) / 60000) < -60 ? "hour" : "minute"
+                      -Math.round((now - new Date(lastAiCutTime).getTime()) / 60000) < -60
+                        ? -Math.round((now - new Date(lastAiCutTime).getTime()) / 3600000)
+                        : -Math.round((now - new Date(lastAiCutTime).getTime()) / 60000),
+                      -Math.round((now - new Date(lastAiCutTime).getTime()) / 60000) < -60 ? "hour" : "minute"
                     )}
                     )
                   </span>
