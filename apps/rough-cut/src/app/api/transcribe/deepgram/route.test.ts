@@ -258,8 +258,9 @@ describe("POST /api/transcribe/deepgram — sync mode (localhost)", () => {
     await POST(req({ blobUrl: OWN_BLOB_URL }));
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
-    const [calledUrl] = fetchSpy.mock.calls[0];
-    const params = new URL(calledUrl!).searchParams;
+    const callArgs = fetchSpy.mock.calls[0];
+    const calledUrl = callArgs && callArgs.length > 0 ? callArgs[0] : "";
+    const params = new URL(calledUrl as string).searchParams;
     expect(params.get("utterances")).toBe("true");
     expect(params.get("diarize")).toBeNull();
     expect(params.get("paragraphs")).toBeNull();
