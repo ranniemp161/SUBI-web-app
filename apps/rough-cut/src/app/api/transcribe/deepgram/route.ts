@@ -194,6 +194,10 @@ export async function POST(request: Request) {
     // Transcribe disfluencies ("um", "uh") so the editor's filler-word removal
     // has something to find — Deepgram omits them by default.
     filler_words: "true",
+    // Group words into natural spoken segments (pauses, sentence ends) so the
+    // cut-suggestion logic has phrase boundaries to align to. Deliberately no
+    // diarize/paragraphs — single-speaker rough cuts don't consume them.
+    utterances: "true",
   });
 
   // Callback mode needs a one-time token so the (unsigned) callback can be

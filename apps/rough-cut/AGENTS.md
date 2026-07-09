@@ -42,6 +42,13 @@ npm -w @repo/rough-cut typecheck
 - **Cross-app URLs**: always via `src/lib/env.ts`, never a raw
   `process.env.NEXT_PUBLIC_*` read elsewhere — Next.js inlines these at build
   time so they must be referenced by literal name in one place.
+- **Atomic holds and claims**: Charged operations (credits via `chargeAiCut`,
+  AI Cut runs) use conditional-UPDATE holds to prevent concurrent double-spends.
+  The pattern: a request claims an exclusive hold via an UPDATE that matches only
+  when the column is empty (or stale), and a losing concurrent call gets zero rows
+  and returns early. See `reserveCredits` (lib/credits.ts, `hold_micros IS NULL`
+  gate) and `claimAiCutSlot` (lib/projects.ts, pending-marker claim). On any
+  failure after the hold, call the corresponding release function to unlock.
 - **Observability**: Sentry (`@sentry/nextjs`) is wired but env-gated —
   no-op until `SENTRY_DSN`/`NEXT_PUBLIC_SENTRY_DSN` are set.
 - Tests are colocated `*.test.ts(x)` next to source, run with Vitest.

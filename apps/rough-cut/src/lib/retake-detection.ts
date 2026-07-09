@@ -79,8 +79,14 @@ function normalize(text: string): string {
     .trim();
 }
 
-/** Split a word stream into sentences on long pauses or terminal punctuation. */
-function groupIntoSentences(words: TranscriptWord[]): Sentence[] {
+/**
+ * Group words that share a flush point into one Sentence — shared by both the
+ * utterance-boundary and pause-heuristic grouping strategies below.
+ */
+function flushSentences(
+  words: TranscriptWord[],
+  shouldFlushAfter: (word: TranscriptWord, index: number) => boolean
+): Sentence[] {
   const sentences: Sentence[] = [];
   let current: TranscriptWord[] = [];
 
@@ -96,15 +102,68 @@ function groupIntoSentences(words: TranscriptWord[]): Sentence[] {
     current = [];
   }
 
-  for (const word of words) {
-    const prev = current[current.length - 1];
-    if (prev && word.start - prev.end > SENTENCE_GAP_SECONDS) flush();
+  words.forEach((word, i) => {
     current.push(word);
-    if (TERMINAL_PUNCTUATION.test(word.word)) flush();
-  }
+    if (shouldFlushAfter(word, i)) flush();
+  });
   flush();
 
   return sentences;
+}
+
+/**
+ * Group words into sentences using Deepgram's real utterance boundaries
+ * (`utterances: true`) instead of guessing from a fixed pause length — a
+ * sentence break lands exactly where Deepgram detected one acoustically.
+ * `utteranceEnds` is ascending; a word flushes the current sentence once its
+ * own end reaches the next boundary. EPS absorbs the sub-frame drift between
+ * a word's `end` and its utterance's `end` (both pass through the same
+ * frame-snap in deepgram.ts, so drift is at most one 1/30s step).
+ */
+const UTTERANCE_BOUNDARY_EPS = 1 / 30 + 1e-6;
+
+function groupByUtteranceBoundaries(
+  words: TranscriptWord[],
+  utteranceEnds: number[]
+): Sentence[] {
+  let boundaryIdx = 0;
+  return flushSentences(words, (word) => {
+    let flushed = false;
+    while (
+      boundaryIdx < utteranceEnds.length &&
+      word.end >= utteranceEnds[boundaryIdx] - UTTERANCE_BOUNDARY_EPS
+    ) {
+      boundaryIdx++;
+      flushed = true;
+    }
+    return flushed;
+  });
+}
+
+/** Split a word stream into sentences on long pauses or terminal punctuation —
+ *  the fallback when no Deepgram utterance boundaries are available (older
+ *  stored transcripts predating the `utterances` option). */
+function groupByPauseHeuristic(words: TranscriptWord[]): Sentence[] {
+  return flushSentences(words, (word, i) => {
+    if (TERMINAL_PUNCTUATION.test(word.word)) return true;
+    const next = words[i + 1];
+    return next != null && next.start - word.end > SENTENCE_GAP_SECONDS;
+  });
+}
+
+/**
+ * Split a word stream into sentences. Prefers real Deepgram utterance
+ * boundaries when the caller has them; falls back to the pause/punctuation
+ * heuristic otherwise.
+ */
+function groupIntoSentences(
+  words: TranscriptWord[],
+  utteranceEnds?: number[]
+): Sentence[] {
+  if (utteranceEnds && utteranceEnds.length > 0) {
+    return groupByUtteranceBoundaries(words, utteranceEnds);
+  }
+  return groupByPauseHeuristic(words);
 }
 
 export interface RetakeMatch {
@@ -121,10 +180,15 @@ export interface RetakeMatch {
  *
  * `minSimilarity` (0..1) is the fuzzy-match threshold: lower catches looser
  * re-records at the cost of precision, higher demands near-identical wording.
+ *
+ * `utteranceEnds` (optional, ascending) are Deepgram's real utterance-boundary
+ * timestamps (`utterances: true`); when present, sentences are grouped by
+ * these acoustic boundaries instead of the fixed-pause heuristic.
  */
 export function detectRetakes(
   words: TranscriptWord[],
-  minSimilarity: number = DEFAULT_RETAKE_SIMILARITY
+  minSimilarity: number = DEFAULT_RETAKE_SIMILARITY,
+  utteranceEnds?: number[]
 ): RetakeMatch[] {
   // Self-defense: drop words with unusable timing (null/NaN timestamps coerce
   // to 0 and corrupt the sentence grouping). Kept inline rather than importing
@@ -137,7 +201,7 @@ export function detectRetakes(
     )
     .sort((a, b) => a.start - b.start);
 
-  const sentences = groupIntoSentences(usable).filter(
+  const sentences = groupIntoSentences(usable, utteranceEnds).filter(
     (s) => s.tokens.length >= RETAKE_MIN_WORDS
   );
 

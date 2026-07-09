@@ -24,6 +24,7 @@ import {
   Loader2,
   Clock,
   Check,
+  Eraser,
   RotateCcw,
   Wand2,
   type LucideIcon,
@@ -78,6 +79,18 @@ interface Project {
   transcriptStatus: "idle" | "processing" | "ready" | "failed";
   edl: EDL | null;
   aiCuts: AiCuts | null;
+}
+
+// Fired on every editor→dashboard navigation: pure reassurance, never a
+// blocker — autosave is real, so nothing is unsaved. The one non-obvious fact
+// a user needs is that reopening requires reselecting the same source file
+// (the video never touches the server). The dashboard mounts its own Toaster,
+// so the toast survives the navigation.
+function showExitReassuranceToast() {
+  toast("Project saved", {
+    description:
+      "Your edits are stored automatically. To reopen this project, just reselect the same source video.",
+  });
 }
 
 const AUTOSAVE_DELAY_MS = 800;
@@ -645,7 +658,13 @@ export default function EditorPage() {
   const reRunRoughCut = useCallback(() => {
     if (!edl || durationSeconds <= 0) return;
     const firstRun = edl.segments.every((s) => s.status === "keep");
-    let next = reRoughCutInEdl(edl, words, durationSeconds, SENSITIVITY_PRESETS[sensitivity]);
+    let next = reRoughCutInEdl(
+      edl,
+      words,
+      durationSeconds,
+      SENSITIVITY_PRESETS[sensitivity],
+      project?.transcript?.utteranceEnds
+    );
     // reRoughCut returns the same EDL untouched when there's nothing to
     // regenerate from (transcript not ready yet) — don't claim a re-run happened.
     if (next === edl) {
@@ -676,6 +695,36 @@ export default function EditorPage() {
   const [aiBusy, setAiBusy] = useState(false);
   const aiCutIdempotencyKey = useRef<string | null>(null);
 
+  // Clearing is the only path to a fresh paid AI run — the server refuses a
+  // re-run (409 AI_CUT_ALREADY_RUN) while results exist. No refund on clear:
+  // it resets derived data, it doesn't reverse the original charge.
+  const clearAiCuts = useCallback(async () => {
+    try {
+      const response = await fetch(`/api/projects/${id}/ai-cut`, { method: "DELETE" });
+      if (!response.ok) throw new Error("clear failed");
+      setProject((prev) => (prev ? { ...prev, aiCuts: null } : prev));
+      toast.success("AI cut suggestions cleared", {
+        description: "Run AI Cut again for a fresh pass — it will use credits.",
+      });
+    } catch {
+      toast.error("Couldn't clear the AI cuts", {
+        description: "Check your connection and try again.",
+      });
+    }
+  }, [id]);
+
+  // Confirm via a sonner action-toast (the app has no Dialog primitive; this
+  // is the same deliberate-action pattern the undo toasts use). Only the
+  // explicit Clear press fires the DELETE — Cancel or dismiss does nothing.
+  const requestClearAiCuts = useCallback(() => {
+    toast("Clear AI Cut suggestions?", {
+      description:
+        "This removes the current AI suggestions. Running AI Cut again will use credits.",
+      action: { label: "Clear", onClick: () => void clearAiCuts() },
+      cancel: { label: "Cancel", onClick: () => {} },
+    });
+  }, [clearAiCuts]);
+
   const runAiCut = useCallback(async () => {
     if (!edl || aiBusy) return;
     setAiBusy(true);
@@ -700,6 +749,27 @@ export default function EditorPage() {
             action: { label: "Add funds", onClick: () => window.open(WALLET_DASHBOARD_URL, "_blank") },
           });
           return;
+        }
+        if (response.status === 409) {
+          const code = (data as { code?: string } | null)?.code;
+          if (code === "AI_CUT_ALREADY_RUN") {
+            toast("AI Cut has already run", {
+              id: "ai-cut",
+              description:
+                "This project already has AI suggestions, so a re-run wouldn't change anything. Clear them first to run a fresh paid pass.",
+              action: { label: "Clear AI Cuts", onClick: () => requestClearAiCuts() },
+            });
+            return;
+          }
+          if (code === "AI_CUT_IN_PROGRESS") {
+            // Another tab/request is already mid-run for this project — not
+            // a failure, just lost the race to claim the run.
+            toast("AI Cut is already running", {
+              id: "ai-cut",
+              description: "Another request is already running AI Cut on this project — try again shortly.",
+            });
+            return;
+          }
         }
         toast.error("AI cut failed", {
           id: "ai-cut",
@@ -735,7 +805,7 @@ export default function EditorPage() {
       aiCutIdempotencyKey.current = null;
       setAiBusy(false);
     }
-  }, [edl, aiBusy, id, words, applyEdl, undo]);
+  }, [edl, aiBusy, id, words, applyEdl, undo, requestClearAiCuts]);
   // Signal the in-flight export to stop. Only reachable once a handle exists
   // (the Cancel control is shown only in "exporting"/"cancelling"); the guard
   // is belt-and-suspenders. The worker throws ExportError("cancelled"), which
@@ -985,7 +1055,10 @@ export default function EditorPage() {
             computer to continue editing.
           </p>
           <div className="mt-6">
-            <FilePicker onFileSelected={(file) => setSourceFile(file)} />
+            <FilePicker
+              onFileSelected={(file) => setSourceFile(file)}
+              expectedDurationMs={project.durationMs ?? undefined}
+            />
           </div>
         </div>
       </div>
@@ -1315,6 +1388,16 @@ export default function EditorPage() {
           >
             <RotateCcw className="h-3 w-3" /> Re-run rough cut
           </button>
+          {hasAiCuts && (
+            <button
+              type="button"
+              onClick={requestClearAiCuts}
+              title="Remove the current AI suggestions — running AI Cut again after this will use credits"
+              className="inline-flex items-center gap-1 rounded-md border border-foreground/10 px-2 py-0.5 text-foreground/70 transition-colors hover:bg-foreground/10 hover:text-foreground"
+            >
+              <Eraser className="h-3 w-3" /> Clear AI cuts
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setShowShortcuts(true)}
@@ -1487,6 +1570,7 @@ function StatusScreen({
       </div>
       <Link
         href="/dashboard"
+        onClick={showExitReassuranceToast}
         className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-foreground/10 px-3 py-1.5 text-sm text-foreground/70 hover:bg-foreground/10"
       >
         <ArrowLeft className="h-4 w-4" /> Back to dashboard
@@ -1594,6 +1678,7 @@ function TopBar({
       <div className="flex items-center gap-3">
         <Link
           href="/dashboard"
+          onClick={showExitReassuranceToast}
           className="flex items-center gap-1.5 rounded-lg border border-foreground/10 px-3 py-1.5 text-sm text-foreground/70 hover:bg-foreground/10"
         >
           <ArrowLeft className="h-4 w-4" /> Dashboard

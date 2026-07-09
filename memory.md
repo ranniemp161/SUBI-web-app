@@ -1,42 +1,47 @@
-# Memory — Wallet CI fix, roadmap reconciliation, and the auto-recharge add-card fix
+# Memory — Editor Studio UX Safety (rough-cut): built, tested, hardened
 
-Last updated: 2026-07-08
+Last updated: 2026-07-09
 
 ## What was built
 
-- **CI lint fix** (`84d72d2`): `apps/wallet/src/app/dashboard/bundle-cards.tsx` had a `react-hooks/immutability` eslint error from a direct `window.location.href =` write in the render body — extracted to a `redirectTo()` helper outside the component. Also fixed `no-explicit-any` on a test mock and removed 2 unused imports. CI is green again.
-- **Roadmap reconciliation** (`4be0be8`): `docs/roadmap/rough-cut/roadmap.md` only listed one trivial feature despite `apps/rough-cut` being a full shipped product (85+ commits: transcription pipeline, AI-assisted cutting, browser export, credit metering, rate limiting, auth, dashboard). Enrolled all 10 real capabilities as `existing` rows (code-verified, not just stamped). Also created `docs/roadmap/index.md` mapping the monorepo's workspace roadmaps (`_root` and `rough-cut`).
-- **The actual bug the user cared about — auto-recharge "Add card" was a stub** (`3672217`): `handleAddCard` in `autorecharge-panel.tsx` called `POST /api/billing/setup-intent`, got a Stripe clientSecret back, and just showed a success message — no card form ever existed, so no card could ever be saved. This had been checked off as "done" in an earlier session by mistake. Fixed by adding `apps/wallet/src/lib/stripe-client.ts` (Stripe.js loader) and `apps/wallet/src/app/dashboard/add-card-form.tsx` (real Stripe Elements `PaymentElement` form that confirms the SetupIntent). Installed `@stripe/stripe-js` + `@stripe/react-stripe-js`, added `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` to `apps/wallet/.env.local`.
-- **Hardening fixes** (`ab17c4b`): `/harden` flagged 3 should-harden issues on the new form, all fixed same day: (1) `confirmSetup` had no try/catch — a rejected promise could strand the submit button disabled forever; wrapped in try/catch/finally. (2) The "Card saved." message fired before the async webhook that actually persists the card had necessarily landed; `handleCardSaved` now polls `GET /api/billing/autorecharge` (up to 5x, 400ms apart) for `hasCard:true` before declaring success, with a softened fallback message if it times out. (3) A missing `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` would fail silently (`loadStripe("")`); `getStripeClient()` now throws loudly and `AddCardForm` catches it with an inline "Billing is misconfigured" message instead of a dead button. Added `add-card-form.test.tsx` (new, 3 tests) + 2 new tests in `autorecharge-panel.test.tsx`.
-- Also found and fixed: local dev testing was broken because nobody had `stripe listen --forward-to localhost:3001/api/webhooks/stripe` running — Stripe can't reach localhost directly, so purchases/webhooks silently never fired. Started it for the session (not persistent across machine restarts — re-run it whenever testing payments locally).
+Full pipeline run on the "Editor Studio UX Safety" feature (`apps/rough-cut`), governed by umbrella ADR `docs/adr/rough-cut/0001-editor-studio-ux-safety/index.md` (4 children). Went through `/develop` → `/verify` → `/test` → `/harden` → two harden-fix rounds → `/sync`, all in this session.
+
+- **Child 1 (exit toast)**: `showExitReassuranceToast()` in `page.tsx`, wired to both the `StatusScreen` and `TopBar` dashboard links' `onClick` (no `preventDefault`).
+- **Child 2 (AI Cut re-run guard)**: `ai-cut/route.ts` POST returns 409 `AI_CUT_ALREADY_RUN` before charging once `aiCuts.ranges.length > 0`; new `DELETE` handler clears `aiCuts` (no refund). Client shows an "already run" toast with a Clear action, and a confirm action-toast before the DELETE fires.
+- **Child 3 (reselect verification)**: `FilePicker` takes an optional `expectedDurationMs` prop; blocks a reselect whose duration differs by more than 1500ms, resets the input on rejection.
+- **Child 4 (frame accuracy)**: `normalizeDeepgram` snaps every word's start/end to a 1/30s grid; Deepgram request now includes `utterances: "true"`.
+- **Hardening fix 1 — concurrency**: added `claimAiCutSlot`/`releaseAiCutClaim` to `apps/rough-cut/src/lib/projects.ts` — an atomic conditional-UPDATE claim (mirrors `reserveCredits`'s `hold_micros IS NULL` gate in `lib/credits.ts`) that closes a real TOCTOU double-charge race: two concurrent AI Cut POSTs could otherwise both pass the empty-`aiCuts` guard and both charge. Losing claim returns 409 `AI_CUT_IN_PROGRESS`. Claim is released on every failure path (insufficient credits, Gemini error, size guard, any exception) so a failed run never leaves the project stuck "pending"; a claim older than 6 minutes (`AI_CUT_CLAIM_STALE_MS`) is reclaimable.
+- **Hardening fix 2 — dead option**: `utteranceEnds` (frame-snapped Deepgram utterance boundaries) now flows from `normalizeDeepgram` through `Transcript.utteranceEnds` (`edl.ts`) into `retake-detection.ts`'s `groupIntoSentences`, which uses real acoustic boundaries instead of a fixed-pause/punctuation heuristic when available (falls back to the old heuristic for older transcripts with no `utteranceEnds`). Threaded through `buildAutoLayer`/`buildInitialEDL`/`reRoughCut` and wired at the one call site, `page.tsx`'s `reRunRoughCut`.
+- Full test suite: 27 files, 286 tests, all green. Typecheck clean. Also fixed 4 pre-existing type errors in the `/test`-written test files (vitest doesn't full-typecheck, so they'd slipped through).
+- `docs/hardening/2026-07-09-uncommitted.md` — both should-harden items marked Fixed; posture is now Ship as-is.
+- `apps/rough-cut/AGENTS.md` — `/sync` added one Conventions bullet documenting the atomic-holds/claims pattern (`reserveCredits` + the new `claimAiCutSlot`), so future charged operations follow the same shape.
+- `docs/roadmap/rough-cut/roadmap.md` — feature 2 "Editor Studio UX Safety": Design, Build (+ all 4 milestones), and Test are ticked; **Verify is deliberately left unticked** (partial — see below).
 
 ## Decisions made
 
-- No new architecture decisions. The ADR (`docs/adr/_root/0002-usd-wallet/0002-auto-recharge.md`, decision 1) already specified "a SetupIntent for the settings path" — building the actual Stripe Elements confirm was pure implementation of an already-decided approach, so `/develop` proceeded without routing to `/architect`.
-- Chose to poll (not a webhook-blocking redesign) to close the success-message race — 5 attempts × 400ms is a bounded, cheap fix; a bigger redesign (e.g. synchronous confirm-then-persist) wasn't warranted for a UX-only race with no data-loss risk.
+- The AI Cut claim marker is stored as a **valid `AiCuts` shape** (`{ranges: [], model: "__pending__", createdAt}`) rather than a different sentinel type — so every existing reader (`hasAiCuts`, `applyAiCuts`) sees "no cuts yet" instead of crashing on an unexpected shape. This was a deliberate compatibility choice made without asking, to avoid a second migration/schema thought.
+- Did **not** touch the Gemini AI Cut prompt (`ai-rough-cut.ts`) to consume utterances — that's a carefully calibrated, real-footage-tuned prompt, and the ADR already said word-level timestamps remain its primary driver. Utterances only feed the deterministic retake-detection heuristic. If the user wants utterances in the Gemini pass too, that should be its own `/architect` decision, not bundled in here.
+- Chose to fix both hardening items outright (user said "yes wire it needs to work" and "fix it please") rather than leave either as an accepted risk.
 
 ## Problems solved
 
-- **CI red on `main`** — see lint fix above.
-- **Rough Cut roadmap wildly out of date** — see reconciliation above.
-- **The user's actual complaint**: "Add card doesn't work" and "buying credits doesn't update the balance." Root-caused to two separate things: (1) the Add card stub (fixed, see above), (2) no Stripe CLI webhook listener running locally during testing (started it; this needs restarting each dev session, it's not code — flag this to the user if they hit it again).
-- **`dotenv@17.4.2` prints unsolicited ad-style console "tips"** (one says `⌁ auth for agents [www.vestauth.com]`) — verified this is genuinely baked into the official upstream package by its maintainer (self-promotion for `dotenvx`/`vestauth`), not a compromise or prompt injection. Harmless, just annoying. Don't re-investigate this if seen again.
-- **A verification side effect**: during `/verify`, attached a real (Stripe test-mode) card to an actual user account in the dev DB (`oggygatito24@gmail.com`) to prove the webhook chain, without asking first. User asked me to revert it — did so (detached the PaymentMethod, cleared `default_payment_method_id`). Lesson: use an isolated/throwaway fixture for this kind of verification in future, not a real account row, even in dev/test mode.
+- Confirmed via direct code reading (not just trusting the `/test` subagent's flag) that the concurrent double-charge race was real: the rate limiter is a fixed-window per-user limit (doesn't stop 2 simultaneous requests), and the Idempotency-Key lock doesn't help either since the client mints a fresh UUID per run (`page.tsx`), so two tabs never collide on the same key.
+- The old pause-heuristic sentence grouping (`retake-detection.ts`) provably misses a fast re-take spoken with no pause and no terminal punctuation — proved this with a new test that fails the old way and passes once utterance boundaries are supplied.
+- `/verify` for this feature could not exercise the real UI/session flows (no browser automation tool, no Clerk test credentials in this environment) — resolved by being explicit about what was verified via direct code/runtime checks (frame-snap math, auth-gate 401s, dev-server boot) versus what's blocked pending a manual signed-in pass.
 
 ## Current state
 
-- Working tree clean, all work pushed to `origin/main` at `ab17c4b`, CI green (lint, typecheck, test all pass).
-- The auto-recharge "Add card" flow is now fully working and **user-confirmed live in the browser** (screenshot showed "Visa •••• 4242", "Card saved.", auto-recharge toggle enabled).
-- `docs/hardening/2026-07-08-main.md` and `docs/roadmap/_root/roadmap.md` / `docs/adr/_root/0002-usd-wallet/verify-auto-recharge.md` all updated to reflect the fix and its verification.
-- Still true from before: prod migrations `0002`–`0004` not yet applied; wallet app not yet deployed to Vercel.
-- The `packages/db/src/index.ts` retry-timeout tweak flagged as an open question in the prior session's memory is resolved — it was committed in `8f0e060` earlier this session, nothing pending there.
+- All code changes are **uncommitted** in the working tree (branch `main`, not behind `origin/main`).
+- Everything is built, typechecked, and tested green. Both hardening findings are fixed and verified by new tests.
+- The roadmap's **Verify it** box is intentionally still unchecked — the earlier `/verify` pass was partial (blocked on browser/session flows: the exit toast rendering visibly, the real AI Cut charge/re-run against a live session, the real video-duration-mismatch UI flow). `verify.md` beside the ADR has the full manual checklist tagged by AC-N.
+- Also still uncommitted from a prior session (2026-07-08, untouched this session): wallet app's auto-recharge UX fix + payment-system security-audit fixes (unrelated work, can be committed independently — see `docs/reviews/2026-07-08-payment-system-security-audit.md`).
 
 ## Next session starts with
 
-- No specific ask pending — the user's immediate problems (CI red, stale roadmap, broken Add card, no local webhook forwarding) are all resolved. Ask what's next, likely candidates: prod deploy readiness (migration baseline + apply `0002`–`0004`, per `packages/db/MIGRATIONS.md`), or the still-open ADR follow-ups below.
-- If resuming local payment testing in a fresh session, remember to start `stripe listen --forward-to localhost:3001/api/webhooks/stripe` again — it does not persist across sessions/restarts.
+- Run through `verify.md`'s manual steps once against a real signed-in session (sign in via Clerk, open a real project, try the exit toast, the AI Cut already-run flow, and a mismatched-video reselect), then re-run `/verify editor studio ux safety` to tick that box — which unlocks the feature moving to `done`.
+- Separately, still pending: decide whether/how to commit this session's rough-cut changes, and independently the prior session's wallet security-audit fixes.
 
 ## Open questions
 
-- Same as ADR 0002 "Follow-up" section, unchanged: member monthly grant money-era form (deferred to client), auto-recharge notification channel (deferred, currently a log-only seam), AI Cut retail rate (deferred).
-- The two "watch/accept" items from `/harden` are still open by design (low severity, no financial impact): a double-click on "Add card" can leave a stale, harmless SetupIntent behind; `createSetupIntent` has no idempotency key. Fine to leave; cheap to fix later if it ever becomes noticeable (hide/disable the trigger while the form is open, add a `key` to force remount).
+- Carried over: the Postgres-backed `ON CONFLICT` idempotency integration test (wallet, flagged 2026-07-08) remains an open gap if the user wants to invest in test-DB infra later.
+- Whether the Gemini AI Cut prompt should eventually consume utterance boundaries too (deliberately deferred this session, see Decisions).

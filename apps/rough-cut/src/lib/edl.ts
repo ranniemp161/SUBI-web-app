@@ -22,6 +22,8 @@ export interface Transcript {
   text: string;
   duration: number;
   language?: string;
+  /** Deepgram utterance-boundary end times (ascending) — see retake-detection.ts. */
+  utteranceEnds?: number[];
 }
 
 export type EDLReason = "silence" | "retake" | "repetition" | "manual" | "ai" | null;
@@ -207,7 +209,8 @@ export function generateInitialEDL(
 function buildAutoLayer(
   clean: TranscriptWord[],
   durationSeconds: number,
-  settings: DetectionSettings
+  settings: DetectionSettings,
+  utteranceEnds?: number[]
 ): EDL {
   let edl = generateInitialEDL(clean, durationSeconds, settings);
   // Repetitions before retakes: where a full retake span covers a stutter,
@@ -215,7 +218,7 @@ function buildAutoLayer(
   for (const rep of detectRepetitions(clean)) {
     edl = setRangeStatus(edl, rep.cutStart, rep.cutEnd, "cut", "repetition");
   }
-  for (const retake of detectRetakes(clean, settings.retakeSimilarity)) {
+  for (const retake of detectRetakes(clean, settings.retakeSimilarity, utteranceEnds)) {
     edl = setRangeStatus(edl, retake.cutStart, retake.cutEnd, "cut", "retake");
   }
   return edl;
@@ -224,7 +227,8 @@ function buildAutoLayer(
 export function buildInitialEDL(
   words: TranscriptWord[],
   durationSeconds: number,
-  settings: DetectionSettings = DEFAULT_SETTINGS
+  settings: DetectionSettings = DEFAULT_SETTINGS,
+  utteranceEnds?: number[]
 ): EDL {
   const clean = sanitizeWords(words);
 
@@ -234,7 +238,7 @@ export function buildInitialEDL(
     return keepAll(durationSeconds);
   }
 
-  const edl = buildAutoLayer(clean, durationSeconds, settings);
+  const edl = buildAutoLayer(clean, durationSeconds, settings, utteranceEnds);
 
   // Safety floor for the *first* build only: an auto-cut that removes nearly the
   // whole clip is almost certainly bad input (e.g. missing timestamps), not a
@@ -507,7 +511,8 @@ export function reRoughCut(
   edl: EDL,
   words: TranscriptWord[],
   durationSeconds: number,
-  settings: DetectionSettings = DEFAULT_SETTINGS
+  settings: DetectionSettings = DEFAULT_SETTINGS,
+  utteranceEnds?: number[]
 ): EDL {
   const clean = sanitizeWords(words);
   // Nothing to regenerate from → leave the current edit untouched rather than
@@ -522,7 +527,7 @@ export function reRoughCut(
 
   // Floor-free: an explicit re-run at a chosen sensitivity is allowed to cut
   // deep; applyEdl is the guard against a fully-empty timeline.
-  let next = buildAutoLayer(clean, durationSeconds, settings);
+  let next = buildAutoLayer(clean, durationSeconds, settings, utteranceEnds);
 
   // Manual layer wins over the freshly generated auto layer.
   for (const r of protectedKeeps) {

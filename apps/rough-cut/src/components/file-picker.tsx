@@ -7,7 +7,22 @@ interface FilePickerProps {
   onFileSelected: (file: File, metadata: VideoMetadata) => void;
   /** Whether the picker is in a loading state (e.g. creating project). */
   isLoading?: boolean;
+  /**
+   * The project's stored duration, on the reselect (reopen) path only. When
+   * set, a file whose duration differs by more than the tolerance is blocked
+   * outright — the original transcript's timestamps applied to a different
+   * video silently corrupt every seek and cut. Absent on initial upload.
+   */
+  expectedDurationMs?: number;
 }
+
+/**
+ * Reselecting the same physical file decodes to the same duration, so real
+ * drift only comes from a remux/re-encode of the same content — typically tens
+ * to a few hundred ms. 1500ms sits above that noise floor and far below the
+ * error of a genuinely wrong video (whole seconds to the entire runtime).
+ */
+const DURATION_TOLERANCE_MS = 1500;
 
 export interface VideoMetadata {
   fileName: string;
@@ -25,6 +40,7 @@ export interface VideoMetadata {
 export default function FilePicker({
   onFileSelected,
   isLoading = false,
+  expectedDurationMs,
 }: FilePickerProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState("");
@@ -58,6 +74,19 @@ export default function FilePicker({
         const durationMs = Math.round(video.duration * 1000);
         URL.revokeObjectURL(video.src);
 
+        if (
+          expectedDurationMs != null &&
+          Math.abs(durationMs - expectedDurationMs) > DURATION_TOLERANCE_MS
+        ) {
+          setError(
+            "That video does not match this project. The file you picked is a different length than the original. Reopen this project with the same source video you transcribed, then try again."
+          );
+          // Clear the input so picking again (even the same file) re-fires
+          // the change event and re-runs this check.
+          if (fileInputRef.current) fileInputRef.current.value = "";
+          return;
+        }
+
         onFileSelected(file, {
           fileName: file.name,
           fileSize: file.size,
@@ -74,7 +103,7 @@ export default function FilePicker({
 
       video.src = URL.createObjectURL(file);
     },
-    [onFileSelected]
+    [onFileSelected, expectedDurationMs]
   );
 
   /** Handle file input change. */

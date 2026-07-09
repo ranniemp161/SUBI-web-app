@@ -20,6 +20,7 @@ The core product: browser-based video transcription and AI-assisted rough cuttin
 | I | IP-based rate limiting | Existing | existing |
 | J | Cron cleanup & housekeeping | Existing | existing |
 | 1 | Buy Credits Redirect | Slice 1 | done |
+| 2 | Editor Studio UX Safety | Slice 2 | in-progress |
 
 ## Existing (pre-workflow, enrolled 2026-07-08)
 
@@ -71,6 +72,21 @@ code in `src/app/api/cron/blob-sweep/route.ts`, `src/app/api/transcribe/blob-cle
 Redirect the local Stripe checkout modal to the separated Wallet app.
 **Done when:** clicking "Buy credits" anywhere in Rough Cut deep-links the user to the Wallet app (e.g., localhost:3001) instead of opening the local Stripe popover.
 - [x] Build it: `/develop buy credits redirect`
+
+## Slice 2
+
+### 2. Editor Studio UX Safety · in-progress
+Four small safety and accuracy fixes to the editor studio: a reassurance toast on exit, a server-side guard stopping AI Cut from charging twice, a duration check catching a wrong reselected video, and tighter transcript/frame timing.
+**Done when:** leaving the editor shows a saved-and-safe toast, AI Cut cannot be charged twice for the same project without an explicit clear step, reselecting a mismatched video is blocked with a clear message, and transcript timestamps are frame-snapped with utterance grouping enabled.
+- [x] Design it (ADR): [0001](../../adr/rough-cut/0001-editor-studio-ux-safety/index.md)
+- [x] Build it: `/develop editor studio ux safety`
+  - [x] Exit navigation reassurance toast (child 1)
+  - [x] AI Cut re-run guard + Clear AI Cuts action (child 2)
+  - [x] Video reselect duration verification (child 3)
+  - [x] Transcript utterances + frame snap accuracy (child 4)
+  code in `apps/rough-cut/src/app/(app)/dashboard/[id]/page.tsx`, `src/components/file-picker.tsx`, `src/app/api/projects/[id]/ai-cut/route.ts`, `src/lib/deepgram.ts`, `src/app/api/transcribe/deepgram/route.ts`
+- [ ] Verify it: `/verify editor studio ux safety` (partial — see verify.md; blocked items need a manual signed-in pass)
+- [x] Test it: `/test editor studio ux safety`
 
 ## Legend
 

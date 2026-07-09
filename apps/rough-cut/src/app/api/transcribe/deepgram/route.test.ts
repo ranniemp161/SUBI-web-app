@@ -243,6 +243,30 @@ describe("POST /api/transcribe/deepgram — sync mode (localhost)", () => {
     process.env.DEEPGRAM_API_KEY = "key";
   });
 
+  // covers AC-1, AC-5 (child 4): utterances is requested; diarize/paragraphs
+  // are not, and the normalizer's existing words path still works.
+  it("requests utterances:true and omits diarize/paragraphs from the Deepgram call", async () => {
+    const fetchSpy = vi.fn(async (_url?: string, _init?: RequestInit) => ({
+      ok: true,
+      json: async () => ({
+        metadata: { duration: 1 },
+        results: { channels: [{ alternatives: [{ transcript: "hi", words: [] }] }] },
+      }),
+    }));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    await POST(req({ blobUrl: OWN_BLOB_URL }));
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const [calledUrl] = fetchSpy.mock.calls[0];
+    const params = new URL(calledUrl!).searchParams;
+    expect(params.get("utterances")).toBe("true");
+    expect(params.get("diarize")).toBeNull();
+    expect(params.get("paragraphs")).toBeNull();
+
+    vi.unstubAllGlobals();
+  });
+
   it("stores the transcript, settles on Deepgram's duration, and deletes the blob", async () => {
     vi.stubGlobal(
       "fetch",

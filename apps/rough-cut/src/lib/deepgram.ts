@@ -22,6 +22,12 @@ export interface DeepgramWord {
   punctuated_word?: string;
 }
 
+/** One Deepgram utterance — a natural spoken segment (pause- or sentence-bounded). */
+export interface DeepgramUtterance {
+  start: number;
+  end: number;
+}
+
 export interface DeepgramResponse {
   metadata?: { duration?: number };
   results?: {
@@ -29,6 +35,8 @@ export interface DeepgramResponse {
       detected_language?: string;
       alternatives?: { transcript?: string; words?: DeepgramWord[] }[];
     }[];
+    /** Present only when the request sets `utterances: true`. */
+    utterances?: DeepgramUtterance[];
   };
 }
 
@@ -38,7 +46,24 @@ export interface NormalizedTranscript {
   text: string;
   duration: number;
   language?: string;
+  /**
+   * Utterance boundaries (end times, frame-snapped, ascending) from Deepgram's
+   * `utterances: true` option — real acoustic phrase/sentence breaks. Consumed
+   * by retake-detection.ts to group words into sentences instead of guessing
+   * from a fixed pause length. Omitted when Deepgram returned none (e.g. an
+   * empty transcript), so older stored transcripts without this field fall
+   * back to the pause-based heuristic.
+   */
+  utteranceEnds?: number[];
 }
+
+// Word timestamps are snapped to a 30fps grid here, at the one chokepoint both
+// transcription paths flow through, so seek, EDL cut boundaries, and export all
+// inherit frame-aligned values — no per-consumer rounding. 30fps is a heuristic
+// (most consumer video is 24/25/30fps); a non-30fps source can be off by up to
+// ~one real frame. Changing the grid means re-normalizing stored transcripts.
+const SNAP_FPS = 30;
+const snapToFrame = (seconds: number) => Math.round(seconds * SNAP_FPS) / SNAP_FPS;
 
 /**
  * Flatten Deepgram's nested response into the flat {words, text, duration}
@@ -51,15 +76,23 @@ export function normalizeDeepgram(payload: DeepgramResponse): NormalizedTranscri
   const alt = channel?.alternatives?.[0];
   const words = (alt?.words ?? []).map((w) => ({
     word: w.punctuated_word ?? w.word,
-    start: w.start,
-    end: w.end,
+    start: snapToFrame(w.start),
+    end: snapToFrame(w.end),
     confidence: w.confidence,
   }));
+  const utterances = payload?.results?.utterances;
+  // Ends only, ascending — that's all retake-detection needs to mark a
+  // boundary. Snapped through the same 1/30s grid as words so a boundary and
+  // an adjacent word's `end` compare cleanly.
+  const utteranceEnds = utterances?.length
+    ? utterances.map((u) => snapToFrame(u.end)).sort((a, b) => a - b)
+    : undefined;
   return {
     words,
     text: alt?.transcript ?? "",
     duration: payload?.metadata?.duration ?? 0,
     language: channel?.detected_language,
+    ...(utteranceEnds ? { utteranceEnds } : {}),
   };
 }
 
