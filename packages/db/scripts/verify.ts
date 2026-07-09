@@ -13,6 +13,7 @@
 
 import { config } from "dotenv";
 import { neon } from "@neondatabase/serverless";
+import { is, Table, getTableName, getTableColumns } from "drizzle-orm";
 import * as schema from "../src/schema";
 
 // Load .env.local (same file drizzle.config.ts uses)
@@ -21,73 +22,38 @@ config({ path: ".env.local" });
 // ---------------------------------------------------------------------------
 // Derive expected schema from Drizzle table objects — zero hard-coding.
 //
-// A pgTable() object is a plain object whose own keys are TS field names, each
-// value being a column descriptor with:
-//   .name        — the SQL column name (snake_case)
-//   .columnType  — e.g. "PgText", "PgUUID", "PgBigInt64" …
+// drizzle-orm ships two stable public helpers that are part of its documented
+// API surface:
+//   is(value, Table)        — returns true for pgTable() objects, false for
+//                             enums, type helpers, and anything else.
+//   getTableName(table)     — returns the SQL table name (e.g. "projects").
+//   getTableColumns(table)  — returns { tsKey: ColumnDescriptor } for every
+//                             column, where ColumnDescriptor.name is the SQL
+//                             column name (snake_case).
 //
-// The object also has a non-enumerable Symbol-keyed internal bag and an
-// `enableRLS` key; we filter those out by checking for `columnType`.
-//
-// To get the SQL table name we look at any column's `.table[Symbol]` — but the
-// simpler path is: every column object carries a `.table` back-reference whose
-// own name is the SQL table name, accessible as the value held in the
-// drizzle-orm Table Symbol. We use the reliable pattern of reading column[0]
-// and reflecting table name from it.
+// Using these avoids the Symbol(drizzle:Name) reflection that would silently
+// break if Drizzle renames or removes that internal symbol.
 // ---------------------------------------------------------------------------
-
-interface DrizzleColumnDescriptor {
-  name: string;      // SQL column name
-  columnType: string; // e.g. "PgText"
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  table: any;        // back-reference to the owning table object
-}
-
-function isDrizzleColumn(v: unknown): v is DrizzleColumnDescriptor {
-  return (
-    v !== null &&
-    typeof v === "object" &&
-    "name" in (v as object) &&
-    "columnType" in (v as object) &&
-    typeof (v as DrizzleColumnDescriptor).name === "string" &&
-    typeof (v as DrizzleColumnDescriptor).columnType === "string"
-  );
-}
 
 /**
  * Returns { sqlTableName -> [sqlColumnName, ...] } by reading Drizzle's
- * runtime table/column objects directly.  The table name is extracted from
- * the Symbol-keyed metadata on the back-reference column.table.
+ * public table and column metadata helpers.
  */
 function buildExpectedColumns(): Record<string, string[]> {
   const expected: Record<string, string[]> = {};
 
   for (const exported of Object.values(schema)) {
-    // Skip enums (functions) and anything that isn't a plain object
-    if (exported === null || typeof exported !== "object") continue;
+    // Skip enums (PgEnum functions) and anything that isn't a pgTable object.
+    if (!is(exported, Table)) continue;
 
-    // Collect column descriptors from the top-level keys
-    const columns: DrizzleColumnDescriptor[] = Object.values(
-      exported as Record<string, unknown>
-    ).filter(isDrizzleColumn);
-
-    if (columns.length === 0) continue;
-
-    // Derive the SQL table name from the first column's table back-reference.
-    // drizzle-orm stores the table name as Symbol(drizzle:Name) on the table.
-    const firstCol = columns[0];
-    const tableObj = firstCol.table as Record<symbol, unknown>;
-    const nameSymbol = Object.getOwnPropertySymbols(tableObj).find(
-      (s) => s.toString() === "Symbol(drizzle:Name)"
+    const tableName = getTableName(exported);
+    const columnSqlNames = Object.values(getTableColumns(exported)).map(
+      (col) => col.name
     );
-    const tableName =
-      nameSymbol !== undefined
-        ? (tableObj[nameSymbol] as string)
-        : undefined;
 
-    if (!tableName) continue;
-
-    expected[tableName] = columns.map((c) => c.name);
+    if (columnSqlNames.length > 0) {
+      expected[tableName] = columnSqlNames;
+    }
   }
 
   return expected;
