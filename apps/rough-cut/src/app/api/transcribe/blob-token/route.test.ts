@@ -35,9 +35,9 @@ vi.mock("@/lib/projects", () => ({
 
 vi.mock("@/lib/credits", () => ({
   costSecondsForDurationMs: vi.fn((ms: number) => ms ? Math.ceil(ms / 1000) : 0),
-  RETAIL_MICROS_PER_MINUTE: 316_667,
+  RETAIL_MICROS_PER_MINUTE: 83_333,
   chargeMicrosForSeconds: vi.fn((seconds: number) =>
-    Math.round((seconds * 316_667) / 60)
+    Math.round((seconds * 83_333) / 60)
   ),
 }));
 
@@ -127,7 +127,7 @@ describe("POST /api/transcribe/blob-token", () => {
   });
 
   it("returns 400 if not enough credits", async () => {
-    state.balanceMicros = 100_000; // ~$0.10, well below the 120s job cost (~$0.63)
+    state.balanceMicros = 100_000; // ~$0.10, well below the 120s job cost (~$0.17)
     const res = await POST(req());
     expect(res.status).toBe(400);
     const data = await res.json();
@@ -143,7 +143,7 @@ describe("POST /api/transcribe/blob-token", () => {
   });
 
   it("succeeds and dynamically caps upload size based on affordable seconds", async () => {
-    state.balanceMicros = 52_778; // ~10 affordable seconds -> 10 * 200_000 = 2,000,000 bytes
+    state.balanceMicros = 13_889; // ~10 affordable seconds -> 10 * 200_000 = 2,000,000 bytes
     state.ownedProject = { id: "proj-1", durationMs: 10_000 };
     const res = await POST(req());
     expect(res.status).toBe(200);
@@ -157,7 +157,7 @@ describe("POST /api/transcribe/blob-token", () => {
   });
 
   it("provides a 1MB floor for small balances", async () => {
-    state.balanceMicros = 10_556; // ~2 affordable seconds -> 400_000 < 1_000_000
+    state.balanceMicros = 2_778; // ~2 affordable seconds -> 400_000 < 1_000_000
     state.ownedProject = { id: "proj-1", durationMs: 2_000 };
     const res = await POST(req());
     expect(res.status).toBe(200);

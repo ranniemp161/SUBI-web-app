@@ -16,9 +16,9 @@ describe("constants", () => {
     expect(MICROS_PER_USD).toBe(1_000_000);
   });
 
-  it("default retail rate is the rounded $19 / 60 min rate", () => {
+  it("default retail rate is the rounded $5 / 60 min rate", () => {
     // covers: AC-3 (the configured retail rate the whole slice meters at)
-    expect(RETAIL_MICROS_PER_MINUTE).toBe(316_667);
+    expect(RETAIL_MICROS_PER_MINUTE).toBe(83_333);
   });
 });
 
@@ -49,14 +49,14 @@ describe("formatUsd", () => {
 describe("chargeMicrosForSeconds", () => {
   // covers: AC-3 (transcribe/AI Cut deduct real dollars at the retail rate)
   it("charges one minute at exactly the per-minute rate", () => {
-    expect(chargeMicrosForSeconds(60)).toBe(316_667);
-    expect(chargeMicrosForSeconds(120)).toBe(633_334);
+    expect(chargeMicrosForSeconds(60)).toBe(83_333);
+    expect(chargeMicrosForSeconds(120)).toBe(166_666);
   });
 
   it("rounds the per-second charge to whole micros", () => {
-    // 1s = 316667/60 = 5277.78 -> 5278 ; 30s = 158333.5 -> 158334
-    expect(chargeMicrosForSeconds(1)).toBe(5_278);
-    expect(chargeMicrosForSeconds(30)).toBe(158_334);
+    // 1s = 83333/60 = 1388.88... -> 1389 ; 30s = 83333 * 30 / 60 = 41666.5 -> 41667
+    expect(chargeMicrosForSeconds(1)).toBe(1_389);
+    expect(chargeMicrosForSeconds(30)).toBe(41_667);
   });
 
   it("is zero for zero seconds", () => {
@@ -64,10 +64,10 @@ describe("chargeMicrosForSeconds", () => {
   });
 
   it("uses the rounded rate, so an hour is not identical to the exact bundle conversion", () => {
-    // The metering rate (316_667/min) differs by design from the exact bundle
-    // conversion (19_000_000 / 3600s) used in migration 0003; that is why an
-    // hour meters to 19_000_020, not 19_000_000. Documented, not a bug.
-    expect(chargeMicrosForSeconds(3600)).toBe(19_000_020);
+    // The metering rate (83_333/min) differs by design from the exact bundle
+    // conversion (5_000_000 / 3600s); that is why an
+    // hour meters to 4_999_980, not 5_000_000. Documented, not a bug.
+    expect(chargeMicrosForSeconds(3600)).toBe(4_999_980);
   });
 
   it("honors an explicit rate override (the server's env-tuned rate)", () => {
