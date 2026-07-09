@@ -10,7 +10,7 @@ tracked by an append-only ledger.
 ## Key files
 | File | Owns |
 |---|---|
-| `src/schema.ts` | Table defs: `users`, `projects`, `creditLedger`, `accessCodes` (+ enums `transcript_status`, `credit_ledger_reason`) |
+| `src/schema.ts` | Table defs: `users`, `projects`, `creditLedger`, `accessCodes`, `aiCutRuns` (+ enums `transcript_status`, `credit_ledger_reason`) |
 | `src/index.ts` | `db` singleton (Neon HTTP driver) + `withDbRetry` (timeout/retry wrapper around retryable connection failures) |
 | `drizzle/*.sql` | Committed, reviewed migration history (source of truth for schema changes) |
 | `drizzle.config.ts` | Reads `DATABASE_URL` from `.env.local` in this directory |

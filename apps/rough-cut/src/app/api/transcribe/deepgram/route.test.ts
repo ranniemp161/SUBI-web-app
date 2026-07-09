@@ -246,7 +246,7 @@ describe("POST /api/transcribe/deepgram — sync mode (localhost)", () => {
   // covers AC-1, AC-5 (child 4): utterances is requested; diarize/paragraphs
   // are not, and the normalizer's existing words path still works.
   it("requests utterances:true and omits diarize/paragraphs from the Deepgram call", async () => {
-    const fetchSpy = vi.fn(async (_url?: string, _init?: RequestInit) => ({
+    const fetchSpy = vi.fn(async () => ({
       ok: true,
       json: async () => ({
         metadata: { duration: 1 },

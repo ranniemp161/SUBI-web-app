@@ -60,7 +60,9 @@ vi.mock("@/components/file-picker", () => ({
 
 vi.mock("@/components/video-player", () => ({
   __esModule: true,
-  default: forwardRef((_props: unknown, _ref: unknown) => <div data-testid="video-player-stub" />),
+  default: forwardRef(function VideoPlayerStub() {
+    return <div data-testid="video-player-stub" />;
+  }),
 }));
 
 vi.mock("@/components/transcript-panel", () => ({
@@ -69,7 +71,9 @@ vi.mock("@/components/transcript-panel", () => ({
 
 vi.mock("@/components/timeline-bar", () => ({
   __esModule: true,
-  default: forwardRef((_props: unknown, _ref: unknown) => <div data-testid="timeline-bar-stub" />),
+  default: forwardRef(function TimelineBarStub() {
+    return <div data-testid="timeline-bar-stub" />;
+  }),
 }));
 
 vi.mock("@/components/progress-ring", () => ({

@@ -47,11 +47,12 @@ npm -w @repo/rough-cut typecheck
   The pattern: a request claims an exclusive hold via an UPDATE that matches only
   when the column is empty (or stale), and a losing concurrent call gets zero rows
   and returns early. See `reserveCredits` (lib/credits.ts, `hold_micros IS NULL`
-  gate) and `claimAiCutSlot` (lib/projects.ts, pending-marker claim). On any
+  gate) and `claimAiCutSlot` (lib/projects.ts, `ai_cut_claim_at` timestamp claim). On any
   failure after the hold, call the corresponding release function to unlock.
 - **Observability**: Sentry (`@sentry/nextjs`) is wired but env-gated —
   no-op until `SENTRY_DSN`/`NEXT_PUBLIC_SENTRY_DSN` are set.
 - Tests are colocated `*.test.ts(x)` next to source, run with Vitest.
+- **ESLint & Mocking**: When mocking components with `forwardRef` in tests, avoid anonymous arrow functions. Use named function expressions (e.g. `forwardRef(function VideoPlayerStub() {})`) to satisfy `react/display-name`. Do not declare unused arguments in callback parameters (e.g. `props`, `ref`, `url`, `init`) to satisfy `@typescript-eslint/no-unused-vars`.
 
 ## Gotchas
 - Deepgram's transcription callback isn't signed — a per-project random token

@@ -22,8 +22,9 @@ The core product: browser-based video transcription and AI-assisted rough cuttin
 | 1 | Buy Credits Redirect | Slice 1 | done |
 | 2 | Editor Studio UX Safety | Slice 2 | done |
 | 3 | AI Cut paid re-run (versioned suggestions) | Slice 3 | done |
-| 4 | Surface AI Cut last-run timestamp | Deferred | planned |
-| 5 | Tune cut logic against utterance boundaries | Deferred | planned |
+| 4 | Surface AI Cut last-run timestamp | Slice 4 | planned |
+| 5 | Tune cut logic against utterance boundaries | Slice 4 | planned |
+| 6 | Named/labeled AI Cut runs | Deferred | planned |
 
 ## Existing (pre-workflow, enrolled 2026-07-08)
 
@@ -106,9 +107,7 @@ Today, once AI Cut has produced suggestions, a user must Clear (discard) them be
 - [x] Verify it: `/verify ai cut paid re-run`
 - [x] Test it: `/test ai cut paid re-run`
 
-## Deferred
-
-Surfaced as follow-ups while building Slice 2 (Editor Studio UX Safety), not yet scheduled into a slice. Each has its own decision status; none are urgent.
+## Slice 4
 
 ### 4. Surface AI Cut last-run timestamp · planned
 When AI Cut has already run, tell the user when, so the already-run state reads as "current" rather than ambiguous or stale.
@@ -119,6 +118,17 @@ When AI Cut has already run, tell the user when, so the already-run state reads 
 `retake-detection.ts` now has real Deepgram utterance boundaries available (`utteranceEnds`) but only uses them for sentence grouping; how aggressively cut suggestions should lean on them versus raw word gaps hasn't been tuned against real footage yet.
 **Done when:** cut-suggestion quality has been checked against real footage with utterance boundaries in play, and any tuning needed is applied.
 - [ ] Build it: `/develop tune cut logic utterance boundaries`
+
+## Deferred
+
+Surfaced as follow-ups while building Slice 2 and Slice 3, not yet scheduled into a slice. Each has its own decision status; none are urgent.
+
+### 6. Named/labeled AI Cut runs · planned
+A user can label a stored AI Cut run (e.g. "longer intro kept") to tell runs apart when comparing (from ADR 0002).
+**Done when:** a stored run can be given a custom name that displays in the run list.
+- [ ] Build it: `/develop nameable ai cut runs`
+
+
 
 ## Accepted risks (revisit only if they bite in practice)
 
