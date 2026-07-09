@@ -10,6 +10,7 @@ import {
   index,
   uniqueIndex,
   check,
+  bigint,
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
@@ -79,6 +80,8 @@ export const projects = pgTable("projects", {
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
   fileName: text("file_name").notNull(),
+  fileSize: bigint("file_size", { mode: "number" }),
+  fileType: text("file_type"),
   durationMs: integer("duration_ms"),
   transcript: jsonb("transcript"),
   transcriptStatus: transcriptStatusEnum("transcript_status")

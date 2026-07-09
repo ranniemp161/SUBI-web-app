@@ -56,6 +56,8 @@ const durationMsSchema = z
 export const createProjectSchema = z.strictObject({
   fileName: z.string().min(1).max(500),
   durationMs: durationMsSchema.nullable().optional(),
+  fileSize: z.number().min(0).max(100 * 1024 * 1024 * 1024).nullable().optional(),
+  fileType: z.string().max(100).nullable().optional(),
 });
 
 // PATCH /api/projects/:id — every field optional; only those present are
@@ -65,4 +67,6 @@ export const patchProjectSchema = z.strictObject({
   transcript: transcriptSchema.optional(),
   durationMs: durationMsSchema.nullable().optional(),
   fileName: z.string().min(1).max(500).optional(),
+  fileSize: z.number().min(0).max(100 * 1024 * 1024 * 1024).nullable().optional(),
+  fileType: z.string().max(100).nullable().optional(),
 });

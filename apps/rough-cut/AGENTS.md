@@ -38,7 +38,8 @@ npm -w @repo/rough-cut typecheck
   serverless/Vercel-compatible by design).
 - **Video never touches the server.** Only the extracted audio track uploads
   (browser -> Vercel Blob directly); that blob is deleted once transcription
-  finishes. Reopening a project requires re-selecting the source file.
+  finishes. Reopening a project requires re-selecting the source file. The app validates
+  reselected file duration (blocking on mismatch) and filename, size, or type (warning on mismatch).
 - **Cross-app URLs**: always via `src/lib/env.ts`, never a raw
   `process.env.NEXT_PUBLIC_*` read elsewhere — Next.js inlines these at build
   time so they must be referenced by literal name in one place.

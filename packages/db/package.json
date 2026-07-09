@@ -10,7 +10,8 @@
   },
   "scripts": {
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate",
+    "db:migrate": "drizzle-kit migrate && tsx scripts/verify.ts",
+    "db:verify": "tsx scripts/verify.ts",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio"
   },

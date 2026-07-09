@@ -55,7 +55,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const { fileName, durationMs } = parsed.data;
+    const { fileName, durationMs, fileSize, fileType } = parsed.data;
 
     const [project] = await db
       .insert(projects)
@@ -63,6 +63,8 @@ export async function POST(request: Request) {
         userId: user.id,
         fileName,
         durationMs: durationMs ?? null,
+        fileSize: fileSize ?? null,
+        fileType: fileType ?? null,
       })
       .returning();
 

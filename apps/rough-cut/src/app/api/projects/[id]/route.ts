@@ -83,7 +83,7 @@ export async function PATCH(
     }
 
     // Only apply the fields that were actually provided.
-    const { edl, transcript, durationMs, fileName } = parsed.data;
+    const { edl, transcript, durationMs, fileName, fileSize, fileType } = parsed.data;
     const updateData: Record<string, unknown> = {
       updatedAt: new Date(),
     };
@@ -92,6 +92,8 @@ export async function PATCH(
     if (transcript !== undefined) updateData.transcript = transcript;
     if (durationMs !== undefined) updateData.durationMs = durationMs;
     if (fileName !== undefined) updateData.fileName = fileName;
+    if (fileSize !== undefined) updateData.fileSize = fileSize;
+    if (fileType !== undefined) updateData.fileType = fileType;
 
     const [updated] = await db
       .update(projects)

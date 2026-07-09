@@ -8,7 +8,8 @@ because this is where `drizzle.config.ts` lives.
 ```bash
 cd packages/db
 npm run db:generate   # schema.ts changed -> emit a reviewed SQL migration file
-npm run db:migrate    # apply pending migrations, tracked in __drizzle_migrations
+npm run db:migrate    # apply pending migrations, then verify live DB matches schema
+npm run db:verify     # standalone schema check — fails loudly if drift is detected
 npm run db:push       # DEV ONLY - schema-diff, no history (see warning below)
 npm run db:studio     # browse the DB
 ```
