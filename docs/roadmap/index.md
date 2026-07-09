@@ -5,7 +5,7 @@ Maps every workspace roadmap in this repo. Each app plans its own slices; repo-w
 | Workspace | Roadmap | Status rollup |
 |---|---|---|
 | `_root` (ecosystem-wide) | [docs/roadmap/_root/roadmap.md](_root/roadmap.md) | 1/1 features done (USD-denominated Wallet) |
-| `apps/rough-cut` | [docs/roadmap/rough-cut/roadmap.md](rough-cut/roadmap.md) | 1/1 planned features done; 10 pre-existing capabilities enrolled for context |
+| `apps/rough-cut` | [docs/roadmap/rough-cut/roadmap.md](rough-cut/roadmap.md) | 2/2 planned features done, 1 slice (AI Cut paid re-run) queued next, 2 more deferred, 10 pre-existing capabilities enrolled for context |
 | `apps/wallet` | tracked under `_root` (the Wallet app *is* the ecosystem-wide billing feature) | see `_root` |
 
 ## Notes

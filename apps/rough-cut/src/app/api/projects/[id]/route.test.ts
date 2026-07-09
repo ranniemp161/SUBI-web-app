@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const state = vi.hoisted(() => ({
   clerkId: null as string | null,
   ownedProject: null as Record<string, unknown> | null,
+  aiCutRuns: [] as Record<string, unknown>[],
   deleted: 0,
 }));
 
@@ -13,6 +14,7 @@ vi.mock("@clerk/nextjs/server", () => ({
 // getOwnedProject is the ownership gate — return null to simulate "not owned".
 vi.mock("@/lib/projects", () => ({
   getOwnedProject: vi.fn(async () => state.ownedProject),
+  listAiCutRuns: vi.fn(async () => state.aiCutRuns),
 }));
 
 vi.mock("@/lib/observability", () => ({ reportError: vi.fn() }));
@@ -49,6 +51,7 @@ const params = Promise.resolve({ id: VALID_ID });
 beforeEach(() => {
   state.clerkId = null;
   state.ownedProject = null;
+  state.aiCutRuns = [];
   state.deleted = 0;
 });
 

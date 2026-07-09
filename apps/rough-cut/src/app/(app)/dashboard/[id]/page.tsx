@@ -69,7 +69,10 @@ import {
   type Transcript,
   type TranscriptWord,
 } from "@/lib/edl";
-import { applyAiCuts, type AiCuts } from "@/lib/ai-cuts";
+import { applyAiCuts, type AiCutRun } from "@/lib/ai-cuts";
+
+// A project holds at most this many stored AI Cut runs at once (ADR 0002-ai-cut-paid-rerun).
+const AI_CUT_RUN_LIMIT = 3;
 
 interface Project {
   id: string;
@@ -78,7 +81,8 @@ interface Project {
   transcript: Transcript | null;
   transcriptStatus: "idle" | "processing" | "ready" | "failed";
   edl: EDL | null;
-  aiCuts: AiCuts | null;
+  activeAiCutRunId: string | null;
+  aiCutRuns: AiCutRun[];
 }
 
 // Fired on every editor→dashboard navigation: pure reassurance, never a
@@ -653,6 +657,12 @@ export default function EditorPage() {
     !heroDismissed &&
     edl.segments.every((s) => s.status === "keep");
 
+  // The one stored AI Cut run currently applied to the timeline (ADR
+  // 0002-ai-cut-paid-rerun) — null when the project has never run AI Cut, or
+  // its last active run was deleted.
+  const activeAiCutRun =
+    project?.aiCutRuns.find((run) => run.id === project.activeAiCutRunId) ?? null;
+
   // Create the rough cut (first run), or re-run it at the current sensitivity
   // keeping manual edits — same operation, framed differently in the UI.
   const reRunRoughCut = useCallback(() => {
@@ -676,7 +686,7 @@ export default function EditorPage() {
     // Stored AI cuts are part of the auto layer — re-apply them on top of the
     // regenerated heuristics (applyAiCuts re-asserts protectedKeeps after, so
     // the user's restores still win).
-    next = applyAiCuts(next, project?.aiCuts, words);
+    next = applyAiCuts(next, activeAiCutRun, words);
     if (!applyEdl(next)) return;
     setCutEvent({ kind: "rough", at: Date.now() });
     const removed = Math.max(0, keptDuration(edl) - keptDuration(next));
@@ -686,7 +696,7 @@ export default function EditorPage() {
         : "Silence & retakes regenerated — your manual edits were kept.",
       action: { label: "Undo", onClick: () => undo() },
     });
-  }, [edl, words, durationSeconds, sensitivity, project, applyEdl, undo]);
+  }, [edl, words, durationSeconds, sensitivity, project, activeAiCutRun, applyEdl, undo]);
 
   // The studio's on-demand AI pass: ask the server to (re)run Gemini over the
   // transcript, then layer the returned cuts onto the current edit — undoable
@@ -695,35 +705,94 @@ export default function EditorPage() {
   const [aiBusy, setAiBusy] = useState(false);
   const aiCutIdempotencyKey = useRef<string | null>(null);
 
-  // Clearing is the only path to a fresh paid AI run — the server refuses a
-  // re-run (409 AI_CUT_ALREADY_RUN) while results exist. No refund on clear:
-  // it resets derived data, it doesn't reverse the original charge.
-  const clearAiCuts = useCallback(async () => {
-    try {
-      const response = await fetch(`/api/projects/${id}/ai-cut`, { method: "DELETE" });
-      if (!response.ok) throw new Error("clear failed");
-      setProject((prev) => (prev ? { ...prev, aiCuts: null } : prev));
-      toast.success("AI cut suggestions cleared", {
-        description: "Run AI Cut again for a fresh pass — it will use credits.",
-      });
-    } catch {
-      toast.error("Couldn't clear the AI cuts", {
-        description: "Check your connection and try again.",
-      });
-    }
-  }, [id]);
+  // Switch which stored run is active (AC-3). Discards the current manual
+  // edits by re-applying the target run's ranges onto a fresh EDL layer, same
+  // as a freshly returned POST result.
+  const switchActiveAiCutRun = useCallback(
+    async (runId: string) => {
+      try {
+        const response = await fetch(`/api/projects/${id}/ai-cut/active`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ runId }),
+        });
+        const data = await response.json().catch(() => null);
+        if (!response.ok || !edl) {
+          toast.error("Couldn't switch runs", {
+            description: (data as { error?: string } | null)?.error ?? "Try again in a moment.",
+          });
+          return;
+        }
+        const run = data as AiCutRun;
+        setProject((prev) => (prev ? { ...prev, activeAiCutRunId: run.id } : prev));
+        if (!applyEdl(applyAiCuts(edl, run, words))) return;
+        setCutEvent({ kind: "ai", at: Date.now() });
+        toast.success(`Switched to run ${run.runNumber}`, {
+          description: `${run.ranges.length} mistake${run.ranges.length === 1 ? "" : "s"} applied — your prior manual edits were discarded.`,
+        });
+      } catch {
+        toast.error("Couldn't switch runs", {
+          description: "Check your connection and try again.",
+        });
+      }
+    },
+    [id, edl, words, applyEdl]
+  );
 
   // Confirm via a sonner action-toast (the app has no Dialog primitive; this
   // is the same deliberate-action pattern the undo toasts use). Only the
-  // explicit Clear press fires the DELETE — Cancel or dismiss does nothing.
-  const requestClearAiCuts = useCallback(() => {
-    toast("Clear AI Cut suggestions?", {
-      description:
-        "This removes the current AI suggestions. Running AI Cut again will use credits.",
-      action: { label: "Clear", onClick: () => void clearAiCuts() },
-      cancel: { label: "Cancel", onClick: () => {} },
-    });
-  }, [clearAiCuts]);
+  // explicit Switch press fires the PATCH — Cancel or dismiss does nothing.
+  const requestSwitchActiveAiCutRun = useCallback(
+    (run: AiCutRun) => {
+      toast(`Switch to run ${run.runNumber}?`, {
+        description:
+          "This discards your current manual edits and applies this run's suggestions instead.",
+        action: { label: "Switch", onClick: () => void switchActiveAiCutRun(run.id) },
+        cancel: { label: "Cancel", onClick: () => {} },
+      });
+    },
+    [switchActiveAiCutRun]
+  );
+
+  // Delete a non-active stored run (AC-4) — no charge, no refund. The active
+  // run can't be deleted directly (the button for it isn't even shown), but
+  // the server enforces this regardless.
+  const deleteAiCutRun = useCallback(
+    async (runId: string) => {
+      try {
+        const response = await fetch(`/api/projects/${id}/ai-cut/runs/${runId}`, {
+          method: "DELETE",
+        });
+        const data = await response.json().catch(() => null);
+        if (!response.ok) {
+          toast.error("Couldn't delete that run", {
+            description: (data as { error?: string } | null)?.error ?? "Try again in a moment.",
+          });
+          return;
+        }
+        setProject((prev) =>
+          prev ? { ...prev, aiCutRuns: prev.aiCutRuns.filter((r) => r.id !== runId) } : prev
+        );
+        toast.success("AI Cut run deleted");
+      } catch {
+        toast.error("Couldn't delete that run", {
+          description: "Check your connection and try again.",
+        });
+      }
+    },
+    [id]
+  );
+
+  const requestDeleteAiCutRun = useCallback(
+    (run: AiCutRun) => {
+      toast(`Delete run ${run.runNumber}?`, {
+        description: "This removes this stored run for good — no refund.",
+        action: { label: "Delete", onClick: () => void deleteAiCutRun(run.id) },
+        cancel: { label: "Cancel", onClick: () => {} },
+      });
+    },
+    [deleteAiCutRun]
+  );
 
   const runAiCut = useCallback(async () => {
     if (!edl || aiBusy) return;
@@ -752,12 +821,12 @@ export default function EditorPage() {
         }
         if (response.status === 409) {
           const code = (data as { code?: string } | null)?.code;
-          if (code === "AI_CUT_ALREADY_RUN") {
-            toast("AI Cut has already run", {
+          if (code === "AI_CUT_RUN_LIMIT_REACHED") {
+            toast.error(`Already have ${AI_CUT_RUN_LIMIT} saved runs`, {
               id: "ai-cut",
               description:
-                "This project already has AI suggestions, so a re-run wouldn't change anything. Clear them first to run a fresh paid pass.",
-              action: { label: "Clear AI Cuts", onClick: () => requestClearAiCuts() },
+                (data as { error?: string } | null)?.error ??
+                "Delete one of the stored runs to make room for another.",
             });
             return;
           }
@@ -778,22 +847,26 @@ export default function EditorPage() {
         });
         return;
       }
-      const aiCuts = data as AiCuts;
-      setProject((prev) => (prev ? { ...prev, aiCuts } : prev));
-      if (aiCuts.ranges.length === 0) {
+      const run = data as AiCutRun;
+      setProject((prev) =>
+        prev
+          ? { ...prev, activeAiCutRunId: run.id, aiCutRuns: [...prev.aiCutRuns, run] }
+          : prev
+      );
+      if (run.ranges.length === 0) {
         toast.success("Nothing to cut", {
           id: "ai-cut",
           description: "The AI found no false starts, stumbles, or flubbed takes.",
         });
         return;
       }
-      if (!applyEdl(applyAiCuts(edl, aiCuts, words))) {
+      if (!applyEdl(applyAiCuts(edl, run, words))) {
         toast.dismiss("ai-cut");
         return;
       }
       setCutEvent({ kind: "ai", at: Date.now() });
       toast.success(
-        `AI cut applied — ${aiCuts.ranges.length} mistake${aiCuts.ranges.length === 1 ? "" : "s"} removed`,
+        `AI cut applied — ${run.ranges.length} mistake${run.ranges.length === 1 ? "" : "s"} removed`,
         { id: "ai-cut", action: { label: "Undo", onClick: () => undo() } }
       );
     } catch {
@@ -805,7 +878,7 @@ export default function EditorPage() {
       aiCutIdempotencyKey.current = null;
       setAiBusy(false);
     }
-  }, [edl, aiBusy, id, words, applyEdl, undo, requestClearAiCuts]);
+  }, [edl, aiBusy, id, words, applyEdl, undo]);
   // Signal the in-flight export to stop. Only reachable once a handle exists
   // (the Cancel control is shown only in "exporting"/"cancelling"); the guard
   // is belt-and-suspenders. The worker throws ExportError("cancelled"), which
@@ -1079,7 +1152,7 @@ export default function EditorPage() {
     durationSeconds > 0
       ? `${formatDuration(durationSeconds * 1000)} of credits`
       : "1:00 of credits";
-  const hasAiCuts = (project?.aiCuts?.ranges.length ?? 0) > 0;
+  const hasAiCuts = (activeAiCutRun?.ranges.length ?? 0) > 0;
   const railTools: {
     Icon: LucideIcon;
     label: string;
@@ -1388,15 +1461,46 @@ export default function EditorPage() {
           >
             <RotateCcw className="h-3 w-3" /> Re-run rough cut
           </button>
-          {hasAiCuts && (
-            <button
-              type="button"
-              onClick={requestClearAiCuts}
-              title="Remove the current AI suggestions — running AI Cut again after this will use credits"
-              className="inline-flex items-center gap-1 rounded-md border border-foreground/10 px-2 py-0.5 text-foreground/70 transition-colors hover:bg-foreground/10 hover:text-foreground"
-            >
-              <Eraser className="h-3 w-3" /> Clear AI cuts
-            </button>
+          {project && project.aiCutRuns.length > 0 && (
+            <div className="flex items-center gap-1" title="Stored AI Cut runs — click a number to switch, the eraser to delete">
+              <span className="text-foreground/40">
+                AI runs ({project.aiCutRuns.length}/{AI_CUT_RUN_LIMIT})
+              </span>
+              {project.aiCutRuns.map((run) => {
+                const isActive = run.id === project.activeAiCutRunId;
+                return (
+                  <div key={run.id} className="flex items-center gap-0.5">
+                    <button
+                      type="button"
+                      onClick={() => !isActive && requestSwitchActiveAiCutRun(run)}
+                      aria-pressed={isActive}
+                      title={
+                        isActive
+                          ? `Run ${run.runNumber} — currently active`
+                          : `Switch to run ${run.runNumber} (${run.ranges.length} cuts)`
+                      }
+                      className={`rounded-md border px-1.5 py-0.5 transition-colors ${
+                        isActive
+                          ? "border-blue-500/40 bg-blue-600/20 text-blue-300"
+                          : "border-foreground/10 text-foreground/70 hover:bg-foreground/10 hover:text-foreground"
+                      }`}
+                    >
+                      {run.runNumber}
+                    </button>
+                    {!isActive && (
+                      <button
+                        type="button"
+                        onClick={() => requestDeleteAiCutRun(run)}
+                        title={`Delete run ${run.runNumber}`}
+                        className="rounded-md border border-foreground/10 p-0.5 text-foreground/50 transition-colors hover:bg-foreground/10 hover:text-foreground"
+                      >
+                        <Eraser className="h-3 w-3" />
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           )}
           <button
             type="button"

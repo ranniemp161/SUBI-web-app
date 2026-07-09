@@ -1,0 +1,571 @@
+{
+  "id": "e1e2c3d4-0005-4a2b-9c3d-000000000005",
+  "prevId": "d1e2c3d4-0004-4a2b-9c3d-000000000004",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.access_codes": {
+      "name": "access_codes",
+      "schema": "",
+      "columns": {
+        "code": {
+          "name": "code",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "redeemed_by_user_id": {
+          "name": "redeemed_by_user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "redeemed_at": {
+          "name": "redeemed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "revoked_at": {
+          "name": "revoked_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "access_codes_redeemed_by_user_id_users_id_fk": {
+          "name": "access_codes_redeemed_by_user_id_users_id_fk",
+          "tableFrom": "access_codes",
+          "tableTo": "users",
+          "columnsFrom": [
+            "redeemed_by_user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.ai_cut_runs": {
+      "name": "ai_cut_runs",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "project_id": {
+          "name": "project_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "run_number": {
+          "name": "run_number",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ranges": {
+          "name": "ranges",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "model": {
+          "name": "model",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "ai_cut_runs_project_run_number_uq": {
+          "name": "ai_cut_runs_project_run_number_uq",
+          "columns": [
+            {
+              "expression": "project_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "run_number",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "ai_cut_runs_project_id_projects_id_fk": {
+          "name": "ai_cut_runs_project_id_projects_id_fk",
+          "tableFrom": "ai_cut_runs",
+          "tableTo": "projects",
+          "columnsFrom": [
+            "project_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.credit_ledger": {
+      "name": "credit_ledger",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "delta_micros": {
+          "name": "delta_micros",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reason": {
+          "name": "reason",
+          "type": "credit_ledger_reason",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "project_id": {
+          "name": "project_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "stripe_event_id": {
+          "name": "stripe_event_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "month_key": {
+          "name": "month_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "cost_micros": {
+          "name": "cost_micros",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "credit_ledger_user_created_idx": {
+          "name": "credit_ledger_user_created_idx",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "credit_ledger_grant_month_uq": {
+          "name": "credit_ledger_grant_month_uq",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "month_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"credit_ledger\".\"reason\" = 'grant'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "credit_ledger_user_id_users_id_fk": {
+          "name": "credit_ledger_user_id_users_id_fk",
+          "tableFrom": "credit_ledger",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "credit_ledger_project_id_projects_id_fk": {
+          "name": "credit_ledger_project_id_projects_id_fk",
+          "tableFrom": "credit_ledger",
+          "tableTo": "projects",
+          "columnsFrom": [
+            "project_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "credit_ledger_stripe_event_id_unique": {
+          "name": "credit_ledger_stripe_event_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "stripe_event_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.projects": {
+      "name": "projects",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "file_name": {
+          "name": "file_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "duration_ms": {
+          "name": "duration_ms",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "transcript": {
+          "name": "transcript",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "transcript_status": {
+          "name": "transcript_status",
+          "type": "transcript_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'idle'"
+        },
+        "transcript_callback_token": {
+          "name": "transcript_callback_token",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "hold_micros": {
+          "name": "hold_micros",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "edl": {
+          "name": "edl",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "active_ai_cut_run_id": {
+          "name": "active_ai_cut_run_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ai_cut_claim_at": {
+          "name": "ai_cut_claim_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "projects_user_id_users_id_fk": {
+          "name": "projects_user_id_users_id_fk",
+          "tableFrom": "projects",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "projects_active_ai_cut_run_id_ai_cut_runs_id_fk": {
+          "name": "projects_active_ai_cut_run_id_ai_cut_runs_id_fk",
+          "tableFrom": "projects",
+          "tableTo": "ai_cut_runs",
+          "columnsFrom": [
+            "active_ai_cut_run_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.users": {
+      "name": "users",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "clerk_id": {
+          "name": "clerk_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "email": {
+          "name": "email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "balance_micros": {
+          "name": "balance_micros",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "is_member": {
+          "name": "is_member",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "stripe_customer_id": {
+          "name": "stripe_customer_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "default_payment_method_id": {
+          "name": "default_payment_method_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "autorecharge_enabled": {
+          "name": "autorecharge_enabled",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "autorecharge_threshold_micros": {
+          "name": "autorecharge_threshold_micros",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "autorecharge_amount_micros": {
+          "name": "autorecharge_amount_micros",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "autorecharge_failures": {
+          "name": "autorecharge_failures",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "users_clerk_id_unique": {
+          "name": "users_clerk_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "clerk_id"
+          ]
+        },
+        "users_stripe_customer_id_unique": {
+          "name": "users_stripe_customer_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "stripe_customer_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "users_balance_micros_nonneg": {
+          "name": "users_balance_micros_nonneg",
+          "value": "\"users\".\"balance_micros\" >= 0"
+        }
+      },
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {
+    "public.credit_ledger_reason": {
+      "name": "credit_ledger_reason",
+      "schema": "public",
+      "values": [
+        "purchase",
+        "transcription",
+        "refund",
+        "grant",
+        "ai_cut",
+        "conversion",
+        "auto_recharge"
+      ]
+    },
+    "public.transcript_status": {
+      "name": "transcript_status",
+      "schema": "public",
+      "values": [
+        "idle",
+        "processing",
+        "ready",
+        "failed"
+      ]
+    }
+  },
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

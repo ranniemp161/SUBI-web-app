@@ -20,7 +20,10 @@ The core product: browser-based video transcription and AI-assisted rough cuttin
 | I | IP-based rate limiting | Existing | existing |
 | J | Cron cleanup & housekeeping | Existing | existing |
 | 1 | Buy Credits Redirect | Slice 1 | done |
-| 2 | Editor Studio UX Safety | Slice 2 | in-progress |
+| 2 | Editor Studio UX Safety | Slice 2 | done |
+| 3 | AI Cut paid re-run (versioned suggestions) | Slice 3 | done |
+| 4 | Surface AI Cut last-run timestamp | Deferred | planned |
+| 5 | Tune cut logic against utterance boundaries | Deferred | planned |
 
 ## Existing (pre-workflow, enrolled 2026-07-08)
 
@@ -75,7 +78,7 @@ Redirect the local Stripe checkout modal to the separated Wallet app.
 
 ## Slice 2
 
-### 2. Editor Studio UX Safety · in-progress
+### 2. Editor Studio UX Safety · done
 Four small safety and accuracy fixes to the editor studio: a reassurance toast on exit, a server-side guard stopping AI Cut from charging twice, a duration check catching a wrong reselected video, and tighter transcript/frame timing.
 **Done when:** leaving the editor shows a saved-and-safe toast, AI Cut cannot be charged twice for the same project without an explicit clear step, reselecting a mismatched video is blocked with a clear message, and transcript timestamps are frame-snapped with utterance grouping enabled.
 - [x] Design it (ADR): [0001](../../adr/rough-cut/0001-editor-studio-ux-safety/index.md)
@@ -85,8 +88,43 @@ Four small safety and accuracy fixes to the editor studio: a reassurance toast o
   - [x] Video reselect duration verification (child 3)
   - [x] Transcript utterances + frame snap accuracy (child 4)
   code in `apps/rough-cut/src/app/(app)/dashboard/[id]/page.tsx`, `src/components/file-picker.tsx`, `src/app/api/projects/[id]/ai-cut/route.ts`, `src/lib/deepgram.ts`, `src/app/api/transcribe/deepgram/route.ts`
-- [ ] Verify it: `/verify editor studio ux safety` (partial — see verify.md; blocked items need a manual signed-in pass)
+- [x] Verify it: `/verify editor studio ux safety` (manual signed-in pass confirmed working in the browser 2026-07-09)
 - [x] Test it: `/test editor studio ux safety`
+
+## Slice 3
+
+### 3. AI Cut paid re-run (versioned suggestions) · done
+Today, once AI Cut has produced suggestions, a user must Clear (discard) them before running again, no refund. A user who wants a second AI pass to compare against the first (not just redo) needs a different, additive shape.
+**Done when:** a user can request a fresh, paid AI Cut pass without losing the current one, and see both to compare or choose.
+- [x] Design it (ADR): [0002](../../adr/rough-cut/0002-ai-cut-paid-rerun/index.md)
+- [x] Build it: `/develop ai cut paid re-run`
+  - [x] Migration: `ai_cut_runs` table + `active_ai_cut_run_id` + `ai_cut_claim_at` on `projects`, backfill existing `ai_cuts`, drop the old column
+  - [x] Claim + create path (POST): decoupled atomic claim, run-count cap check, new run row, sets active
+  - [x] Switch active (PATCH `.../active`) and delete run (DELETE `.../runs/[runId]`, blocks deleting the active run, renumbers on delete)
+  - [x] Client wiring: run list, switch with discard-manual-edits confirm, per-run delete, new error codes surfaced
+  code in `packages/db/src/schema.ts`, `packages/db/drizzle/0005_ai_cut_runs.sql`, `apps/rough-cut/src/lib/projects.ts`, `apps/rough-cut/src/lib/ai-cuts.ts`, `apps/rough-cut/src/app/api/projects/[id]/ai-cut/route.ts`, `apps/rough-cut/src/app/api/projects/[id]/ai-cut/active/route.ts`, `apps/rough-cut/src/app/api/projects/[id]/ai-cut/runs/[runId]/route.ts`, `apps/rough-cut/src/app/api/projects/[id]/route.ts`, `apps/rough-cut/src/app/(app)/dashboard/[id]/page.tsx`
+- [x] Verify it: `/verify ai cut paid re-run`
+- [x] Test it: `/test ai cut paid re-run`
+
+## Deferred
+
+Surfaced as follow-ups while building Slice 2 (Editor Studio UX Safety), not yet scheduled into a slice. Each has its own decision status; none are urgent.
+
+### 4. Surface AI Cut last-run timestamp · planned
+When AI Cut has already run, tell the user when, so the already-run state reads as "current" rather than ambiguous or stale.
+**Done when:** the already-run AI Cut UI state shows a relative or absolute last-run time.
+- [ ] Build it: `/develop ai cut last run timestamp`
+
+### 5. Tune cut logic against utterance boundaries · planned
+`retake-detection.ts` now has real Deepgram utterance boundaries available (`utteranceEnds`) but only uses them for sentence grouping; how aggressively cut suggestions should lean on them versus raw word gaps hasn't been tuned against real footage yet.
+**Done when:** cut-suggestion quality has been checked against real footage with utterance boundaries in play, and any tuning needed is applied.
+- [ ] Build it: `/develop tune cut logic utterance boundaries`
+
+## Accepted risks (revisit only if they bite in practice)
+
+- **Video reselect duration check, same-duration blind spot** (ADR 0003): two genuinely different videos within 1500ms of each other's duration would pass. If this bites, a lightweight second signal (file size band, sampled fingerprint) could be layered on.
+- **Frame snap assumes 30fps** (ADR 0004): wrong by up to about one real frame on non-30fps footage (most visible at 24fps/60fps). Real per-video fps detection is the future upgrade if variable/non-30fps source video becomes common.
+- **Diarization and paragraphs** (ADR 0004): deliberately deferred, not rejected; revisit if a multi-speaker or long-form use case appears.
 
 ## Legend
 

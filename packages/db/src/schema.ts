@@ -10,6 +10,7 @@ import {
   index,
   uniqueIndex,
   check,
+  type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
@@ -92,8 +93,22 @@ export const projects = pgTable("projects", {
    */
   holdMicros: integer("hold_micros"),
   edl: jsonb("edl"),
-  /** AI rough-cut suggestions (shape: AiCuts in lib/ai-cuts.ts), written server-side only. */
-  aiCuts: jsonb("ai_cuts"),
+  /**
+   * Which stored `ai_cut_runs` row is currently applied to the timeline. Null
+   * when the project has no runs yet, or its last run was deleted (see ADR
+   * 0002-ai-cut-paid-rerun: this can only happen with zero runs remaining).
+   */
+  activeAiCutRunId: uuid("active_ai_cut_run_id").references(
+    (): AnyPgColumn => aiCutRuns.id,
+    { onDelete: "set null" }
+  ),
+  /**
+   * Non-null while an AI Cut run is claimed/in-flight for this project; null
+   * means idle. Decoupled from the stored runs themselves (ADR
+   * 0002-ai-cut-paid-rerun) — a plain UPDATE ... WHERE ai_cut_claim_at IS NULL
+   * OR stale is the atomic claim, same shape as `holdMicros` above.
+   */
+  aiCutClaimAt: timestamp("ai_cut_claim_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
     .notNull(),
@@ -101,6 +116,36 @@ export const projects = pgTable("projects", {
     .defaultNow()
     .notNull(),
 });
+
+/**
+ * Stored AI Cut suggestion runs (ADR 0002-ai-cut-paid-rerun) — up to 3 per
+ * project, each a separate paid Gemini pass the user can compare and switch
+ * between without losing the others. `projects.activeAiCutRunId` points at
+ * whichever one is currently applied to the timeline.
+ */
+export const aiCutRuns = pgTable(
+  "ai_cut_runs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    /** Per-project, starts at 1, kept contiguous (renumbered on delete). */
+    runNumber: integer("run_number").notNull(),
+    /** Same `AiCutRange[]` shape as before (lib/ai-cuts.ts), sanitized server-side. */
+    ranges: jsonb("ranges").notNull(),
+    model: text("model").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [
+    uniqueIndex("ai_cut_runs_project_run_number_uq").on(
+      t.projectId,
+      t.runNumber
+    ),
+  ]
+);
 
 /** Why a balance changed — a DB enum so an invalid reason can't be stored. */
 export const creditLedgerReasonEnum = pgEnum("credit_ledger_reason", [
@@ -181,3 +226,5 @@ export type Project = typeof projects.$inferSelect;
 export type NewProject = typeof projects.$inferInsert;
 export type CreditLedgerEntry = typeof creditLedger.$inferSelect;
 export type AccessCode = typeof accessCodes.$inferSelect;
+export type AiCutRunRow = typeof aiCutRuns.$inferSelect;
+export type NewAiCutRunRow = typeof aiCutRuns.$inferInsert;

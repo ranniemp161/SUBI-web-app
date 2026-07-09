@@ -82,7 +82,7 @@ vi.mock("@/lib/env", () => ({
 }));
 
 import EditorPage from "./page";
-import type { AiCuts } from "@/lib/ai-cuts";
+import type { AiCutRun } from "@/lib/ai-cuts";
 
 const READY_PROJECT = {
   id: "proj-1",
@@ -95,7 +95,8 @@ const READY_PROJECT = {
   },
   transcriptStatus: "ready" as const,
   edl: null,
-  aiCuts: null as AiCuts | null,
+  activeAiCutRunId: null as string | null,
+  aiCutRuns: [] as AiCutRun[],
 };
 
 function jsonResponse(body: unknown, init?: { ok?: boolean }) {
@@ -189,10 +190,10 @@ async function renderEditorWithSourceSelected(project: typeof READY_PROJECT) {
   return screen.findByRole("button", { name: /^ai cut$/i });
 }
 
-describe("EditorPage — AI Cut client handling of AI_CUT_ALREADY_RUN (409)", () => {
-  // covers AC-6 (child 2): the client shows the already-run state, not a
-  // generic failure, when the server returns code: AI_CUT_ALREADY_RUN.
-  it("shows the already-run toast (not a generic failure) on a 409 AI_CUT_ALREADY_RUN", async () => {
+describe("EditorPage — AI Cut client handling of AI_CUT_RUN_LIMIT_REACHED (409)", () => {
+  // covers AC-2: the client shows a clear cap message, not a generic
+  // failure, when the server returns code: AI_CUT_RUN_LIMIT_REACHED.
+  it("shows the run-limit toast (not a generic failure) on a 409 AI_CUT_RUN_LIMIT_REACHED", async () => {
     const aiCutButton = await renderEditorWithSourceSelected(READY_PROJECT);
 
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
@@ -201,8 +202,8 @@ describe("EditorPage — AI Cut client handling of AI_CUT_ALREADY_RUN (409)", ()
           ok: false,
           status: 409,
           json: async () => ({
-            error: "AI Cut has already run for this project. Clear it first to run again.",
-            code: "AI_CUT_ALREADY_RUN",
+            error: "You already have 3 saved AI Cut runs. Delete one to run again.",
+            code: "AI_CUT_RUN_LIMIT_REACHED",
           }),
         };
       }
@@ -213,11 +214,11 @@ describe("EditorPage — AI Cut client handling of AI_CUT_ALREADY_RUN (409)", ()
     await userEvent.click(aiCutButton);
 
     await waitFor(() =>
-      expect(toastMock).toHaveBeenCalledWith(
-        "AI Cut has already run",
+      expect(toastMock.error).toHaveBeenCalledWith(
+        "Already have 3 saved runs",
         expect.objectContaining({
           id: "ai-cut",
-          description: expect.stringContaining("Clear them first to run a fresh paid pass"),
+          description: expect.stringContaining("Delete one"),
         })
       )
     );
@@ -229,84 +230,114 @@ describe("EditorPage — AI Cut client handling of AI_CUT_ALREADY_RUN (409)", ()
   });
 });
 
-describe("EditorPage — Clear AI Cuts confirm flow", () => {
-  // covers AC-5 (child 2): the Clear control shows a confirm action-toast,
-  // and only the explicit Clear action fires the DELETE.
-  it("shows a confirm toast before clearing, and clicking Clear calls DELETE", async () => {
-    const withAiCuts = {
-      ...READY_PROJECT,
-      aiCuts: {
-        ranges: [{ startWordIndex: 0, endWordIndex: 1, category: "retake" as const }],
-        model: "gemini-2.5-flash",
-        createdAt: "now",
-      },
-    };
-    await renderEditorWithSourceSelected(withAiCuts);
+const RUN_1: AiCutRun = {
+  id: "run-1",
+  runNumber: 1,
+  ranges: [{ startWordIndex: 0, endWordIndex: 1, category: "retake" }],
+  model: "gemini-2.5-flash",
+  createdAt: "now",
+};
+const RUN_2: AiCutRun = {
+  id: "run-2",
+  runNumber: 2,
+  ranges: [{ startWordIndex: 0, endWordIndex: 1, category: "retake" }],
+  model: "gemini-2.5-flash",
+  createdAt: "now",
+};
 
-    const clearButton = await screen.findByRole("button", { name: /clear ai cuts/i });
+describe("EditorPage — switch active AI Cut run confirm flow (AC-3)", () => {
+  it("shows a confirm toast before switching, and clicking Switch calls PATCH", async () => {
+    const withRuns = {
+      ...READY_PROJECT,
+      activeAiCutRunId: RUN_1.id,
+      aiCutRuns: [RUN_1, RUN_2],
+    };
+    await renderEditorWithSourceSelected(withRuns);
+
+    const switchButton = await screen.findByRole("button", { name: "2" });
+
+    const patchFetch = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/projects/proj-1/ai-cut/active" && init?.method === "PATCH") {
+        return jsonResponse(RUN_2);
+      }
+      return jsonResponse({});
+    });
+    vi.stubGlobal("fetch", patchFetch);
+
+    await userEvent.click(switchButton);
+
+    // The confirm toast is shown with an explicit Switch action — nothing
+    // has been sent yet just from clicking the run number.
+    expect(toastMock).toHaveBeenCalledWith(
+      "Switch to run 2?",
+      expect.objectContaining({
+        description: expect.stringContaining("discards your current manual edits"),
+        action: expect.objectContaining({ label: "Switch" }),
+        cancel: expect.objectContaining({ label: "Cancel" }),
+      })
+    );
+    expect(patchFetch).not.toHaveBeenCalledWith(
+      "/api/projects/proj-1/ai-cut/active",
+      expect.objectContaining({ method: "PATCH" })
+    );
+
+    const confirmCall = toastMock.mock.calls.find(([title]) => title === "Switch to run 2?");
+    const onSwitch = confirmCall?.[1]?.action?.onClick as () => void;
+    onSwitch();
+
+    await waitFor(() =>
+      expect(patchFetch).toHaveBeenCalledWith(
+        "/api/projects/proj-1/ai-cut/active",
+        expect.objectContaining({ method: "PATCH" })
+      )
+    );
+  });
+});
+
+describe("EditorPage — delete AI Cut run confirm flow (AC-4)", () => {
+  it("shows a confirm toast before deleting, and clicking Delete calls DELETE on the run", async () => {
+    const withRuns = {
+      ...READY_PROJECT,
+      activeAiCutRunId: RUN_1.id,
+      aiCutRuns: [RUN_1, RUN_2],
+    };
+    await renderEditorWithSourceSelected(withRuns);
+
+    // Only the non-active run (2) has a delete control.
+    const deleteButton = await screen.findByRole("button", { name: /delete run 2/i });
 
     const deleteFetch = vi.fn(async (url: string, init?: RequestInit) => {
-      if (url === "/api/projects/proj-1/ai-cut" && init?.method === "DELETE") {
+      if (url === "/api/projects/proj-1/ai-cut/runs/run-2" && init?.method === "DELETE") {
         return jsonResponse({ ok: true });
       }
       return jsonResponse({});
     });
     vi.stubGlobal("fetch", deleteFetch);
 
-    await userEvent.click(clearButton);
+    await userEvent.click(deleteButton);
 
-    // The confirm toast is shown with an explicit Clear action — nothing is
-    // deleted yet just from clicking the secondary control.
     expect(toastMock).toHaveBeenCalledWith(
-      "Clear AI Cut suggestions?",
+      "Delete run 2?",
       expect.objectContaining({
-        description: expect.stringContaining("Running AI Cut again will use credits"),
-        action: expect.objectContaining({ label: "Clear" }),
+        description: expect.stringContaining("no refund"),
+        action: expect.objectContaining({ label: "Delete" }),
         cancel: expect.objectContaining({ label: "Cancel" }),
       })
     );
     expect(deleteFetch).not.toHaveBeenCalledWith(
-      "/api/projects/proj-1/ai-cut",
+      "/api/projects/proj-1/ai-cut/runs/run-2",
       expect.objectContaining({ method: "DELETE" })
     );
 
-    // Fire the toast's own Clear action, exactly as pressing it would.
-    const confirmCall = toastMock.mock.calls.find(([title]) => title === "Clear AI Cut suggestions?");
-    const onClear = confirmCall?.[1]?.action?.onClick as () => void;
-    onClear();
+    const confirmCall = toastMock.mock.calls.find(([title]) => title === "Delete run 2?");
+    const onDelete = confirmCall?.[1]?.action?.onClick as () => void;
+    onDelete();
 
     await waitFor(() =>
       expect(deleteFetch).toHaveBeenCalledWith(
-        "/api/projects/proj-1/ai-cut",
+        "/api/projects/proj-1/ai-cut/runs/run-2",
         expect.objectContaining({ method: "DELETE" })
       )
-    );
-  });
-
-  it("does nothing when Cancel is pressed instead of Clear", async () => {
-    const withAiCuts = {
-      ...READY_PROJECT,
-      aiCuts: {
-        ranges: [{ startWordIndex: 0, endWordIndex: 1, category: "retake" as const }],
-        model: "gemini-2.5-flash",
-        createdAt: "now",
-      },
-    };
-    await renderEditorWithSourceSelected(withAiCuts);
-
-    const clearButton = await screen.findByRole("button", { name: /clear ai cuts/i });
-    const deleteFetch = vi.fn(async () => jsonResponse({}));
-    vi.stubGlobal("fetch", deleteFetch);
-
-    await userEvent.click(clearButton);
-
-    const confirmCall = toastMock.mock.calls.find(([title]) => title === "Clear AI Cut suggestions?");
-    const onCancel = confirmCall?.[1]?.cancel?.onClick as () => void;
-    onCancel();
-
-    expect(deleteFetch).not.toHaveBeenCalledWith(
-      "/api/projects/proj-1/ai-cut",
-      expect.objectContaining({ method: "DELETE" })
     );
   });
 });

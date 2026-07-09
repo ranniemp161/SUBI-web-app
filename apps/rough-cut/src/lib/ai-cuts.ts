@@ -45,11 +45,21 @@ export interface AiCutRange {
   note?: string;
 }
 
-/** The stored shape (projects.ai_cuts): validated ranges plus provenance. */
+/** The shape produced by one AI Cut pass: validated ranges plus provenance. */
 export interface AiCuts {
   ranges: AiCutRange[];
   model: string;
   createdAt: string;
+}
+
+/**
+ * One stored, versioned run (table `ai_cut_runs`, ADR 0002-ai-cut-paid-rerun).
+ * Structurally an `AiCuts` plus its id and position, so `applyAiCuts` accepts
+ * either shape unchanged.
+ */
+export interface AiCutRun extends AiCuts {
+  id: string;
+  runNumber: number;
 }
 
 const aiCutRangeSchema = z.object({

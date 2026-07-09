@@ -1,15 +1,18 @@
 import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
-import { db } from "@repo/db";
-import { projects } from "@repo/db/schema";
-import { eq } from "drizzle-orm";
-import { getOwnedProject, claimAiCutSlot, releaseAiCutClaim } from "@/lib/projects";
+import {
+  getOwnedProject,
+  claimAiCutSlot,
+  releaseAiCutClaim,
+  countAiCutRuns,
+  createAiCutRun,
+  AI_CUT_RUN_LIMIT,
+} from "@/lib/projects";
 import { rateLimit } from "@/lib/rate-limit";
 import { runAiRoughCut, isAiRoughCutConfigured } from "@/lib/ai-rough-cut";
 import { chargeAiCut, costSecondsForDurationMs, refundAiCut } from "@/lib/credits";
 import { reportError } from "@/lib/observability";
 import type { Transcript } from "@/lib/edl";
-import type { AiCuts } from "@/lib/ai-cuts";
 
 // Gemini legitimately takes minutes on a long transcript with thinking enabled
 // (capped at 240s in ai-rough-cut.ts) — don't let the platform cut it off first.
@@ -35,8 +38,9 @@ async function refundAiCutQuietly(
 }
 
 /**
- * POST /api/projects/:id/ai-cut — run (or re-run) the AI mistake-detection
- * pass over the project's transcript, store the result, and return it.
+ * POST /api/projects/:id/ai-cut — run a fresh AI mistake-detection pass over
+ * the project's transcript, store it as a new versioned run, make it the
+ * active run, and return it (ADR 0002-ai-cut-paid-rerun).
  *
  * This is the only path that runs the AI pass: it's strictly opt-in behind
  * the studio's "AI Cut" button (no automatic pass at transcription time).
@@ -99,40 +103,24 @@ export async function POST(
       );
     }
 
-    // The pass is deterministic over the same transcript, so a second run can
-    // never produce a different result — refuse before any charge is taken.
-    // The UI hiding the button is not a guard (a direct call or client retry
-    // bypasses it). This snapshot check just gives the common case a fast,
-    // friendly error — the real safety boundary is the atomic claim below,
-    // which closes the concurrent-request window a plain read like this
-    // can't (two requests reading the same empty aiCuts a moment apart would
-    // otherwise both pass this check and both charge).
-    if (((project.aiCuts as AiCuts | null)?.ranges?.length ?? 0) > 0) {
+    // Cheap, no-side-effect cap check first (AC-2): a request that's going to
+    // be rejected for being at the cap should never take the claim below.
+    const runCount = await countAiCutRuns(id);
+    if (runCount >= AI_CUT_RUN_LIMIT) {
       return NextResponse.json(
         {
-          error: "AI Cut has already run for this project. Clear it first to run again.",
-          code: "AI_CUT_ALREADY_RUN",
+          error: `You already have ${AI_CUT_RUN_LIMIT} saved AI Cut runs. Delete one to run again.`,
+          code: "AI_CUT_RUN_LIMIT_REACHED",
         },
         { status: 409 }
       );
     }
 
-    // Atomically claim the run: only one concurrent POST can flip aiCuts from
-    // "empty" to "pending". A losing concurrent request matches zero rows and
-    // is rejected here, before either one charges — see claimAiCutSlot.
+    // Atomically claim the run: only one concurrent POST can flip the claim
+    // from idle to held. A losing concurrent request matches zero rows and is
+    // rejected here, before either one charges — see claimAiCutSlot.
     const claimed = await claimAiCutSlot(id, project.userId);
     if (!claimed) {
-      const current = await getOwnedProject(id, clerkId);
-      const currentRanges = (current?.aiCuts as AiCuts | null)?.ranges?.length ?? 0;
-      if (currentRanges > 0) {
-        return NextResponse.json(
-          {
-            error: "AI Cut has already run for this project. Clear it first to run again.",
-            code: "AI_CUT_ALREADY_RUN",
-          },
-          { status: 409 }
-        );
-      }
       return NextResponse.json(
         {
           error: "An AI pass is already running for this project — try again shortly.",
@@ -178,12 +166,9 @@ export async function POST(
         );
       }
 
-      await db
-        .update(projects)
-        .set({ aiCuts, updatedAt: new Date() })
-        .where(eq(projects.id, id));
+      const run = await createAiCutRun(id, aiCuts.ranges, aiCuts.model);
 
-      return NextResponse.json(aiCuts);
+      return NextResponse.json(run);
     } catch (error) {
       // Any failure after a successful claim must release it — otherwise the
       // project is stuck permanently "pending" and can never be re-run.
@@ -195,44 +180,6 @@ export async function POST(
     return NextResponse.json(
       { error: "The AI pass failed — try again." },
       { status: 502 }
-    );
-  }
-}
-
-/**
- * DELETE /api/projects/:id/ai-cut — clear the stored AI cut results, which
- * re-enables a fresh (paid) POST. No refund: clearing resets derived data,
- * it isn't a billing event — the credits model only refunds failed runs.
- */
-export async function DELETE(
-  _request: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  const { userId: clerkId } = await auth();
-
-  if (!clerkId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  try {
-    const { id } = await params;
-    const project = await getOwnedProject(id, clerkId);
-
-    if (!project) {
-      return NextResponse.json({ error: "Project not found." }, { status: 404 });
-    }
-
-    await db
-      .update(projects)
-      .set({ aiCuts: null, updatedAt: new Date() })
-      .where(eq(projects.id, id));
-
-    return NextResponse.json({ ok: true });
-  } catch (error) {
-    reportError("Error clearing AI cuts", error);
-    return NextResponse.json(
-      { error: "Couldn't clear the AI cuts — try again." },
-      { status: 500 }
     );
   }
 }

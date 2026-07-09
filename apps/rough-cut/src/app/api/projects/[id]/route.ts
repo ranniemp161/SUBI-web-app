@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { db } from "@repo/db";
 import { projects } from "@repo/db/schema";
 import { eq } from "drizzle-orm";
-import { getOwnedProject } from "@/lib/projects";
+import { getOwnedProject, listAiCutRuns } from "@/lib/projects";
 import { settleHold } from "@/lib/credits";
 import { patchProjectSchema } from "@/lib/validation";
 import { reportError } from "@/lib/observability";
@@ -32,7 +32,9 @@ export async function GET(
       );
     }
 
-    return NextResponse.json(project);
+    const aiCutRuns = await listAiCutRuns(id);
+
+    return NextResponse.json({ ...project, aiCutRuns });
   } catch (error) {
     reportError("Error fetching project", error);
     return NextResponse.json(

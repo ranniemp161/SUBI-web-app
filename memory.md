@@ -1,47 +1,44 @@
-# Memory — Editor Studio UX Safety (rough-cut): built, tested, hardened
+# Memory — AI Cut paid re-run (versioned suggestions): built
 
 Last updated: 2026-07-09
 
 ## What was built
 
-Full pipeline run on the "Editor Studio UX Safety" feature (`apps/rough-cut`), governed by umbrella ADR `docs/adr/rough-cut/0001-editor-studio-ux-safety/index.md` (4 children). Went through `/develop` → `/verify` → `/test` → `/harden` → two harden-fix rounds → `/sync`, all in this session.
+Ran `/develop ai cut paid re-run` end to end (schema → migration → backend → client → tests) against ADR `docs/adr/rough-cut/0002-ai-cut-paid-rerun/index.md`. This replaces the old single-slot AI Cut result (destroy-to-rerun) with up to 3 stored, versioned runs per project that the user can compare and switch between.
 
-- **Child 1 (exit toast)**: `showExitReassuranceToast()` in `page.tsx`, wired to both the `StatusScreen` and `TopBar` dashboard links' `onClick` (no `preventDefault`).
-- **Child 2 (AI Cut re-run guard)**: `ai-cut/route.ts` POST returns 409 `AI_CUT_ALREADY_RUN` before charging once `aiCuts.ranges.length > 0`; new `DELETE` handler clears `aiCuts` (no refund). Client shows an "already run" toast with a Clear action, and a confirm action-toast before the DELETE fires.
-- **Child 3 (reselect verification)**: `FilePicker` takes an optional `expectedDurationMs` prop; blocks a reselect whose duration differs by more than 1500ms, resets the input on rejection.
-- **Child 4 (frame accuracy)**: `normalizeDeepgram` snaps every word's start/end to a 1/30s grid; Deepgram request now includes `utterances: "true"`.
-- **Hardening fix 1 — concurrency**: added `claimAiCutSlot`/`releaseAiCutClaim` to `apps/rough-cut/src/lib/projects.ts` — an atomic conditional-UPDATE claim (mirrors `reserveCredits`'s `hold_micros IS NULL` gate in `lib/credits.ts`) that closes a real TOCTOU double-charge race: two concurrent AI Cut POSTs could otherwise both pass the empty-`aiCuts` guard and both charge. Losing claim returns 409 `AI_CUT_IN_PROGRESS`. Claim is released on every failure path (insufficient credits, Gemini error, size guard, any exception) so a failed run never leaves the project stuck "pending"; a claim older than 6 minutes (`AI_CUT_CLAIM_STALE_MS`) is reclaimable.
-- **Hardening fix 2 — dead option**: `utteranceEnds` (frame-snapped Deepgram utterance boundaries) now flows from `normalizeDeepgram` through `Transcript.utteranceEnds` (`edl.ts`) into `retake-detection.ts`'s `groupIntoSentences`, which uses real acoustic boundaries instead of a fixed-pause/punctuation heuristic when available (falls back to the old heuristic for older transcripts with no `utteranceEnds`). Threaded through `buildAutoLayer`/`buildInitialEDL`/`reRoughCut` and wired at the one call site, `page.tsx`'s `reRunRoughCut`.
-- Full test suite: 27 files, 286 tests, all green. Typecheck clean. Also fixed 4 pre-existing type errors in the `/test`-written test files (vitest doesn't full-typecheck, so they'd slipped through).
-- `docs/hardening/2026-07-09-uncommitted.md` — both should-harden items marked Fixed; posture is now Ship as-is.
-- `apps/rough-cut/AGENTS.md` — `/sync` added one Conventions bullet documenting the atomic-holds/claims pattern (`reserveCredits` + the new `claimAiCutSlot`), so future charged operations follow the same shape.
-- `docs/roadmap/rough-cut/roadmap.md` — feature 2 "Editor Studio UX Safety": Design, Build (+ all 4 milestones), and Test are ticked; **Verify is deliberately left unticked** (partial — see below).
+- **Schema** (`packages/db/src/schema.ts`): dropped `projects.ai_cuts` jsonb; added `projects.active_ai_cut_run_id` (FK → new table, `set null`) and `projects.ai_cut_claim_at` (decoupled claim, replaces the old pending-sentinel-in-jsonb trick); added `ai_cut_runs` table (`project_id` FK cascade, `run_number`, `ranges`, `model`, `created_at`, unique on `(project_id, run_number)`).
+- **Migration**: `packages/db/drizzle/0005_ai_cut_runs.sql` — hand-written (not via `drizzle-kit generate`, see Problems solved), backfills any non-empty existing `ai_cuts` into `ai_cut_runs` run 1 + sets it active, then drops the old column. **Applied and confirmed live** on the dev DB (backfilled 7 existing rows).
+- **`lib/projects.ts`**: rewrote `claimAiCutSlot`/`releaseAiCutClaim` against `ai_cut_claim_at`; added `countAiCutRuns`, `createAiCutRun` (atomic insert + set-active + clear-claim in one SQL statement), `listAiCutRuns`, `getAiCutRun`, `setActiveAiCutRun`, `deleteAiCutRunAndRenumber`.
+- **Routes**: `ai-cut/route.ts` POST rewritten (cap check before claim, claim, charge, run Gemini, `createAiCutRun`, return the run — old whole-project DELETE removed); new `ai-cut/active/route.ts` PATCH (switch active run); new `ai-cut/runs/[runId]/route.ts` DELETE (blocks deleting the active run, renumbers on delete); `api/projects/[id]/route.ts` GET now also returns `aiCutRuns` (full list).
+- **Client** (`page.tsx`): `Project` type now carries `activeAiCutRunId` + `aiCutRuns[]` instead of `aiCuts`; status bar shows a run-number chip list (click to switch with a discard-manual-edits confirm toast, eraser to delete a non-active run with its own confirm toast); `runAiCut` success now appends the new run and sets it active; new 409 codes `AI_CUT_RUN_LIMIT_REACHED`/`AI_CUT_RUN_IS_ACTIVE` surfaced with their own toasts (old `AI_CUT_ALREADY_RUN` handling removed since re-runs are now always allowed under the cap).
+- **Tests**: rewrote `ai-cut/route.test.ts` for the new POST shape; added `ai-cut/active/route.test.ts` and `ai-cut/runs/[runId]/route.test.ts`; updated `api/projects/[id]/route.test.ts` (mock `listAiCutRuns`) and `page.test.tsx` (new run-list UI, switch/delete confirm flows). Full suite: **292 tests green**, typecheck clean.
+- Roadmap (`docs/roadmap/rough-cut/roadmap.md`) feature 3: Design + Build (+ all 4 milestones) ticked, code pointer filled; **Verify/Test deliberately left unticked**. ADR `Status` line: `Proposed` → `In Progress`. `verify.md` written beside the ADR (promoted `0002-ai-cut-paid-rerun.md` → `0002-ai-cut-paid-rerun/index.md` + `verify.md`; roadmap's ADR link repointed).
 
 ## Decisions made
 
-- The AI Cut claim marker is stored as a **valid `AiCuts` shape** (`{ranges: [], model: "__pending__", createdAt}`) rather than a different sentinel type — so every existing reader (`hasAiCuts`, `applyAiCuts`) sees "no cuts yet" instead of crashing on an unexpected shape. This was a deliberate compatibility choice made without asking, to avoid a second migration/schema thought.
-- Did **not** touch the Gemini AI Cut prompt (`ai-rough-cut.ts`) to consume utterances — that's a carefully calibrated, real-footage-tuned prompt, and the ADR already said word-level timestamps remain its primary driver. Utterances only feed the deterministic retake-detection heuristic. If the user wants utterances in the Gemini pass too, that should be its own `/architect` decision, not bundled in here.
-- Chose to fix both hardening items outright (user said "yes wire it needs to work" and "fix it please") rather than leave either as an accepted risk.
+- Migration was **hand-written**, not from `drizzle-kit generate` — see Problems solved. Manually kept `drizzle/meta/0005_snapshot.json` and `_journal.json` in sync so a later `db:generate` sees no drift (verified this after writing it).
+- Kept the atomic-claim discipline this codebase already uses (`reserveCredits`, the old `claimAiCutSlot`) but **decoupled the claim from the stored result** entirely (own `ai_cut_claim_at` column) instead of the old "valid-shaped pending sentinel in jsonb" trick — this was the ADR's explicit rationale, not a choice made here.
+- `createAiCutRun` does the next-run-number computation + insert + set-active + claim-clear as **one SQL statement** (CTE chain) rather than multiple round trips, matching the Neon HTTP driver's no-transaction/single-statement-atomicity convention documented in `apps/rough-cut/AGENTS.md`.
+- Client UI for the run list is a minimal inline chip row (no new Dialog primitive — this app deliberately has none, confirm/cancel via sonner action-toasts like every other destructive action here).
 
 ## Problems solved
 
-- Confirmed via direct code reading (not just trusting the `/test` subagent's flag) that the concurrent double-charge race was real: the rate limiter is a fixed-window per-user limit (doesn't stop 2 simultaneous requests), and the Idempotency-Key lock doesn't help either since the client mints a fresh UUID per run (`page.tsx`), so two tabs never collide on the same key.
-- The old pause-heuristic sentence grouping (`retake-detection.ts`) provably misses a fast re-take spoken with no pause and no terminal punctuation — proved this with a new test that fails the old way and passes once utterance boundaries are supplied.
-- `/verify` for this feature could not exercise the real UI/session flows (no browser automation tool, no Clerk test credentials in this environment) — resolved by being explicit about what was verified via direct code/runtime checks (frame-snap math, auth-gate 401s, dev-server boot) versus what's blocked pending a manual signed-in pass.
+- `npm run db:generate` requires an interactive TTY prompt (Drizzle's rename-vs-drop/add disambiguation) and this shell environment has no TTY — `winpty` couldn't attach either (`npm.cmd`/`npm-cli.js` both failed with "stdin is not a tty"). Worked around by hand-writing the migration SQL **and** hand-writing the matching `meta/0005_snapshot.json` + `_journal.json` entry in the exact format Drizzle expects (copied the format from `0004_snapshot.json`), then verified with `db:generate` afterward that it reports "No schema changes, nothing to migrate" — confirming the hand-written snapshot exactly matches what `schema.ts` would have produced.
+- Circular FK (`projects.active_ai_cut_run_id` → `ai_cut_runs.id`, `ai_cut_runs.project_id` → `projects.id`) resolved in Drizzle via a lazy arrow-function reference (`.references((): AnyPgColumn => aiCutRuns.id, ...)`) since `aiCutRuns` is declared later in the file — standard Drizzle pattern for circular table refs.
 
 ## Current state
 
-- All code changes are **uncommitted** in the working tree (branch `main`, not behind `origin/main`).
-- Everything is built, typechecked, and tested green. Both hardening findings are fixed and verified by new tests.
-- The roadmap's **Verify it** box is intentionally still unchecked — the earlier `/verify` pass was partial (blocked on browser/session flows: the exit toast rendering visibly, the real AI Cut charge/re-run against a live session, the real video-duration-mismatch UI flow). `verify.md` beside the ADR has the full manual checklist tagged by AC-N.
-- Also still uncommitted from a prior session (2026-07-08, untouched this session): wallet app's auto-recharge UX fix + payment-system security-audit fixes (unrelated work, can be committed independently — see `docs/reviews/2026-07-08-payment-system-security-audit.md`).
+- All code is **uncommitted** in the working tree (branch `main`), including the untracked ADR that was already present when this session started (`docs/adr/rough-cut/0002-ai-cut-paid-rerun.md`, now moved to `.../0002-ai-cut-paid-rerun/index.md` plus a new `verify.md`) and modified `docs/roadmap/index.md` / `docs/roadmap/rough-cut/roadmap.md`.
+- Migration **is applied to the dev DB** already (not just generated) — `ai_cuts` column is gone, `ai_cut_runs` table is live with 7 backfilled rows. Prod is not yet deployed (per earlier project memory), so no prod migration step is pending yet.
+- Build, typecheck, and full test suite are green. `/verify` and `/test` have **not** been run this session — roadmap intentionally shows the feature still `in-progress` (Build ticked, Verify/Test not).
 
 ## Next session starts with
 
-- Run through `verify.md`'s manual steps once against a real signed-in session (sign in via Clerk, open a real project, try the exit toast, the AI Cut already-run flow, and a mismatched-video reselect), then re-run `/verify editor studio ux safety` to tick that box — which unlocks the feature moving to `done`.
-- Separately, still pending: decide whether/how to commit this session's rough-cut changes, and independently the prior session's wallet security-audit fixes.
+- Run `/verify ai cut paid re-run` — use the manual checklist in `docs/adr/rough-cut/0002-ai-cut-paid-rerun/verify.md` (signed-in session: run AI Cut 3x, hit the 4th-run cap, switch/delete runs, confirm renumbering).
+- Then `/test ai cut paid re-run` to lock it in and flip the feature to `done` (which also mirrors the ADR `Status` `In Progress` → `Accepted`).
+- Separately still pending from before this session: deciding whether/how to commit the *previous* session's Editor Studio UX Safety changes and the wallet auto-recharge/security-audit fixes (both still uncommitted, unrelated to this feature).
 
 ## Open questions
 
-- Carried over: the Postgres-backed `ON CONFLICT` idempotency integration test (wallet, flagged 2026-07-08) remains an open gap if the user wants to invest in test-DB infra later.
-- Whether the Gemini AI Cut prompt should eventually consume utterance boundaries too (deliberately deferred this session, see Decisions).
+- Whether prod needs a first-deploy baseline step before this migration can ever be applied there — not urgent since prod isn't deployed yet (per `project_vercel_deploy_readiness` memory), but flag it when deploy planning starts.
+- Carried over, still open: the Postgres-backed `ON CONFLICT` idempotency integration test (wallet) and whether the Gemini AI Cut prompt should eventually consume utterance boundaries — both deferred in the prior session, untouched here.
