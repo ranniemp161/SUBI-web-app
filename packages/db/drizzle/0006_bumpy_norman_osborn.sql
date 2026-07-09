@@ -1,0 +1,1 @@
+ALTER TABLE "ai_cut_runs" ADD COLUMN "name" text;

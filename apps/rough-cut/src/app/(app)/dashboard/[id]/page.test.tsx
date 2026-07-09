@@ -258,7 +258,7 @@ describe("EditorPage — switch active AI Cut run confirm flow (AC-3)", () => {
     };
     await renderEditorWithSourceSelected(withRuns);
 
-    const switchButton = await screen.findByRole("button", { name: "2" });
+    const switchButton = await screen.findByRole("button", { name: "Run 2" });
 
     const patchFetch = vi.fn(async (url: string, init?: RequestInit) => {
       if (url === "/api/projects/proj-1/ai-cut/active" && init?.method === "PATCH") {

@@ -65,6 +65,7 @@ function toAiCutRun(row: Row): AiCutRun {
   return {
     id: row.id as string,
     runNumber: row.runNumber as number,
+    name: (row.name as string | null) ?? null,
     ranges: row.ranges as AiCutRange[],
     model: row.model as string,
     createdAt: new Date(row.createdAt as string).toISOString(),
@@ -130,7 +131,7 @@ export async function countAiCutRuns(projectId: string): Promise<number> {
 /** All stored runs for a project, oldest first — what the client lists to compare/switch. */
 export async function listAiCutRuns(projectId: string): Promise<AiCutRun[]> {
   const rows = await executeRows(sql`
-    SELECT id, run_number AS "runNumber", ranges, model, created_at AS "createdAt"
+    SELECT id, run_number AS "runNumber", name, ranges, model, created_at AS "createdAt"
     FROM ai_cut_runs
     WHERE project_id = ${projectId}
     ORDER BY run_number ASC
@@ -144,7 +145,7 @@ export async function getAiCutRun(
   projectId: string
 ): Promise<AiCutRun | null> {
   const [row] = await executeRows(sql`
-    SELECT id, run_number AS "runNumber", ranges, model, created_at AS "createdAt"
+    SELECT id, run_number AS "runNumber", name, ranges, model, created_at AS "createdAt"
     FROM ai_cut_runs
     WHERE id = ${runId} AND project_id = ${projectId}
   `);
@@ -172,13 +173,13 @@ export async function createAiCutRun(
       INSERT INTO ai_cut_runs (project_id, run_number, ranges, model)
       SELECT ${projectId}, n, ${JSON.stringify(ranges)}::jsonb, ${model}
       FROM next_run
-      RETURNING id, run_number, ranges, model, created_at
+      RETURNING id, run_number, name, ranges, model, created_at
     )
     UPDATE projects
     SET active_ai_cut_run_id = ins.id, ai_cut_claim_at = NULL, updated_at = now()
     FROM ins
     WHERE projects.id = ${projectId}
-    RETURNING ins.id AS id, ins.run_number AS "runNumber", ins.ranges AS ranges,
+    RETURNING ins.id AS id, ins.run_number AS "runNumber", ins.name AS name, ins.ranges AS ranges,
       ins.model AS model, ins.created_at AS "createdAt"
   `);
   return toAiCutRun(row);
@@ -195,7 +196,7 @@ export async function setActiveAiCutRun(
 ): Promise<AiCutRun | null> {
   const [row] = await executeRows(sql`
     WITH target AS (
-      SELECT id, run_number, ranges, model, created_at
+      SELECT id, run_number, name, ranges, model, created_at
       FROM ai_cut_runs WHERE id = ${runId} AND project_id = ${projectId}
     ),
     upd AS (
@@ -204,7 +205,7 @@ export async function setActiveAiCutRun(
       WHERE id = ${projectId} AND EXISTS (SELECT 1 FROM target)
       RETURNING id
     )
-    SELECT t.id AS id, t.run_number AS "runNumber", t.ranges AS ranges,
+    SELECT t.id AS id, t.run_number AS "runNumber", t.name AS name, t.ranges AS ranges,
       t.model AS model, t.created_at AS "createdAt"
     FROM target t JOIN upd ON true
   `);
@@ -233,3 +234,19 @@ export async function deleteAiCutRunAndRenumber(
     WHERE ai_cut_runs.id = sub.id AND ai_cut_runs.run_number != sub.new_number
   `);
 }
+
+/** Rename a stored run. Returns the updated run if found and owned, otherwise null. */
+export async function renameAiCutRun(
+  projectId: string,
+  runId: string,
+  name: string | null
+): Promise<AiCutRun | null> {
+  const [row] = await executeRows(sql`
+    UPDATE ai_cut_runs
+    SET name = ${name}
+    WHERE id = ${runId} AND project_id = ${projectId}
+    RETURNING id, run_number AS "runNumber", name, ranges, model, created_at AS "createdAt"
+  `);
+  return row ? toAiCutRun(row) : null;
+}
+

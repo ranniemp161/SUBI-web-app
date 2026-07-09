@@ -27,6 +27,7 @@ import {
   Eraser,
   RotateCcw,
   Wand2,
+  Pencil,
   type LucideIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -112,6 +113,102 @@ const exportSupportSnapshot = (): ExportSupport =>
 // answer on the client. No effect, no hydration mismatch.
 const exportSupportServerSnapshot = (): ExportSupport | null => null;
 const exportSupportSubscribe = () => () => {};
+
+function AiCutRunDisplay({
+  run,
+  isActive,
+  onSwitch,
+  onDelete,
+  onRename,
+}: {
+  run: AiCutRun;
+  isActive: boolean;
+  onSwitch: () => void;
+  onDelete: () => void;
+  onRename: (newName: string | null) => void;
+}) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [draftName, setDraftName] = useState(run.name || "");
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (isEditing && inputRef.current) {
+      inputRef.current.focus();
+    }
+  }, [isEditing]);
+
+  const handleSave = () => {
+    setIsEditing(false);
+    const newName = draftName.trim();
+    if (newName !== (run.name || "")) {
+      onRename(newName === "" ? null : newName);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter") {
+      handleSave();
+    } else if (e.key === "Escape") {
+      setIsEditing(false);
+      setDraftName(run.name || "");
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-0.5">
+      {isEditing ? (
+        <input
+          ref={inputRef}
+          type="text"
+          value={draftName}
+          onChange={(e) => setDraftName(e.target.value)}
+          onBlur={handleSave}
+          onKeyDown={handleKeyDown}
+          maxLength={100}
+          className="w-24 rounded-md border border-blue-500 bg-transparent px-1.5 py-0.5 text-xs text-foreground outline-none"
+        />
+      ) : (
+        <button
+          type="button"
+          onClick={() => !isActive && onSwitch()}
+          aria-pressed={isActive}
+          title={
+            isActive
+              ? `Run ${run.runNumber} — currently active`
+              : `Switch to run ${run.runNumber} (${run.ranges.length} cuts)`
+          }
+          className={`rounded-md border px-1.5 py-0.5 transition-colors ${
+            isActive
+              ? "border-blue-500/40 bg-blue-600/20 text-blue-300"
+              : "border-foreground/10 text-foreground/70 hover:bg-foreground/10 hover:text-foreground"
+          }`}
+        >
+          {run.name || `Run ${run.runNumber}`}
+        </button>
+      )}
+      {!isEditing && (
+        <button
+          type="button"
+          onClick={() => setIsEditing(true)}
+          title={`Rename run ${run.runNumber}`}
+          className="rounded-md border border-foreground/10 p-0.5 text-foreground/50 transition-colors hover:bg-foreground/10 hover:text-foreground"
+        >
+          <Pencil className="h-3 w-3" />
+        </button>
+      )}
+      {!isActive && !isEditing && (
+        <button
+          type="button"
+          onClick={onDelete}
+          title={`Delete run ${run.runNumber}`}
+          className="rounded-md border border-foreground/10 p-0.5 text-foreground/50 transition-colors hover:bg-foreground/10 hover:text-foreground"
+        >
+          <Eraser className="h-3 w-3" />
+        </button>
+      )}
+    </div>
+  );
+}
 
 export default function EditorPage() {
   const { id } = useParams<{ id: string }>();
@@ -663,6 +760,7 @@ export default function EditorPage() {
   const activeAiCutRun =
     project?.aiCutRuns.find((run) => run.id === project.activeAiCutRunId) ?? null;
 
+
   // Create the rough cut (first run), or re-run it at the current sensitivity
   // keeping manual edits — same operation, framed differently in the UI.
   const reRunRoughCut = useCallback(() => {
@@ -792,6 +890,43 @@ export default function EditorPage() {
       });
     },
     [deleteAiCutRun]
+  );
+
+  const requestRenameAiCutRun = useCallback(
+    async (runId: string, newName: string | null) => {
+      const toastId = toast.loading("Renaming…");
+      try {
+        const response = await fetch(`/api/projects/${id}/ai-cut/runs/${runId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: newName }),
+        });
+        if (response.ok) {
+          const updatedRun = await response.json();
+          setProject((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  aiCutRuns: prev.aiCutRuns.map((r) => (r.id === runId ? updatedRun : r)),
+                }
+              : prev
+          );
+          toast.success("Run renamed", { id: toastId });
+        } else {
+          const { error } = await response.json();
+          toast.error("Couldn't rename run", {
+            id: toastId,
+            description: error || "Try again.",
+          });
+        }
+      } catch {
+        toast.error("Couldn't rename run", {
+          id: toastId,
+          description: "Check your connection and try again.",
+        });
+      }
+    },
+    [id]
   );
 
   const runAiCut = useCallback(async () => {
@@ -1467,40 +1602,16 @@ export default function EditorPage() {
               <span className="text-foreground/40">
                 AI runs ({project.aiCutRuns.length}/{AI_CUT_RUN_LIMIT})
               </span>
-              {project.aiCutRuns.map((run) => {
-                const isActive = run.id === project.activeAiCutRunId;
-                return (
-                  <div key={run.id} className="flex items-center gap-0.5">
-                    <button
-                      type="button"
-                      onClick={() => !isActive && requestSwitchActiveAiCutRun(run)}
-                      aria-pressed={isActive}
-                      title={
-                        isActive
-                          ? `Run ${run.runNumber} — currently active`
-                          : `Switch to run ${run.runNumber} (${run.ranges.length} cuts)`
-                      }
-                      className={`rounded-md border px-1.5 py-0.5 transition-colors ${
-                        isActive
-                          ? "border-blue-500/40 bg-blue-600/20 text-blue-300"
-                          : "border-foreground/10 text-foreground/70 hover:bg-foreground/10 hover:text-foreground"
-                      }`}
-                    >
-                      {run.runNumber}
-                    </button>
-                    {!isActive && (
-                      <button
-                        type="button"
-                        onClick={() => requestDeleteAiCutRun(run)}
-                        title={`Delete run ${run.runNumber}`}
-                        className="rounded-md border border-foreground/10 p-0.5 text-foreground/50 transition-colors hover:bg-foreground/10 hover:text-foreground"
-                      >
-                        <Eraser className="h-3 w-3" />
-                      </button>
-                    )}
-                  </div>
-                );
-              })}
+              {project.aiCutRuns.map((run) => (
+                <AiCutRunDisplay
+                  key={run.id}
+                  run={run}
+                  isActive={run.id === project.activeAiCutRunId}
+                  onSwitch={() => requestSwitchActiveAiCutRun(run)}
+                  onDelete={() => requestDeleteAiCutRun(run)}
+                  onRename={(newName) => requestRenameAiCutRun(run.id, newName)}
+                />
+              ))}
             </div>
           )}
           <button
