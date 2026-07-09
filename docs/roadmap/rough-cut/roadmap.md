@@ -23,7 +23,7 @@ The core product: browser-based video transcription and AI-assisted rough cuttin
 | 2 | Editor Studio UX Safety | Slice 2 | done |
 | 3 | AI Cut paid re-run (versioned suggestions) | Slice 3 | done |
 | 4 | Surface AI Cut last-run timestamp | Slice 4 | done |
-| 5 | Tune cut logic against utterance boundaries | Slice 4 | in-progress |
+| 5 | Tune cut logic against utterance boundaries | Slice 4 | done |
 | 6 | Named/labeled AI Cut runs | Deferred | planned |
 
 ## Existing (pre-workflow, enrolled 2026-07-08)
@@ -116,11 +116,13 @@ When AI Cut has already run, tell the user when, so the already-run state reads 
   code in `apps/rough-cut/src/components/transcript-panel.tsx`, `apps/rough-cut/src/app/(app)/dashboard/[id]/page.tsx`
 - [x] Verify it: `/verify ai cut last run timestamp`
 - [x] Test it: `/test ai cut last run timestamp`
-### 5. Tune cut logic against utterance boundaries · in-progress
+### 5. Tune cut logic against utterance boundaries · done
 `retake-detection.ts` now has real Deepgram utterance boundaries available (`utteranceEnds`) but only uses them for sentence grouping; how aggressively cut suggestions should lean on them versus raw word gaps hasn't been tuned against real footage yet.
 **Done when:** cut-suggestion quality has been checked against real footage with utterance boundaries in play, and any tuning needed is applied.
 - [x] Build it: `/develop tune cut logic utterance boundaries`
   code in `apps/rough-cut/src/lib/retake-detection.ts`
+- [x] Verify it: `/verify tune cut logic utterance boundaries` (manual check passed 2026-07-09)
+- [x] Test it: `/test tune cut logic utterance boundaries`
 
 ## Deferred
 
