@@ -34,7 +34,7 @@ vi.mock("@/lib/rate-limit", () => ({
 vi.mock("@/lib/observability", () => ({ reportError: vi.fn() }));
 
 import { DELETE, PATCH } from "./route";
-import { deleteAiCutRunAndRenumber, renameAiCutRun } from "@/lib/projects";
+import { deleteAiCutRunAndRenumber } from "@/lib/projects";
 
 const VALID_ID = "12345678-1234-1234-1234-123456789abc";
 const RUN_ID = "run-1";
