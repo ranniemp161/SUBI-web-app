@@ -36,7 +36,10 @@ describe.skipIf(!hasFfmpeg)("extractAudioForTranscription (real files)", () => {
     ffmpeg([...video, ...tone, "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-b:a", "96k", "with-audio.mp4"]);
     ffmpeg([...video, "-c:v", "libx264", "-preset", "ultrafast", "-an", "no-audio.mp4"]);
     ffmpeg([...video, ...tone, "-c:v", "libvpx", "-c:a", "libopus", "-b:a", "64k", "with-audio.webm"]);
-  });
+  // Three ffmpeg encodes: fast in isolation, but under full-suite parallel load
+  // the OS can be saturated and all three together can exceed the 10 s default.
+  // 30 s is the safe ceiling on any reasonable CI machine.
+  }, 30_000);
 
   afterAll(() => {
     rmSync(dir, { recursive: true, force: true });

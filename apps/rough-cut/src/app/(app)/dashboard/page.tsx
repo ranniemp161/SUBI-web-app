@@ -433,7 +433,6 @@ export default function DashboardPage() {
     [credits]
   );
 
-  /** Handle file selection — create a new project, then kick off transcription. */
   const handleFileSelected = useCallback(
     async (file: File, metadata: VideoMetadata) => {
       // Note: no up-front size gate on the video itself — what's uploaded is
@@ -449,6 +448,8 @@ export default function DashboardPage() {
           body: JSON.stringify({
             fileName: metadata.fileName,
             durationMs: metadata.durationMs,
+            fileSize: metadata.fileSize,
+            fileType: metadata.fileType,
           }),
         });
 
@@ -517,6 +518,7 @@ export default function DashboardPage() {
           handleFileSelected(file, {
             fileName: file.name,
             fileSize: file.size,
+            fileType: file.type,
             durationMs,
           });
         };

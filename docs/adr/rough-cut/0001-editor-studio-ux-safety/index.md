@@ -1,6 +1,6 @@
 # ADR 0001 — Editor Studio UX Safety
 
-**Status**: In Progress
+**Status**: Accepted
 
 ## Summary
 

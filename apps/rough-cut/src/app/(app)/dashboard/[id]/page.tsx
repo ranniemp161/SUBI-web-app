@@ -78,6 +78,8 @@ const AI_CUT_RUN_LIMIT = 3;
 interface Project {
   id: string;
   fileName: string;
+  fileSize: number | null;
+  fileType: string | null;
   durationMs: number | null;
   transcript: Transcript | null;
   transcriptStatus: "idle" | "processing" | "ready" | "failed";
@@ -1266,6 +1268,9 @@ export default function EditorPage() {
             <FilePicker
               onFileSelected={(file) => setSourceFile(file)}
               expectedDurationMs={project.durationMs ?? undefined}
+              expectedFileSize={project.fileSize ?? undefined}
+              expectedFileName={project.fileName ?? undefined}
+              expectedFileType={project.fileType ?? undefined}
             />
           </div>
         </div>

@@ -14,6 +14,9 @@ interface FilePickerProps {
    * video silently corrupt every seek and cut. Absent on initial upload.
    */
   expectedDurationMs?: number;
+  expectedFileSize?: number;
+  expectedFileName?: string;
+  expectedFileType?: string;
 }
 
 /**
@@ -27,7 +30,16 @@ const DURATION_TOLERANCE_MS = 1500;
 export interface VideoMetadata {
   fileName: string;
   fileSize: number;
+  fileType: string;
   durationMs: number;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return "0 Bytes";
+  const k = 1024;
+  const sizes = ["Bytes", "KB", "MB", "GB", "TB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
 }
 
 /**
@@ -41,15 +53,25 @@ export default function FilePicker({
   onFileSelected,
   isLoading = false,
   expectedDurationMs,
+  expectedFileSize,
+  expectedFileName,
+  expectedFileType,
 }: FilePickerProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState("");
+  const [warning, setWarning] = useState("");
   const [isDragging, setIsDragging] = useState(false);
+  const [pendingSelection, setPendingSelection] = useState<{
+    file: File;
+    metadata: VideoMetadata;
+  } | null>(null);
 
   /** Process a selected file — extract metadata via a hidden video element. */
   const processFile = useCallback(
     (file: File) => {
       setError("");
+      setWarning("");
+      setPendingSelection(null);
 
       // Basic validation
       if (!file.type.startsWith("video/")) {
@@ -87,11 +109,37 @@ export default function FilePicker({
           return;
         }
 
-        onFileSelected(file, {
+        const metadata: VideoMetadata = {
           fileName: file.name,
           fileSize: file.size,
+          fileType: file.type,
           durationMs,
-        });
+        };
+
+        const nameMismatch = expectedFileName != null && file.name !== expectedFileName;
+        const sizeMismatch = expectedFileSize != null && file.size !== expectedFileSize;
+        const typeMismatch = expectedFileType != null && file.type !== expectedFileType;
+
+        if (nameMismatch || sizeMismatch || typeMismatch) {
+          const reasons: string[] = [];
+          if (nameMismatch) {
+            reasons.push(`filename (expected: "${expectedFileName}", got: "${file.name}")`);
+          }
+          if (sizeMismatch) {
+            reasons.push(`size (expected: ${formatBytes(expectedFileSize)}, got: ${formatBytes(file.size)})`);
+          }
+          if (typeMismatch) {
+            reasons.push(`type (expected: "${expectedFileType}", got: "${file.type}")`);
+          }
+
+          setWarning(
+            `The selected file does not exactly match this project's metadata: different ${reasons.join(", ")}.`
+          );
+          setPendingSelection({ file, metadata });
+          return;
+        }
+
+        onFileSelected(file, metadata);
       };
 
       video.onerror = () => {
@@ -103,8 +151,24 @@ export default function FilePicker({
 
       video.src = URL.createObjectURL(file);
     },
-    [onFileSelected, expectedDurationMs]
+    [onFileSelected, expectedDurationMs, expectedFileSize, expectedFileName, expectedFileType]
   );
+
+  const handleConfirmWarning = () => {
+    if (pendingSelection) {
+      onFileSelected(pendingSelection.file, pendingSelection.metadata);
+      setPendingSelection(null);
+      setWarning("");
+    }
+  };
+
+  const handleCancelWarning = () => {
+    setPendingSelection(null);
+    setWarning("");
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  };
 
   /** Handle file input change. */
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -184,6 +248,41 @@ export default function FilePicker({
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
           </svg>
           <span>{error}</span>
+        </div>
+      )}
+
+      {warning && (
+        <div
+          id="file-picker-warning"
+          className="mt-4 flex flex-col gap-3 rounded-xl border border-amber-500/20 bg-amber-500/5 px-4 py-3.5 text-sm text-amber-400 backdrop-blur-md animate-in fade-in duration-200"
+        >
+          <div className="flex items-start gap-2.5">
+            <svg className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+            <div className="flex flex-col gap-1">
+              <span className="font-semibold text-amber-300">Warning: File Mismatch</span>
+              <span>{warning}</span>
+            </div>
+          </div>
+          <div className="flex gap-2 pl-6.5">
+            <button
+              id="file-picker-warning-confirm"
+              type="button"
+              onClick={handleConfirmWarning}
+              className="rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-semibold text-zinc-950 hover:bg-amber-400 transition-colors"
+            >
+              Use this file anyway
+            </button>
+            <button
+              id="file-picker-warning-cancel"
+              type="button"
+              onClick={handleCancelWarning}
+              className="rounded-lg bg-white/10 px-3 py-1.5 text-xs font-semibold text-white hover:bg-white/15 transition-colors"
+            >
+              Choose different file
+            </button>
+          </div>
         </div>
       )}
     </div>

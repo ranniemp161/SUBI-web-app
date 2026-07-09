@@ -181,6 +181,78 @@ describe("FilePicker — reselect duration verification (expectedDurationMs)", (
   });
 });
 
+describe("FilePicker — reselect metadata warnings", () => {
+  function makeVideoFileWithSize(name = "clip.mp4", size = 1024, type = "video/mp4") {
+    const file = new File(["fake-bytes"], name, { type });
+    Object.defineProperty(file, "size", { value: size });
+    return file;
+  }
+
+  it("warns about filename mismatch and lets user proceed", async () => {
+    const onFileSelected = vi.fn();
+    currentDuration = 10;
+    render(
+      <FilePicker
+        onFileSelected={onFileSelected}
+        expectedDurationMs={10_000}
+        expectedFileName="original.mp4"
+        expectedFileSize={1024}
+        expectedFileType="video/mp4"
+      />
+    );
+
+    const mismatchedFile = makeVideoFileWithSize("different.mp4", 1024, "video/mp4");
+    await selectFile(mismatchedFile);
+
+    expect(
+      await screen.findByText(/The selected file does not exactly match this project/i)
+    ).toBeInTheDocument();
+    expect(screen.getByText(/different filename/i)).toBeInTheDocument();
+    expect(onFileSelected).not.toHaveBeenCalled();
+
+    // Confirm warning
+    const confirmBtn = screen.getByRole("button", { name: /use this file anyway/i });
+    await userEvent.click(confirmBtn);
+
+    expect(onFileSelected).toHaveBeenCalledWith(
+      mismatchedFile,
+      expect.objectContaining({ fileName: "different.mp4" })
+    );
+  });
+
+  it("warns about multiple mismatches (size and type) and allows canceling", async () => {
+    const onFileSelected = vi.fn();
+    currentDuration = 10;
+    render(
+      <FilePicker
+        onFileSelected={onFileSelected}
+        expectedDurationMs={10_000}
+        expectedFileName="clip.mp4"
+        expectedFileSize={1024}
+        expectedFileType="video/mp4"
+      />
+    );
+
+    const mismatchedFile = makeVideoFileWithSize("clip.mp4", 2048, "video/quicktime");
+    await selectFile(mismatchedFile);
+
+    expect(
+      await screen.findByText(/The selected file does not exactly match this project/i)
+    ).toBeInTheDocument();
+    expect(screen.getByText(/different size/i)).toBeInTheDocument();
+    expect(screen.getByText(/type/i)).toBeInTheDocument();
+    expect(onFileSelected).not.toHaveBeenCalled();
+
+    // Cancel warning
+    const cancelBtn = screen.getByRole("button", { name: /choose different file/i });
+    await userEvent.click(cancelBtn);
+
+    expect(screen.queryByText(/Warning: File Mismatch/i)).not.toBeInTheDocument();
+    const input = document.getElementById("video-file-input") as HTMLInputElement;
+    expect(input.value).toBe("");
+  });
+});
+
 describe("FilePicker — loading and accessibility", () => {
   it("disables the picker button while isLoading", () => {
     render(<FilePicker onFileSelected={vi.fn()} isLoading />);
