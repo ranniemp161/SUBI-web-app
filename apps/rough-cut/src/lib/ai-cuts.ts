@@ -60,6 +60,7 @@ export interface AiCuts {
 export interface AiCutRun extends AiCuts {
   id: string;
   runNumber: number;
+  name?: string | null;
 }
 
 const aiCutRangeSchema = z.object({

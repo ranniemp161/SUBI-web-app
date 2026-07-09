@@ -132,6 +132,8 @@ export const aiCutRuns = pgTable(
       .references(() => projects.id, { onDelete: "cascade" }),
     /** Per-project, starts at 1, kept contiguous (renumbered on delete). */
     runNumber: integer("run_number").notNull(),
+    /** Optional user-provided name/label for this run (ADR 0002 follow-up). */
+    name: text("name"),
     /** Same `AiCutRange[]` shape as before (lib/ai-cuts.ts), sanitized server-side. */
     ranges: jsonb("ranges").notNull(),
     model: text("model").notNull(),

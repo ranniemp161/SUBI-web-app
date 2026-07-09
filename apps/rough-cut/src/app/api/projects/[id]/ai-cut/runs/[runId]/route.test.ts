@@ -18,6 +18,9 @@ vi.mock("@/lib/projects", () => ({
   deleteAiCutRunAndRenumber: vi.fn(async (projectId: string, runId: string) => {
     state.deleteCalls.push([projectId, runId]);
   }),
+  renameAiCutRun: vi.fn(async (_projectId: string, _runId: string, name: string | null) => {
+    return state.run ? { ...state.run, name } : null;
+  }),
 }));
 
 vi.mock("@/lib/rate-limit", () => ({
@@ -30,7 +33,7 @@ vi.mock("@/lib/rate-limit", () => ({
 
 vi.mock("@/lib/observability", () => ({ reportError: vi.fn() }));
 
-import { DELETE } from "./route";
+import { DELETE, PATCH } from "./route";
 import { deleteAiCutRunAndRenumber } from "@/lib/projects";
 
 const VALID_ID = "12345678-1234-1234-1234-123456789abc";
@@ -102,5 +105,79 @@ describe("DELETE /api/projects/:id/ai-cut/runs/:runId", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
     expect(state.deleteCalls).toEqual([[VALID_ID, RUN_ID]]);
+  });
+});
+
+describe("PATCH /api/projects/:id/ai-cut/runs/:runId", () => {
+  const patchRequest = (body: unknown) =>
+    new Request("http://localhost", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+  it("returns 401 when unauthenticated", async () => {
+    const res = await PATCH(patchRequest({ name: "foo" }), { params });
+    expect(res.status).toBe(401);
+  });
+
+  it("returns 429 once the per-user limit is exceeded", async () => {
+    state.clerkId = "clerk_1";
+    state.rateAllowed = false;
+    const res = await PATCH(patchRequest({ name: "foo" }), { params });
+    expect(res.status).toBe(429);
+  });
+
+  it("returns 404 for a project the caller doesn't own", async () => {
+    state.clerkId = "clerk_1";
+    state.ownedProject = null;
+    const res = await PATCH(patchRequest({ name: "foo" }), { params });
+    expect(res.status).toBe(404);
+  });
+
+  it("returns 404 when the run doesn't exist", async () => {
+    state.clerkId = "clerk_1";
+    state.ownedProject = { id: VALID_ID, userId: "user-1", activeAiCutRunId: null };
+    state.run = null;
+    const res = await PATCH(patchRequest({ name: "foo" }), { params });
+    expect(res.status).toBe(404);
+  });
+
+  it("renames a run and returns it", async () => {
+    state.clerkId = "clerk_1";
+    state.ownedProject = { id: VALID_ID, userId: "user-1", activeAiCutRunId: "other-run" };
+    state.run = RUN;
+    const res = await PATCH(patchRequest({ name: "Awesome Cut" }), { params });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { name?: string };
+    expect(body.name).toBe("Awesome Cut");
+  });
+
+  it("returns 400 when name is present but not a string", async () => {
+    state.clerkId = "clerk_1";
+    const res = await PATCH(patchRequest({ name: { foo: "bar" } }), { params });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error?: string };
+    expect(body.error).toBe("Invalid name format.");
+  });
+
+  it("treats empty or whitespace-only name as null", async () => {
+    state.clerkId = "clerk_1";
+    state.ownedProject = { id: VALID_ID, userId: "user-1", activeAiCutRunId: "other-run" };
+    state.run = RUN;
+    const res = await PATCH(patchRequest({ name: "   " }), { params });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { name?: string | null };
+    expect(body.name).toBeNull();
+  });
+
+  it("trims name before applying it", async () => {
+    state.clerkId = "clerk_1";
+    state.ownedProject = { id: VALID_ID, userId: "user-1", activeAiCutRunId: "other-run" };
+    state.run = RUN;
+    const res = await PATCH(patchRequest({ name: "  Trim Me  " }), { params });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { name?: string };
+    expect(body.name).toBe("Trim Me");
   });
 });
