@@ -92,7 +92,16 @@ export async function PATCH(
   try {
     const { id, runId } = await params;
     const body = await request.json();
-    const name = typeof body.name === "string" ? body.name.slice(0, 100) : null;
+
+    if ("name" in body && typeof body.name !== "string") {
+      return NextResponse.json({ error: "Invalid name format." }, { status: 400 });
+    }
+
+    let name = null;
+    if (typeof body.name === "string") {
+      const trimmed = body.name.trim();
+      name = trimmed.length > 0 ? trimmed.slice(0, 100) : null;
+    }
 
     const project = await getOwnedProject(id, clerkId);
     if (!project) {

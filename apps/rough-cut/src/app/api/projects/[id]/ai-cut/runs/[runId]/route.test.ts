@@ -152,4 +152,32 @@ describe("PATCH /api/projects/:id/ai-cut/runs/:runId", () => {
     const body = (await res.json()) as { name?: string };
     expect(body.name).toBe("Awesome Cut");
   });
+
+  it("returns 400 when name is present but not a string", async () => {
+    state.clerkId = "clerk_1";
+    const res = await PATCH(patchRequest({ name: { foo: "bar" } }), { params });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error?: string };
+    expect(body.error).toBe("Invalid name format.");
+  });
+
+  it("treats empty or whitespace-only name as null", async () => {
+    state.clerkId = "clerk_1";
+    state.ownedProject = { id: VALID_ID, userId: "user-1", activeAiCutRunId: "other-run" };
+    state.run = RUN;
+    const res = await PATCH(patchRequest({ name: "   " }), { params });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { name?: string | null };
+    expect(body.name).toBeNull();
+  });
+
+  it("trims name before applying it", async () => {
+    state.clerkId = "clerk_1";
+    state.ownedProject = { id: VALID_ID, userId: "user-1", activeAiCutRunId: "other-run" };
+    state.run = RUN;
+    const res = await PATCH(patchRequest({ name: "  Trim Me  " }), { params });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { name?: string };
+    expect(body.name).toBe("Trim Me");
+  });
 });
