@@ -127,8 +127,10 @@ function groupByUtteranceBoundaries(
   utteranceEnds: number[]
 ): Sentence[] {
   let boundaryIdx = 0;
-  return flushSentences(words, (word) => {
+  return flushSentences(words, (word, i) => {
     let flushed = false;
+    
+    // 1. Flush if Deepgram declared an acoustic boundary here
     while (
       boundaryIdx < utteranceEnds.length &&
       word.end >= utteranceEnds[boundaryIdx] - UTTERANCE_BOUNDARY_EPS
@@ -136,6 +138,20 @@ function groupByUtteranceBoundaries(
       boundaryIdx++;
       flushed = true;
     }
+
+    // 2. Fall back to raw word gaps and punctuation to catch breaks 
+    //    inside overly long run-on utterances.
+    if (!flushed) {
+      if (TERMINAL_PUNCTUATION.test(word.word)) {
+        flushed = true;
+      } else {
+        const next = words[i + 1];
+        if (next != null && next.start - word.end > SENTENCE_GAP_SECONDS) {
+          flushed = true;
+        }
+      }
+    }
+    
     return flushed;
   });
 }

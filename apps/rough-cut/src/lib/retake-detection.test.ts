@@ -130,4 +130,20 @@ describe("detectRetakes — Deepgram utterance boundaries", () => {
     expect(matches).toHaveLength(2);
     for (const m of matches) expect(m.keptStart).toBeCloseTo(6, 5);
   });
+
+  it("falls back to pause heuristic if an utterance boundary is missing but a long gap exists", () => {
+    // take1 has a long gap (10s) after it, but we deliberately omit its utterance boundary.
+    // It also has no terminal punctuation, so only the gap heuristic can save it.
+    const take1 = sayNoPeriod("africa needs to wake up now", 0);
+    const take2 = sayNoPeriod("africa really needs to wake up now", 10);
+    
+    // Pretend Deepgram only detected the boundary for take2.
+    const utteranceEnds = [take2[take2.length - 1].end];
+    
+    // The > 0.5s gap after take1 forces a split, catching the retake despite the missed boundary.
+    const matches = detectRetakes([...take1, ...take2], undefined, utteranceEnds);
+    expect(matches).toHaveLength(1);
+    expect(matches[0].cutStart).toBeCloseTo(0, 5);
+    expect(matches[0].keptStart).toBeCloseTo(10, 5);
+  });
 });
