@@ -1390,6 +1390,7 @@ export default function EditorPage() {
             aiBusy={aiBusy}
             aiCostLabel={aiCostLabel}
             hasAiCuts={hasAiCuts}
+            lastAiCutTime={activeAiCutRun?.createdAt}
           />
         </div>
       </div>

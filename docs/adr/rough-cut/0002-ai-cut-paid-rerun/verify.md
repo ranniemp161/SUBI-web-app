@@ -31,3 +31,9 @@ _Steps derived from ADR 0002 acceptance criteria. `/verify` runs these; `/test` 
 - AC-4 (delete non-active run, block active delete, renumber) — covered by the delete UI steps and the renumbering command step.
 - AC-5 (concurrent claim serializes charges) — covered by the double-POST command step.
 - AC-6 (auth + ownership + rate limit on all three endpoints) — covered by the cross-project PATCH/DELETE command steps; rate limiting is exercised by the existing `ai-cut:${clerkId}` bucket shared with POST (route tests already assert 429 on a limiter denial for all three routes).
+
+---
+## Slice 4: AI Cut last-run timestamp
+- [ ] Open a project that has an AI Cut run applied.
+- [ ] Look at the bottom of the Transcript panel.
+- [ ] Confirm the text "Your AI cuts are already included (last run X time ago) — re-run anytime" is visible and the timestamp roughly matches the creation time.

@@ -22,7 +22,7 @@ The core product: browser-based video transcription and AI-assisted rough cuttin
 | 1 | Buy Credits Redirect | Slice 1 | done |
 | 2 | Editor Studio UX Safety | Slice 2 | done |
 | 3 | AI Cut paid re-run (versioned suggestions) | Slice 3 | done |
-| 4 | Surface AI Cut last-run timestamp | Slice 4 | planned |
+| 4 | Surface AI Cut last-run timestamp | Slice 4 | done |
 | 5 | Tune cut logic against utterance boundaries | Slice 4 | planned |
 | 6 | Named/labeled AI Cut runs | Deferred | planned |
 
@@ -109,11 +109,13 @@ Today, once AI Cut has produced suggestions, a user must Clear (discard) them be
 
 ## Slice 4
 
-### 4. Surface AI Cut last-run timestamp · planned
+### 4. Surface AI Cut last-run timestamp · done
 When AI Cut has already run, tell the user when, so the already-run state reads as "current" rather than ambiguous or stale.
 **Done when:** the already-run AI Cut UI state shows a relative or absolute last-run time.
-- [ ] Build it: `/develop ai cut last run timestamp`
-
+- [x] Build it: `/develop ai cut last run timestamp`
+  code in `apps/rough-cut/src/components/transcript-panel.tsx`, `apps/rough-cut/src/app/(app)/dashboard/[id]/page.tsx`
+- [x] Verify it: `/verify ai cut last run timestamp`
+- [x] Test it: `/test ai cut last run timestamp`
 ### 5. Tune cut logic against utterance boundaries · planned
 `retake-detection.ts` now has real Deepgram utterance boundaries available (`utteranceEnds`) but only uses them for sentence grouping; how aggressively cut suggestions should lean on them versus raw word gaps hasn't been tuned against real footage yet.
 **Done when:** cut-suggestion quality has been checked against real footage with utterance boundaries in play, and any tuning needed is applied.

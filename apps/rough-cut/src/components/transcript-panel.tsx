@@ -45,6 +45,8 @@ interface TranscriptPanelProps {
   /** Whether stored AI cuts are already applied to this project — the card
    *  must not upsell a pass whose results the user already has. */
   hasAiCuts: boolean;
+  /** When the currently active AI cut run was generated. */
+  lastAiCutTime?: string | null;
 }
 
 interface ContextMenuState {
@@ -171,6 +173,7 @@ export default function TranscriptPanel({
   aiBusy,
   aiCostLabel,
   hasAiCuts,
+  lastAiCutTime,
 }: TranscriptPanelProps) {
   const [anchorIndex, setAnchorIndex] = useState<number | null>(null);
   const [selection, setSelection] = useState<Set<number>>(new Set());
@@ -681,8 +684,21 @@ export default function TranscriptPanel({
           {cutEvent.kind === "rough" &&
             (hasAiCuts ? (
               <p className="mt-1.5 text-center text-[10px] text-foreground/35">
-                Your AI cuts are already included — re-run anytime from the AI
-                Cut tool (uses {aiCostLabel})
+                Your AI cuts are already included
+                {lastAiCutTime && (
+                  <span title={new Date(lastAiCutTime).toLocaleString()}>
+                    {" "}
+                    (last run{" "}
+                    {new Intl.RelativeTimeFormat("en", { numeric: "auto" }).format(
+                      -Math.round((Date.now() - new Date(lastAiCutTime).getTime()) / 60000) < -60
+                        ? -Math.round((Date.now() - new Date(lastAiCutTime).getTime()) / 3600000)
+                        : -Math.round((Date.now() - new Date(lastAiCutTime).getTime()) / 60000),
+                      -Math.round((Date.now() - new Date(lastAiCutTime).getTime()) / 60000) < -60 ? "hour" : "minute"
+                    )}
+                    )
+                  </span>
+                )}{" "}
+                — re-run anytime from the AI Cut tool (uses {aiCostLabel})
               </p>
             ) : (
               <p className="mt-1.5 text-center text-[10px] text-foreground/35">
