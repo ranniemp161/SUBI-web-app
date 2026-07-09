@@ -175,13 +175,23 @@ export default function TranscriptPanel({
   hasAiCuts,
   lastAiCutTime,
 }: TranscriptPanelProps) {
-  const [now, setNow] = useState<number | null>(null);
+  const [now, setNow] = useState<number | null>(() => (lastAiCutTime ? Date.now() : null));
+  const isInitialAiCutTime = useRef(true);
   useEffect(() => {
-    if (lastAiCutTime) {
-      setNow(Date.now());
-      const timer = setInterval(() => setNow(Date.now()), 60000);
-      return () => clearInterval(timer);
+    if (!lastAiCutTime) return;
+    // Skip the refresh-on-mount tick (state already seeded by the lazy
+    // initializer above); only re-sync `now` when lastAiCutTime changes later.
+    if (isInitialAiCutTime.current) {
+      isInitialAiCutTime.current = false;
+    } else {
+      const refresh = setTimeout(() => setNow(Date.now()), 0);
+      return () => clearTimeout(refresh);
     }
+  }, [lastAiCutTime]);
+  useEffect(() => {
+    if (!lastAiCutTime) return;
+    const timer = setInterval(() => setNow(Date.now()), 60000);
+    return () => clearInterval(timer);
   }, [lastAiCutTime]);
 
   const [anchorIndex, setAnchorIndex] = useState<number | null>(null);

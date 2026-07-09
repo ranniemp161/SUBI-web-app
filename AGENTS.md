@@ -29,6 +29,31 @@ Tracer Bullet — vertical slices; each feature built end-to-end through every l
 - The Wallet app (`apps/wallet`) is the sole authority on Stripe billing; other apps never process payments directly, they deep-link to Wallet.
 - **Lint & Mocking**: When mocking components with `forwardRef` in tests, avoid anonymous arrow functions. Always use a named function expression (e.g., `forwardRef(function MyStub() { ... })`) to prevent `react/display-name` ESLint errors. Omit unused parameters in mock implementations (like `props`, `ref`, `url`, `init`) to avoid `@typescript-eslint/no-unused-vars` warnings/errors.
 
+## Git workflow
+`main` is branch-protected: direct pushes are blocked (including for admins), and a PR can only merge once the `check` CI job (lint + typecheck + test) is green. Every change — AI-made or human-made — goes through a branch and a PR. No exceptions, no `--no-verify`.
+
+**Steps for every change:**
+1. Sync first: `git checkout main && git pull`
+2. Branch off main: `git checkout -b <type>/<short-description>` (naming convention below)
+3. Make the change, committing as you go. Keep fixing mistakes on the *same* branch — don't open a new branch for a correction to work that hasn't merged yet.
+4. Before pushing, run the same checks CI runs: `npm run lint && npm run typecheck && npm run test`
+5. Push and open a PR: `git push -u origin <branch-name>` then `gh pr create`
+6. Wait for the `check` CI job to go green on the PR.
+7. Merge the PR (`gh pr merge` or the GitHub UI). No second reviewer is required (solo project), but CI must be green — this is enforced server-side, not optional.
+8. After merge: `git checkout main && git pull`, then delete the local branch (`git branch -d <branch-name>`).
+
+**Branch naming convention** — `<type>/<kebab-case-description>`:
+| Type | Use for |
+|---|---|
+| `feat/` | New functionality (e.g. `feat/transcript-search`) |
+| `fix/` | Bug fixes (e.g. `fix/deepgram-retry-loop`) |
+| `chore/` | Tooling, deps, config, CI (e.g. `chore/bump-turbo`) |
+| `refactor/` | Restructuring with no behavior change |
+| `test/` | Test-only additions/changes |
+| `docs/` | Documentation-only changes |
+
+One branch per logical unit of work — if the change needs a sentence to describe ("add transcript search," not "update code"), that's one branch. Don't branch per commit or per file; do branch per independent feature/fix so each PR is reviewable and revertable on its own.
+
 ## ADRs
 Stored in `docs/adr/`. Format: `docs/adr/NNNN-title.md`.
 - [docs/adr/_root/0001-monorepo-wallet-architecture.md](./docs/adr/_root/0001-monorepo-wallet-architecture.md) — monorepo restructuring, shared `packages/db`, universal currency, Clerk SSO, Stripe-in-Wallet
