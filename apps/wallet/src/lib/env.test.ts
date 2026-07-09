@@ -1,17 +1,15 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 describe('env.ts', () => {
-  const originalEnv = process.env.NODE_ENV;
-  const originalUrl = process.env.NEXT_PUBLIC_ROUGH_CUT_URL;
+  const originalEnv = process.env;
+
+  beforeEach(() => {
+    vi.resetModules();
+    process.env = { ...originalEnv };
+  });
 
   afterEach(() => {
-    Object.defineProperty(process.env, 'NODE_ENV', {
-      value: originalEnv,
-      writable: true,
-      configurable: true,
-    });
-    process.env.NEXT_PUBLIC_ROUGH_CUT_URL = originalUrl;
-    vi.resetModules();
+    process.env = originalEnv;
   });
 
   it('uses devFallback in non-production when env var is missing', async () => {

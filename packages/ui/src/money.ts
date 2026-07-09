@@ -19,7 +19,7 @@ export const MICROS_PER_USD = 1_000_000;
  * the entry bundle ($19 buys ~60 min => 19,000,000 / 60). Default value; the
  * server may override it via the RETAIL_MICROS_PER_MINUTE env var.
  */
-export const RETAIL_MICROS_PER_MINUTE = 316_667;
+export const RETAIL_MICROS_PER_MINUTE = 83_333;
 
 /** USD micros to charge for a number of billable seconds, at the retail rate. */
 export function chargeMicrosForSeconds(

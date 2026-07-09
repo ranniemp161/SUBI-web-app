@@ -6,6 +6,9 @@ import { rateLimit } from "@/lib/rate-limit";
 import { allowedPriceIds, creditMicrosFromPrice, getStripe } from "@/lib/stripe";
 import { reportError } from "@/lib/observability";
 import { ROUGH_CUT_URL } from "@/lib/env";
+import { db } from "@repo/db";
+import { users } from "@repo/db/schema";
+import { eq } from "drizzle-orm";
 
 // Sessions are free to create but each is a live payment page — cap how many
 // a single user can mint.
@@ -88,18 +91,50 @@ export async function POST(request: Request) {
     // later. Reuse the user's Stripe Customer if they have one; otherwise let
     // Checkout create one. setup_future_usage persists the PaymentMethod; the
     // webhook reads the customer + payment method back onto the users row.
-    const session = await stripe.checkout.sessions.create({
-      mode: "payment",
-      line_items: [{ price: priceId, quantity: 1 }],
-      success_url: `${origin}/dashboard?checkout=success`,
-      cancel_url: `${origin}/dashboard?checkout=cancelled`,
-      client_reference_id: user.id,
-      metadata: { userId: user.id, creditMicros: String(creditMicros) },
-      payment_intent_data: { setup_future_usage: "off_session" },
-      ...(user.stripeCustomerId
-        ? { customer: user.stripeCustomerId }
-        : { customer_creation: "always", customer_email: user.email || undefined }),
-    });
+    let session;
+    try {
+      session = await stripe.checkout.sessions.create({
+        mode: "payment",
+        line_items: [{ price: priceId, quantity: 1 }],
+        success_url: `${origin}/dashboard?checkout=success`,
+        cancel_url: `${origin}/dashboard?checkout=cancelled`,
+        client_reference_id: user.id,
+        metadata: { userId: user.id, creditMicros: String(creditMicros) },
+        payment_intent_data: { setup_future_usage: "off_session" },
+        ...(user.stripeCustomerId
+          ? { customer: user.stripeCustomerId }
+          : { customer_creation: "always", customer_email: user.email || undefined }),
+      });
+    } catch (err: unknown) {
+      const errorWithRaw = err as { raw?: { code?: string }; message?: string };
+      if (
+        user.stripeCustomerId &&
+        errorWithRaw?.raw?.code === "resource_missing" &&
+        errorWithRaw?.message?.includes("customer")
+      ) {
+        console.warn(
+          `Stripe customer ${user.stripeCustomerId} not found in the active Stripe account. Clearing it and retrying...`
+        );
+        await db
+          .update(users)
+          .set({ stripeCustomerId: null, defaultPaymentMethodId: null })
+          .where(eq(users.id, user.id));
+
+        session = await stripe.checkout.sessions.create({
+          mode: "payment",
+          line_items: [{ price: priceId, quantity: 1 }],
+          success_url: `${origin}/dashboard?checkout=success`,
+          cancel_url: `${origin}/dashboard?checkout=cancelled`,
+          client_reference_id: user.id,
+          metadata: { userId: user.id, creditMicros: String(creditMicros) },
+          payment_intent_data: { setup_future_usage: "off_session" },
+          customer_creation: "always",
+          customer_email: user.email || undefined,
+        });
+      } else {
+        throw err;
+      }
+    }
 
     if (contentType.includes("application/x-www-form-urlencoded") || contentType.includes("multipart/form-data")) {
       if (!session.url) throw new Error("No session URL returned");

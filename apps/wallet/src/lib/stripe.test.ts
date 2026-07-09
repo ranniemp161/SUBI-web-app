@@ -56,14 +56,14 @@ describe("creditMicrosFromPrice", () => {
   });
 
   it("falls back to legacy metadata.tokens (seconds) times the retail rate", () => {
-    // chargeMicrosForSeconds(3600) = 19_000_020 at the default rate.
-    expect(creditMicrosFromPrice(price({ tokens: "3600" }))).toBe(19_000_020);
+    // chargeMicrosForSeconds(3600) = 4_999_980 at the default rate.
+    expect(creditMicrosFromPrice(price({ tokens: "3600" }))).toBe(4_999_980);
   });
 
   it("falls back to legacy metadata.credit_seconds", () => {
-    // chargeMicrosForSeconds(18000) = round(18000 * 316667 / 60) = 95_000_100.
+    // chargeMicrosForSeconds(18000) = round(18000 * 83333 / 60) = 24_999_900.
     expect(creditMicrosFromPrice(price({ credit_seconds: "18000" }))).toBe(
-      95_000_100
+      24_999_900
     );
   });
 
