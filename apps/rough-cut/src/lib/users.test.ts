@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type { User } from "@repo/db/schema";
 
 const state = vi.hoisted(() => {
   const data = { returnedUser: { id: "u1", clerkId: "c1", email: "a@b.com" } };
@@ -30,7 +31,7 @@ beforeEach(() => {
 
 describe("provisionUser", () => {
   it("inserts or updates the user and returns it", async () => {
-    state.data.returnedUser = { id: "u1", clerkId: "clerk_123", email: "test@example.com" } as any;
+    state.data.returnedUser = { id: "u1", clerkId: "clerk_123", email: "test@example.com" } as unknown as User;
     
     const user = await provisionUser("clerk_123", "test@example.com");
     

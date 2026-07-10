@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type { User } from "@repo/db/schema";
 
 const { selectMock, fromMock, whereMock, limitMock } = vi.hoisted(() => ({
   selectMock: vi.fn(),
@@ -64,7 +65,7 @@ describe("getAuthorizedDbUser", () => {
       emailAddresses: [{ emailAddress: "a@b.com" }],
     });
     const dbUser = { id: "u1", clerkId: "c1", email: "a@b.com" };
-    vi.mocked(provisionUser).mockResolvedValue(dbUser as any);
+    vi.mocked(provisionUser).mockResolvedValue(dbUser as unknown as User);
 
     const result = await getAuthorizedDbUser("c1");
 
