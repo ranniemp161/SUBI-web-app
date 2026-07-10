@@ -6,7 +6,7 @@
     },
     {
       "path": "/api/cron/autorecharge",
-      "schedule": "*/2 * * * *"
+      "schedule": "0 5 * * *"
     }
   ]
 }
