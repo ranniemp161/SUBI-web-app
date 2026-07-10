@@ -6,14 +6,13 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 
 /**
- * Custom signup page with access code verification.
+ * Custom signup page.
  *
  * Flow:
- * 1. User fills in email, password, and access code
- * 2. Access code is verified against the server FIRST
- * 3. Only if valid, Clerk signup proceeds
- * 4. Email verification step (if Clerk has it enabled)
- * 5. Redirect to dashboard on success
+ * 1. User fills in email and password
+ * 2. Clerk signup proceeds
+ * 3. Email verification step (if Clerk has it enabled)
+ * 4. Redirect to dashboard on success
  */
 export default function SignUpPage() {
   const { isLoaded, signUp, setActive } = useSignUp();
@@ -21,7 +20,6 @@ export default function SignUpPage() {
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [accessCode, setAccessCode] = useState("");
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [pendingVerification, setPendingVerification] = useState(false);
@@ -36,33 +34,13 @@ export default function SignUpPage() {
     setIsLoading(true);
 
     try {
-      // Step 1: Verify access code BEFORE creating the Clerk account
-      const codeResponse = await fetch("/api/auth/verify-code", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ accessCode }),
-      });
-
-      const codeResult = await codeResponse.json();
-
-      if (!codeResult.valid) {
-        setError(codeResult.error || "Invalid access code.");
-        setIsLoading(false);
-        return;
-      }
-
-      // Step 2: Create the Clerk account. The access code travels as
-      // unsafeMetadata so the user.created webhook can verify it
-      // server-side and delete the account if it's wrong — the
-      // client-side check above is just early UX feedback, not the
-      // real gate.
+      // Create the Clerk account.
       await signUp.create({
         emailAddress: email,
         password,
-        unsafeMetadata: { accessCode },
       });
 
-      // Step 3: Send email verification code
+      // Send email verification code
       await signUp.prepareEmailAddressVerification({
         strategy: "email_code",
       });
@@ -175,7 +153,7 @@ export default function SignUpPage() {
             Create your account
           </h1>
           <p className="mt-2 text-sm text-foreground/60">
-            Enter your details and Skool community access code
+            Enter your details to get started
           </p>
         </div>
 
@@ -224,28 +202,6 @@ export default function SignUpPage() {
                 required
                 className="mt-1 block w-full rounded-lg border border-foreground/10 bg-foreground/5 px-4 py-3 text-foreground placeholder-foreground/40 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
               />
-            </div>
-
-            <div>
-              <label
-                htmlFor="access-code"
-                className="block text-sm font-medium text-foreground/80"
-              >
-                Access code
-              </label>
-              <input
-                id="access-code"
-                type="text"
-                value={accessCode}
-                onChange={(e) => setAccessCode(e.target.value)}
-                placeholder="SKOOL-XXXX-XXXX"
-                required
-                className="mt-1 block w-full rounded-lg border border-foreground/10 bg-foreground/5 px-4 py-3 text-foreground placeholder-foreground/40 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              />
-              <p className="mt-1 text-xs text-foreground/40">
-                Your personal access code from the Skool community — each code
-                works once
-              </p>
             </div>
           </div>
 

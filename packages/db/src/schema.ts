@@ -43,7 +43,7 @@ export const users = pgTable(
      */
     balanceMicros: integer("balance_micros").notNull().default(0),
     /** Skool community member — receives the monthly credit grant. */
-    isMember: boolean("is_member").notNull().default(false),
+    isMember: boolean("is_member").notNull().default(true),
     /**
      * Auto-recharge (ADR 0002/0002): buy more automatically off-session when
      * the balance drops below a user-set line. We store only Stripe ids, never
@@ -207,22 +207,6 @@ export const creditLedger = pgTable(
   ]
 );
 
-/**
- * Per-member Skool access codes, redeemable once at signup. A redeemed code
- * marks its user a member; the users row itself is the authorization for
- * write routes (see lib/authz.ts).
- */
-export const accessCodes = pgTable("access_codes", {
-  code: text("code").primaryKey(),
-  createdAt: timestamp("created_at", { withTimezone: true })
-    .defaultNow()
-    .notNull(),
-  redeemedByUserId: uuid("redeemed_by_user_id").references(() => users.id, {
-    onDelete: "set null",
-  }),
-  redeemedAt: timestamp("redeemed_at", { withTimezone: true }),
-  revokedAt: timestamp("revoked_at", { withTimezone: true }),
-});
 
 /** TypeScript types inferred from the schema for use across the app. */
 export type User = typeof users.$inferSelect;
@@ -230,6 +214,5 @@ export type NewUser = typeof users.$inferInsert;
 export type Project = typeof projects.$inferSelect;
 export type NewProject = typeof projects.$inferInsert;
 export type CreditLedgerEntry = typeof creditLedger.$inferSelect;
-export type AccessCode = typeof accessCodes.$inferSelect;
 export type AiCutRunRow = typeof aiCutRuns.$inferSelect;
 export type NewAiCutRunRow = typeof aiCutRuns.$inferInsert;
