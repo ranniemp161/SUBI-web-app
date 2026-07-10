@@ -397,13 +397,15 @@ export async function refundAiCut(
 ): Promise<void> {
   const chargeMicros = chargeMicrosForSeconds(costSeconds);
   await executeRows(sql`
-    WITH led AS (
+    WITH ins AS (
       INSERT INTO credit_ledger (user_id, delta_micros, reason, project_id, cost_micros)
-      VALUES (${userId}, ${chargeMicros}, 'refund', ${projectId},
-              ${costSeconds * AI_CUT_COST_MICROS_PER_SECOND})
+      SELECT id, ${chargeMicros}, 'refund', ${projectId},
+             ${costSeconds * AI_CUT_COST_MICROS_PER_SECOND}
+      FROM users WHERE id = ${userId}
+      RETURNING user_id, delta_micros
     )
-    UPDATE users SET balance_micros = balance_micros + ${chargeMicros}
-    WHERE id = ${userId}
+    UPDATE users u SET balance_micros = u.balance_micros + ins.delta_micros
+    FROM ins WHERE u.id = ins.user_id
   `);
 }
 
