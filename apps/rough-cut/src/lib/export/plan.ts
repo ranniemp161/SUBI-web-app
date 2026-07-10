@@ -40,8 +40,21 @@ export function createTimeRemapper(ranges: KeepRange[]): (t: number) => number |
     return { ...r, offset };
   });
 
+  let lastIdx = 0;
   return function remap(t: number): number | null {
-    const range = withOffset.find((r) => t >= r.start && t < r.end);
-    return range ? t + range.offset : null;
+    // Since t increases monotonically, we can advance lastIdx as long as t is past the current range's end.
+    while (lastIdx < withOffset.length && t >= withOffset[lastIdx].end) {
+      lastIdx++;
+    }
+    // If t is before the current range (e.g. backward jump in unit tests), reset lastIdx to 0 and find again.
+    if (lastIdx < withOffset.length && t < withOffset[lastIdx].start) {
+      lastIdx = 0;
+      while (lastIdx < withOffset.length && t >= withOffset[lastIdx].end) {
+        lastIdx++;
+      }
+    }
+
+    const range = withOffset[lastIdx];
+    return range && t >= range.start && t < range.end ? t + range.offset : null;
   };
 }

@@ -266,3 +266,64 @@ describe("FilePicker — loading and accessibility", () => {
     expect(button).not.toBeDisabled();
   });
 });
+
+describe("FilePicker — timeout safeguard", () => {
+  let originalSetTimeout: typeof window.setTimeout;
+  let timeoutCallback: (() => void) | undefined;
+
+  beforeEach(() => {
+    timeoutCallback = undefined;
+    originalSetTimeout = window.setTimeout;
+    window.setTimeout = vi.fn((cb: Parameters<typeof window.setTimeout>[0], ms?: number) => {
+      if (ms === 8000) {
+        timeoutCallback = cb as () => void;
+        return 9999 as unknown as ReturnType<typeof window.setTimeout>;
+      }
+      return originalSetTimeout(cb, ms);
+    }) as unknown as typeof window.setTimeout;
+
+    // Overwrite standard src setter to prevent automatic load
+    Object.defineProperty(window.HTMLMediaElement.prototype, "src", {
+      configurable: true,
+      set(this: HTMLMediaElement, value: string) {
+        nativeSrcSetter?.call(this, value);
+      },
+      get(this: HTMLMediaElement) {
+        return this.getAttribute("src") ?? "";
+      },
+    });
+  });
+
+  afterEach(() => {
+    window.setTimeout = originalSetTimeout;
+    Object.defineProperty(window.HTMLMediaElement.prototype, "src", {
+      configurable: true,
+      set(this: HTMLMediaElement, value: string) {
+        nativeSrcSetter?.call(this, value);
+        queueMicrotask(() => this.dispatchEvent(new Event("loadedmetadata")));
+      },
+      get(this: HTMLMediaElement) {
+        return this.getAttribute("src") ?? "";
+      },
+    });
+  });
+
+  it("shows timeout error when metadata load takes too long", async () => {
+    const onFileSelected = vi.fn();
+    render(<FilePicker onFileSelected={onFileSelected} />);
+
+    await selectFile(makeVideoFile());
+
+    expect(timeoutCallback).toBeDefined();
+
+    // Trigger the timeout callback manually!
+    timeoutCallback!();
+
+    expect(
+      await screen.findByText(
+        "Could not read this video file (metadata load timed out). Try a different format."
+      )
+    ).toBeInTheDocument();
+    expect(onFileSelected).not.toHaveBeenCalled();
+  });
+});
