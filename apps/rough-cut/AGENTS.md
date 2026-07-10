@@ -61,8 +61,7 @@ npm -w @repo/rough-cut typecheck
 - On localhost (no public callback URL) transcription reads the transcript
   synchronously, holding the request open; set `PUBLIC_APP_URL` to force the
   production callback path locally.
-- Deepgram enforces an upload size cap enforced at Blob token issuance
-  (`maximumSizeInBytes`), not after upload.
+- Deepgram enforces an upload size cap (2 GB by default, configurable via the `DEEPGRAM_MAX_UPLOAD_BYTES` environment variable) enforced at Blob token issuance (`maximumSizeInBytes`), not after upload.
 
 ## Related ADRs
 - `docs/adr/_root/0001-monorepo-wallet-architecture.md`
