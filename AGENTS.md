@@ -28,6 +28,8 @@ Tracer Bullet — vertical slices; each feature built end-to-end through every l
 - Currency is US dollars stored as `micros` (1,000,000 micros = $1) — a universal unit multiple future apps can spend against a shared ledger in `@repo/db`.
 - The Wallet app (`apps/wallet`) is the sole authority on Stripe billing; other apps never process payments directly, they deep-link to Wallet.
 - **Lint & Mocking**: When mocking components with `forwardRef` in tests, avoid anonymous arrow functions. Always use a named function expression (e.g., `forwardRef(function MyStub() { ... })`) to prevent `react/display-name` ESLint errors. Omit unused parameters in mock implementations (like `props`, `ref`, `url`, `init`) to avoid `@typescript-eslint/no-unused-vars` warnings/errors.
+- **Next.js 16 Middleware**: In Next.js 16, the global routing interception file has been renamed from `middleware.ts` to `proxy.ts`. Do not flag `proxy.ts` as an error or attempt to rename it to `middleware.ts`.
+- **IP Rate Limiting**: The `getClientIp` function in `ip-rate-limit.ts` trusts the first entry of the `X-Forwarded-For` header. The application must be deployed on Vercel Edge or a provider that properly sanitizes the `X-Forwarded-For` header to prevent IP spoofing.
 
 ## Git workflow
 `main` is branch-protected: direct pushes are blocked (including for admins), and a PR can only merge once the `check` CI job (lint + typecheck + test) is green. Every change — AI-made or human-made — goes through a branch and a PR. No exceptions, no `--no-verify`.

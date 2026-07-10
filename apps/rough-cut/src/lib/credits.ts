@@ -419,13 +419,14 @@ export async function refundAiCut(
   await executeRows(sql`
     WITH ins AS (
       INSERT INTO credit_ledger (user_id, delta_micros, reason, project_id, cost_micros, stripe_event_id)
-      VALUES (${userId}, ${chargeMicros}, 'refund', ${projectId},
-              ${costSeconds * AI_CUT_COST_MICROS_PER_SECOND}, ${ledgerKey})
+      SELECT id, ${chargeMicros}, 'refund', ${projectId},
+             ${costSeconds * AI_CUT_COST_MICROS_PER_SECOND}, ${ledgerKey}
+      FROM users WHERE id = ${userId}
       ON CONFLICT (stripe_event_id) DO NOTHING
-      RETURNING delta_micros
+      RETURNING user_id, delta_micros
     )
     UPDATE users u SET balance_micros = u.balance_micros + ins.delta_micros
-    FROM ins WHERE u.id = ${userId}
+    FROM ins WHERE u.id = ins.user_id
   `);
 }
 
