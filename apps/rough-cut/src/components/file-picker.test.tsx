@@ -274,13 +274,13 @@ describe("FilePicker — timeout safeguard", () => {
   beforeEach(() => {
     timeoutCallback = undefined;
     originalSetTimeout = window.setTimeout;
-    window.setTimeout = vi.fn((cb: any, ms: any) => {
+    window.setTimeout = vi.fn((cb: Parameters<typeof window.setTimeout>[0], ms?: number) => {
       if (ms === 8000) {
-        timeoutCallback = cb;
-        return 9999 as any;
+        timeoutCallback = cb as () => void;
+        return 9999 as unknown as ReturnType<typeof window.setTimeout>;
       }
       return originalSetTimeout(cb, ms);
-    }) as any;
+    }) as unknown as typeof window.setTimeout;
 
     // Overwrite standard src setter to prevent automatic load
     Object.defineProperty(window.HTMLMediaElement.prototype, "src", {
