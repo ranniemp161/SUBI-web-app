@@ -57,6 +57,13 @@
       "when": 1783611293035,
       "tag": "0007_even_jimmy_woo",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1783671922562,
+      "tag": "0008_salty_romulus",
+      "breakpoints": true
     }
   ]
 }

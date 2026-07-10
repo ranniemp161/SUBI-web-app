@@ -1,28 +1,21 @@
 import { Webhook } from "svix";
 import { NextResponse } from "next/server";
-import { clerkClient } from "@clerk/nextjs/server";
-import { provisionMemberWithCode } from "@/lib/access-codes";
+import { provisionUser } from "@/lib/users";
 import { ipRateLimit } from "@/lib/ip-rate-limit";
 
 // No Clerk session on this request (Clerk itself is calling us), so it's
 // exempt from src/proxy.ts's middleware and per-user limits. The svix
 // signature below is the real gate; this is just a volume/cost ceiling, kept
 // high since Clerk's own infra may proxy through few IPs and can burst
-// during real signup spikes — a dropped legitimate webhook (meaning the
-// access-code gate never runs) is worse than a temporarily loose limit.
+// during real signup spikes.
 const WEBHOOK_LIMIT = 120;
 const WEBHOOK_WINDOW_SECONDS = 60;
 
 /**
  * POST /api/webhooks/clerk
  *
- * Server-side enforcement of the access-code gate. The signup form
- * can't actually block account creation — `signUp.create()` talks
- * directly to Clerk's API with a public key, so any client-side check
- * is just a UX nicety. This webhook is the real gate: on every
- * `user.created` event we check the access code the client attached
- * as `unsafeMetadata`, and delete the user immediately if it's missing
- * or wrong.
+ * Webhook that handles user creation from Clerk and provisions them
+ * in our own database.
  */
 export async function POST(request: Request) {
   const webhookSecret = process.env.CLERK_WEBHOOK_SECRET;
@@ -74,11 +67,6 @@ export async function POST(request: Request) {
 
   if (event.type === "user.created") {
     const userId = event.data.id as string;
-    const unsafeMetadata = event.data.unsafe_metadata as
-      | Record<string, unknown>
-      | undefined;
-    const rawCode = unsafeMetadata?.accessCode;
-    const code = typeof rawCode === "string" ? rawCode.trim() : undefined;
 
     const emailAddresses = event.data.email_addresses as
       | Array<{ id: string; email_address: string }>
@@ -91,21 +79,28 @@ export async function POST(request: Request) {
       emailAddresses?.[0]?.email_address ??
       "";
 
-    // Creates our users row and atomically redeems the per-member code —
-    // idempotent against the lazy fallback in lib/authz.ts, which may have
-    // provisioned this user already if they raced the webhook.
-    const user = await provisionMemberWithCode(userId, email, code);
+    if (!email) {
+      console.error(
+        `[Clerk Webhook] user.created for ${userId} has no resolvable email — skipping provisioning.`
+      );
+      return NextResponse.json({ received: true });
+    }
 
-    if (!user) {
-      try {
-        const client = await clerkClient();
-        await client.users.deleteUser(userId);
-        console.warn(`Deleted user ${userId}: invalid or missing access code.`);
-      } catch (err) {
-        console.error(`Failed to delete Clerk user ${userId} on failed provisioning:`, err);
-      }
+    try {
+      await provisionUser(userId, email);
+    } catch (err) {
+      console.error(
+        `[Clerk Webhook] provisionUser failed for ${userId}:`,
+        err
+      );
+      // Return 500 so Clerk retries the webhook delivery.
+      return NextResponse.json(
+        { error: "User provisioning failed." },
+        { status: 500 }
+      );
     }
   }
 
   return NextResponse.json({ received: true });
 }
+

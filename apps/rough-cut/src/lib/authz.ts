@@ -2,17 +2,15 @@ import { currentUser } from "@clerk/nextjs/server";
 import { eq } from "drizzle-orm";
 import { db, withDbRetry } from "@repo/db";
 import { users, type User } from "@repo/db/schema";
-import { provisionMemberWithCode } from "@/lib/access-codes";
+import { provisionUser } from "@/lib/users";
 
 /**
- * DB-backed authorization for write routes — the successor to the old
- * hasValidAccessCode() env-var check.
+ * DB-backed authorization for write routes.
  *
  * The users row IS the authorization: it only exists once the Clerk
- * `user.created` webhook (or the fallback below) validated an access code.
+ * `user.created` webhook (or the fallback below) provisions the user.
  * The fallback covers the window where signUp.create() has already granted a
- * session but the webhook hasn't landed yet — the same wrinkle the old
- * metadata re-check handled, now redeeming the real per-member code.
+ * session but the webhook hasn't landed yet.
  */
 export async function getAuthorizedDbUser(clerkId: string): Promise<User | null> {
   const rows = await withDbRetry(() =>
@@ -21,9 +19,8 @@ export async function getAuthorizedDbUser(clerkId: string): Promise<User | null>
   if (rows.length > 0) return rows[0];
 
   const clerkUser = await currentUser();
-  const code = clerkUser?.unsafeMetadata?.accessCode;
-  if (typeof code !== "string" || !code.trim()) return null;
-
   const email = clerkUser?.emailAddresses[0]?.emailAddress ?? "";
-  return provisionMemberWithCode(clerkId, email, code.trim());
+  if (!email) return null;
+
+  return provisionUser(clerkId, email);
 }

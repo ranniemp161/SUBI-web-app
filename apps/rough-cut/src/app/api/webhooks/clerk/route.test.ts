@@ -6,18 +6,14 @@ const state = vi.hoisted(() => ({
     body: string,
     headers: Record<string, string>
   ) => { type: string; data: Record<string, unknown> },
-  deletedUserIds: [] as string[],
   provisionCalls: [] as Array<{
     clerkId: string;
     email: string;
-    code: string | undefined;
   }>,
-  // Emulates provisionMemberWithCode: only this code redeems successfully.
-  validCode: "SKOOL-AAAA-BBBB",
 }));
 
-vi.mock("@/lib/rate-limit", () => ({
-  rateLimit: vi.fn(async () => ({
+vi.mock("@/lib/ip-rate-limit", () => ({
+  ipRateLimit: vi.fn(async () => ({
     allowed: state.rateAllowed,
     remaining: state.rateAllowed ? 119 : 0,
     limit: 120,
@@ -32,28 +28,17 @@ vi.mock("svix", () => ({
   },
 }));
 
-vi.mock("@clerk/nextjs/server", () => ({
-  clerkClient: vi.fn(async () => ({
-    users: {
-      deleteUser: vi.fn(async (id: string) => {
-        state.deletedUserIds.push(id);
-      }),
-    },
-  })),
-}));
-
-vi.mock("@/lib/access-codes", () => ({
-  provisionMemberWithCode: vi.fn(
-    async (clerkId: string, email: string, code: string | undefined) => {
-      state.provisionCalls.push({ clerkId, email, code });
-      if (code !== state.validCode) return null;
-      return { id: "db-user-1", clerkId, email, isMember: true, tokens: 0 };
+vi.mock("@/lib/users", () => ({
+  provisionUser: vi.fn(
+    async (clerkId: string, email: string) => {
+      state.provisionCalls.push({ clerkId, email });
+      return { id: "db-user-1", clerkId, email, isMember: true, balanceMicros: 0 };
     }
   ),
 }));
 
 import { POST } from "./route";
-import { rateLimit } from "@/lib/rate-limit";
+import { ipRateLimit } from "@/lib/ip-rate-limit";
 
 function req(
   body: unknown,
@@ -74,7 +59,6 @@ function req(
 
 beforeEach(() => {
   state.rateAllowed = true;
-  state.deletedUserIds = [];
   state.provisionCalls = [];
   state.verifyImpl = () => ({ type: "user.created", data: {} });
   vi.clearAllMocks();
@@ -90,13 +74,13 @@ describe("POST /api/webhooks/clerk — request guards", () => {
     delete process.env.CLERK_WEBHOOK_SECRET;
     const res = await POST(req({}));
     expect(res.status).toBe(500);
-    expect(rateLimit).not.toHaveBeenCalled();
+    expect(ipRateLimit).not.toHaveBeenCalled();
   });
 
   it("400 when svix headers are missing (never touches the rate limiter)", async () => {
     const res = await POST(req({}, { headers: false }));
     expect(res.status).toBe(400);
-    expect(rateLimit).not.toHaveBeenCalled();
+    expect(ipRateLimit).not.toHaveBeenCalled();
   });
 
   it("429 once the per-IP limit is exceeded, before the signature is ever verified", async () => {
@@ -104,7 +88,8 @@ describe("POST /api/webhooks/clerk — request guards", () => {
     state.verifyImpl = vi.fn(() => ({ type: "user.created", data: {} }));
     const res = await POST(req({}, { ip: "198.51.100.20" }));
     expect(res.status).toBe(429);
-    expect(rateLimit).toHaveBeenCalledWith("webhook-clerk:198.51.100.20", 120, 60);
+    // Note: the test mock now intercepts ipRateLimit, which takes the Request object directly
+    expect(ipRateLimit).toHaveBeenCalledWith(expect.any(Request), "webhook-clerk", 120, 60);
     expect(state.verifyImpl).not.toHaveBeenCalled();
   });
 
@@ -118,48 +103,49 @@ describe("POST /api/webhooks/clerk — request guards", () => {
 });
 
 describe("POST /api/webhooks/clerk — user.created handling", () => {
-  it("deletes the Clerk user when provisioning rejects the code", async () => {
-    state.verifyImpl = () => ({
-      type: "user.created",
-      data: { id: "user_1", unsafe_metadata: { accessCode: "wrong" } },
-    });
-    const res = await POST(req({}));
-    expect(res.status).toBe(200);
-    expect(state.deletedUserIds).toEqual(["user_1"]);
-    expect(state.provisionCalls).toEqual([
-      { clerkId: "user_1", email: "", code: "wrong" },
-    ]);
-  });
-
-  it("deletes the Clerk user when no code was provided at all", async () => {
-    state.verifyImpl = () => ({
-      type: "user.created",
-      data: { id: "user_3", unsafe_metadata: {} },
-    });
-    const res = await POST(req({}));
-    expect(res.status).toBe(200);
-    expect(state.deletedUserIds).toEqual(["user_3"]);
-    expect(state.provisionCalls).toEqual([
-      { clerkId: "user_3", email: "", code: undefined },
-    ]);
-  });
-
-  it("provisions a member (users row + redeemed code) when the code is valid", async () => {
+  it("provisions a user row when created", async () => {
     state.verifyImpl = () => ({
       type: "user.created",
       data: {
         id: "user_2",
-        unsafe_metadata: { accessCode: ` ${state.validCode} ` },
         email_addresses: [{ id: "e1", email_address: "a@b.com" }],
         primary_email_address_id: "e1",
       },
     });
     const res = await POST(req({}));
     expect(res.status).toBe(200);
-    expect(state.deletedUserIds).toEqual([]);
-    // The raw metadata code is trimmed before redemption.
     expect(state.provisionCalls).toEqual([
-      { clerkId: "user_2", email: "a@b.com", code: state.validCode },
+      { clerkId: "user_2", email: "a@b.com" },
     ]);
+  });
+
+  it("falls back to the first email address if primary_email_address_id is not found", async () => {
+    state.verifyImpl = () => ({
+      type: "user.created",
+      data: {
+        id: "user_3",
+        email_addresses: [{ id: "e1", email_address: "first@example.com" }, { id: "e2", email_address: "second@example.com" }],
+        primary_email_address_id: "missing",
+      },
+    });
+    const res = await POST(req({}));
+    expect(res.status).toBe(200);
+    expect(state.provisionCalls).toEqual([
+      { clerkId: "user_3", email: "first@example.com" },
+    ]);
+  });
+
+  it("skips provisioning and returns 200 when no email_addresses are present", async () => {
+    state.verifyImpl = () => ({
+      type: "user.created",
+      data: {
+        id: "user_4",
+      },
+    });
+    const res = await POST(req({}));
+    // The new behaviour: empty email guard fires, provisionUser is never called,
+    // but we still return 200 so Clerk does not retry an unresolvable event.
+    expect(res.status).toBe(200);
+    expect(state.provisionCalls).toEqual([]);
   });
 });

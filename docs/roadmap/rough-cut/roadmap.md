@@ -24,7 +24,7 @@ The core product: browser-based video transcription and AI-assisted rough cuttin
 | 3 | AI Cut paid re-run (versioned suggestions) | Slice 3 | done |
 | 4 | Surface AI Cut last-run timestamp | Slice 4 | done |
 | 5 | Tune cut logic against utterance boundaries | Slice 4 | done |
-| 6 | Named/labeled AI Cut runs | Slice 5 | in-progress |
+| 6 | Named/labeled AI Cut runs | Slice 5 | done |
 
 ## Existing (pre-workflow, enrolled 2026-07-08)
 
@@ -126,10 +126,12 @@ When AI Cut has already run, tell the user when, so the already-run state reads 
 
 ## Slice 5
 
-### 6. Named/labeled AI Cut runs · in-progress
+### 6. Named/labeled AI Cut runs · done
 A user can label a stored AI Cut run (e.g. "longer intro kept") to tell runs apart when comparing (from ADR 0002).
 **Done when:** a stored run can be given a custom name that displays in the run list.
 - [x] Build it: `/develop nameable ai cut runs`
+- [x] Verify it: `/verify nameable ai cut runs`
+- [x] Test it: `/test nameable ai cut runs`
 
 ## Deferred
 
