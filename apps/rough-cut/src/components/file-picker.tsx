@@ -92,7 +92,18 @@ export default function FilePicker({
       const video = document.createElement("video");
       video.preload = "metadata";
 
+      const timeoutId = setTimeout(() => {
+        URL.revokeObjectURL(video.src);
+        video.src = "";
+        video.onerror = null;
+        video.onloadedmetadata = null;
+        setError(
+          "Could not read this video file (metadata load timed out). Try a different format."
+        );
+      }, 8000);
+
       video.onloadedmetadata = () => {
+        clearTimeout(timeoutId);
         const durationMs = Math.round(video.duration * 1000);
         URL.revokeObjectURL(video.src);
 
@@ -143,6 +154,7 @@ export default function FilePicker({
       };
 
       video.onerror = () => {
+        clearTimeout(timeoutId);
         URL.revokeObjectURL(video.src);
         setError(
           "Could not read this video file. Try a different format (MP4, MOV, WebM)."

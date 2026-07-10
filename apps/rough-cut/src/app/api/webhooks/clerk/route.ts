@@ -97,9 +97,13 @@ export async function POST(request: Request) {
     const user = await provisionMemberWithCode(userId, email, code);
 
     if (!user) {
-      const client = await clerkClient();
-      await client.users.deleteUser(userId);
-      console.warn(`Deleted user ${userId}: invalid or missing access code.`);
+      try {
+        const client = await clerkClient();
+        await client.users.deleteUser(userId);
+        console.warn(`Deleted user ${userId}: invalid or missing access code.`);
+      } catch (err) {
+        console.error(`Failed to delete Clerk user ${userId} on failed provisioning:`, err);
+      }
     }
   }
 
