@@ -1,7 +1,7 @@
 # 0003. Studio auto cut flow
 
 **Date**: 2026-07-11
-**Status**: In Progress
+**Status**: Accepted
 
 ## Summary
 
