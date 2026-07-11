@@ -1,5 +1,6 @@
 import { Redis } from "@upstash/redis";
 import { Ratelimit } from "@upstash/ratelimit";
+import { reportError } from "@/lib/observability";
 
 export interface RateLimitResult {
   allowed: boolean;
@@ -50,6 +51,19 @@ function getRatelimiter(limit: number, windowSeconds: number): Ratelimit | null 
  * paid AI Cut run) — there, "can't prove this is safe" must mean refuse, not
  * allow, or a Redis blip turns into free double-charges.
  */
+// One shared bucket across all cheap authenticated GETs (project list/detail,
+// credits, status polling). Generous enough that legitimate use never sees it
+// — the dashboard polls status every 4s per in-flight project — while bounding
+// what a scripted client can burn in Neon compute. Fail-open like other
+// abuse caps.
+const READ_LIMIT = 600;
+const READ_WINDOW_SECONDS = 300;
+
+/** Shared per-user cap for cheap read-only routes, keyed `read:<clerkId>`. */
+export async function readRateLimit(clerkId: string): Promise<RateLimitResult> {
+  return rateLimit(`read:${clerkId}`, READ_LIMIT, READ_WINDOW_SECONDS);
+}
+
 export async function rateLimit(
   key: string,
   limit: number,
@@ -73,11 +87,13 @@ export async function rateLimit(
       limit,
     };
   } catch (error) {
+    // Sentry-visible (not just console): a sustained Redis outage silently
+    // disables every fail-open abuse cap, which must page someone.
     if (options?.failClosed) {
-      console.error("Redis rate limit failed, failing closed (money-moving path):", error);
+      reportError("Redis rate limit failed, failing closed (money-moving path)", error, { key });
       return { allowed: false, remaining: 0, limit };
     }
-    console.error("Redis rate limit failed, failing open:", error);
+    reportError("Redis rate limit failed, failing open", error, { key });
     return { allowed: true, remaining: limit, limit };
   }
 }

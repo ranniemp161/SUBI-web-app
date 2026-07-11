@@ -10,7 +10,6 @@ import {
   recordAutoRechargeFailure,
   AUTORECHARGE_MAX_PER_DAY,
 } from "@/lib/autorecharge";
-import { notifyAutoRecharge } from "@/lib/notifications";
 import { reportError } from "@/lib/observability";
 
 // One run may touch many users; give it room.
@@ -29,13 +28,7 @@ function isDecline(error: unknown): boolean {
 }
 
 async function noteFailure(userId: string) {
-  const r = await recordAutoRechargeFailure(userId);
-  await notifyAutoRecharge(
-    userId,
-    r.disabled
-      ? { kind: "disabled", failures: r.failures }
-      : { kind: "declined", failures: r.failures }
-  );
+  await recordAutoRechargeFailure(userId);
 }
 
 /**
@@ -103,10 +96,6 @@ export async function GET(request: Request) {
 
           if (pi.status === "succeeded") {
             await depositAutoRecharge(c.id, c.amountMicros, pi.id);
-            await notifyAutoRecharge(c.id, {
-              kind: "recharged",
-              amountMicros: c.amountMicros,
-            });
             charged++;
           } else {
             // requires_action / processing etc. — can't complete off-session.

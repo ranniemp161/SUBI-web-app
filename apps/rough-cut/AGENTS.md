@@ -11,7 +11,7 @@ spends tokens and deep-links to Wallet to buy more.
 ## Key files
 | File | Owns |
 |---|---|
-| `src/proxy.ts` | Clerk auth middleware + the public-route allowlist (routes that bypass session auth: transcribe callback, access-code verify, Clerk webhook) |
+| `src/proxy.ts` | Clerk auth middleware + the public-route allowlist (routes that bypass session auth: transcribe callback, Clerk webhook, cron) — also redirects signed-in users from `/` to `/dashboard` so the landing page stays static |
 | `src/lib/env.ts` | Validated cross-app URLs (`WALLET_URL`, `WALLET_DASHBOARD_URL`) — the only place allowed to read `NEXT_PUBLIC_*` cross-app vars; throws at import time in production if unset/still-localhost |
 | `src/lib/credits.ts` | Token hold/settle/refund logic against `@repo/db`'s credit ledger |
 | `src/lib/rate-limit.ts` | Per-user fixed-window limiter, Upstash Redis (Vercel KV) backed — **not** Postgres (`rate_limits` table was dropped, see `packages/db` migration `0001`) |
@@ -19,7 +19,7 @@ spends tokens and deep-links to Wallet to buy more.
 | `src/lib/deepgram.ts`, `src/lib/ai-rough-cut.ts`, `src/lib/ai-cuts.ts` | Transcription + AI cut-suggestion pipeline |
 | `src/lib/blob.ts` | Vercel Blob direct-upload + delete-after-transcription |
 | `src/lib/export/*`, `src/workers/export-worker.ts` | Client-side WebCodecs export (Chromium-only, see `LIMITATIONS.md`) |
-| `src/lib/access-codes.ts`, `src/lib/authz.ts` | Skool member access-code redemption and write-route authorization |
+| `src/lib/authz.ts` | Write-route authorization — the `users` row (provisioned by the Clerk webhook or its fallback) IS the authorization; there is no separate access-code verify route (`src/lib/access-codes.ts` no longer exists) |
 | `src/app/api/webhooks/clerk/route.ts` | Clerk user-sync webhook (svix-verified) |
 | `LIMITATIONS.md` (repo root) | Deliberate constraints — export browser support, no server-side video storage, rate-limit tuning, Sentry env-gating |
 

@@ -1,5 +1,6 @@
 import { Redis } from "@upstash/redis";
 import { Ratelimit } from "@upstash/ratelimit";
+import { reportError } from "@/lib/observability";
 
 export interface RateLimitResult {
   allowed: boolean;
@@ -73,11 +74,13 @@ export async function rateLimit(
       limit,
     };
   } catch (error) {
+    // Sentry-visible (not just console): a sustained Redis outage silently
+    // disables every fail-open abuse cap, which must page someone.
     if (options?.failClosed) {
-      console.error("Redis rate limit failed, failing closed (money-moving path):", error);
+      reportError("Redis rate limit failed, failing closed (money-moving path)", error, { key });
       return { allowed: false, remaining: 0, limit };
     }
-    console.error("Redis rate limit failed, failing open:", error);
+    reportError("Redis rate limit failed, failing open", error, { key });
     return { allowed: true, remaining: limit, limit };
   }
 }

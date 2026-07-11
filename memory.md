@@ -1,44 +1,39 @@
-# Memory — AI Cut paid re-run (versioned suggestions): built
+# Memory — Roadmap reconciliation + prod-* skills install
 
-Last updated: 2026-07-09
+Last updated: 2026-07-11
 
 ## What was built
 
-Ran `/develop ai cut paid re-run` end to end (schema → migration → backend → client → tests) against ADR `docs/adr/rough-cut/0002-ai-cut-paid-rerun/index.md`. This replaces the old single-slot AI Cut result (destroy-to-rerun) with up to 3 stored, versioned runs per project that the user can compare and switch between.
-
-- **Schema** (`packages/db/src/schema.ts`): dropped `projects.ai_cuts` jsonb; added `projects.active_ai_cut_run_id` (FK → new table, `set null`) and `projects.ai_cut_claim_at` (decoupled claim, replaces the old pending-sentinel-in-jsonb trick); added `ai_cut_runs` table (`project_id` FK cascade, `run_number`, `ranges`, `model`, `created_at`, unique on `(project_id, run_number)`).
-- **Migration**: `packages/db/drizzle/0005_ai_cut_runs.sql` — hand-written (not via `drizzle-kit generate`, see Problems solved), backfills any non-empty existing `ai_cuts` into `ai_cut_runs` run 1 + sets it active, then drops the old column. **Applied and confirmed live** on the dev DB (backfilled 7 existing rows).
-- **`lib/projects.ts`**: rewrote `claimAiCutSlot`/`releaseAiCutClaim` against `ai_cut_claim_at`; added `countAiCutRuns`, `createAiCutRun` (atomic insert + set-active + clear-claim in one SQL statement), `listAiCutRuns`, `getAiCutRun`, `setActiveAiCutRun`, `deleteAiCutRunAndRenumber`.
-- **Routes**: `ai-cut/route.ts` POST rewritten (cap check before claim, claim, charge, run Gemini, `createAiCutRun`, return the run — old whole-project DELETE removed); new `ai-cut/active/route.ts` PATCH (switch active run); new `ai-cut/runs/[runId]/route.ts` DELETE (blocks deleting the active run, renumbers on delete); `api/projects/[id]/route.ts` GET now also returns `aiCutRuns` (full list).
-- **Client** (`page.tsx`): `Project` type now carries `activeAiCutRunId` + `aiCutRuns[]` instead of `aiCuts`; status bar shows a run-number chip list (click to switch with a discard-manual-edits confirm toast, eraser to delete a non-active run with its own confirm toast); `runAiCut` success now appends the new run and sets it active; new 409 codes `AI_CUT_RUN_LIMIT_REACHED`/`AI_CUT_RUN_IS_ACTIVE` surfaced with their own toasts (old `AI_CUT_ALREADY_RUN` handling removed since re-runs are now always allowed under the cap).
-- **Tests**: rewrote `ai-cut/route.test.ts` for the new POST shape; added `ai-cut/active/route.test.ts` and `ai-cut/runs/[runId]/route.test.ts`; updated `api/projects/[id]/route.test.ts` (mock `listAiCutRuns`) and `page.test.tsx` (new run-list UI, switch/delete confirm flows). Full suite: **292 tests green**, typecheck clean.
-- Roadmap (`docs/roadmap/rough-cut/roadmap.md`) feature 3: Design + Build (+ all 4 milestones) ticked, code pointer filled; **Verify/Test deliberately left unticked**. ADR `Status` line: `Proposed` → `In Progress`. `verify.md` written beside the ADR (promoted `0002-ai-cut-paid-rerun.md` → `0002-ai-cut-paid-rerun/index.md` + `verify.md`; roadmap's ADR link repointed).
+- Ran `/roadmap` (replan behavior, no argument) against the `_root` (ecosystem-wide) workspace roadmap in a monorepo split by workspace (`docs/roadmap/index.md`, `docs/roadmap/_root/roadmap.md`, `docs/roadmap/rough-cut/roadmap.md`).
+- `docs/roadmap/_root/roadmap.md`: enrolled feature 2 "Demo-only free credits gate" as `existing` (shipped off-plan via commits fd01b3d + 0f57c7c, no ADR: `is_member` now defaults to false, monthly grant restricted to a single `MEMBER_ALLOWLIST_EMAIL`). Queued feature 3 "Auto-recharge notification channel" and feature 4 "AI Cut differentiated retail rate" as new `planned` rows, sourced from ADR `_root/0002-usd-wallet`'s Follow-up section. Reworded the Open Questions note on the member monthly grant to clarify the allowlist gate is an interim demo stopgap, not the client's final decision.
+- `docs/roadmap/index.md`: updated the `_root` rollup line to reflect the above.
+- `docs/roadmap/rough-cut/roadmap.md`: reviewed, no changes needed — its Deferred section and Accepted risks already covered everything in its ADRs' Follow-up sections; two other recent commits (wallet nav rename, Vercel Deployment Protection bypass for Deepgram callback) are pure fixes inside already-`existing`/`done` features, not new decisions.
+- Copied six new skills from `.agents/skills/` into `.claude/skills/` so they're invocable as Claude Code slash commands: `prod-architecture`, `prod-cloud-infra`, `prod-code-review`, `prod-launch-checklist`, `prod-readiness`, `prod-security`. (`.agents/skills/` and `.claude/skills/` were exact mirrors for every pre-existing skill; only these six were missing from `.claude/skills/`.)
+- Updated the auto-memory naming record: wallet app nav now reads "Founder's Frame Wallet" (was tracked as placeholder "SUBI Wallet"), per commit 6e37de1.
 
 ## Decisions made
 
-- Migration was **hand-written**, not from `drizzle-kit generate` — see Problems solved. Manually kept `drizzle/meta/0005_snapshot.json` and `_journal.json` in sync so a later `db:generate` sees no drift (verified this after writing it).
-- Kept the atomic-claim discipline this codebase already uses (`reserveCredits`, the old `claimAiCutSlot`) but **decoupled the claim from the stored result** entirely (own `ai_cut_claim_at` column) instead of the old "valid-shaped pending sentinel in jsonb" trick — this was the ADR's explicit rationale, not a choice made here.
-- `createAiCutRun` does the next-run-number computation + insert + set-active + claim-clear as **one SQL statement** (CTE chain) rather than multiple round trips, matching the Neon HTTP driver's no-transaction/single-statement-atomicity convention documented in `apps/rough-cut/AGENTS.md`.
-- Client UI for the run list is a minimal inline chip row (no new Dialog primitive — this app deliberately has none, confirm/cancel via sonner action-toasts like every other destructive action here).
+- Enrolled the free-credits-gate change as `existing` rather than `done`, since it shipped without going through `/architect`/`/develop` (no ADR) — matches the roadmap skill's "drift" convention for off-plan shipped work.
+- Kept both new `_root` follow-ups (notification channel, AI Cut rate) as `planned`/queued rather than actively sequencing them now — neither is blocking, and pricing-rate change explicitly needs real `cost_micros` usage data first.
+- Chose to copy (not symlink) the prod-* skill folders into `.claude/skills/`, matching how the rest of the skills already exist as independent copies in both `.agents/skills/` and `.claude/skills/` (no existing symlink pattern to follow). Flagged to the user that this means future `.agents/` installs won't auto-sync and will need the same manual copy (or a symlink setup, if preferred).
 
 ## Problems solved
 
-- `npm run db:generate` requires an interactive TTY prompt (Drizzle's rename-vs-drop/add disambiguation) and this shell environment has no TTY — `winpty` couldn't attach either (`npm.cmd`/`npm-cli.js` both failed with "stdin is not a tty"). Worked around by hand-writing the migration SQL **and** hand-writing the matching `meta/0005_snapshot.json` + `_journal.json` entry in the exact format Drizzle expects (copied the format from `0004_snapshot.json`), then verified with `db:generate` afterward that it reports "No schema changes, nothing to migrate" — confirming the hand-written snapshot exactly matches what `schema.ts` would have produced.
-- Circular FK (`projects.active_ai_cut_run_id` → `ai_cut_runs.id`, `ai_cut_runs.project_id` → `projects.id`) resolved in Drizzle via a lazy arrow-function reference (`.references((): AnyPgColumn => aiCutRuns.id, ...)`) since `aiCutRuns` is declared later in the file — standard Drizzle pattern for circular table refs.
+- None — this session was reconciliation/config, not debugging.
 
 ## Current state
 
-- All code is **uncommitted** in the working tree (branch `main`), including the untracked ADR that was already present when this session started (`docs/adr/rough-cut/0002-ai-cut-paid-rerun.md`, now moved to `.../0002-ai-cut-paid-rerun/index.md` plus a new `verify.md`) and modified `docs/roadmap/index.md` / `docs/roadmap/rough-cut/roadmap.md`.
-- Migration **is applied to the dev DB** already (not just generated) — `ai_cuts` column is gone, `ai_cut_runs` table is live with 7 backfilled rows. Prod is not yet deployed (per earlier project memory), so no prod migration step is pending yet.
-- Build, typecheck, and full test suite are green. `/verify` and `/test` have **not** been run this session — roadmap intentionally shows the feature still `in-progress` (Build ticked, Verify/Test not).
+- Roadmap files (`_root/roadmap.md`, `index.md`) are edited in place and reflect current shipped state as of commit 0f57c7c. Not yet committed to git (uncommitted working tree changes).
+- The six `prod-*` skills are live in `.claude/skills/` and confirmed showing up in the available-skills list (verified via a tool-search round trip after copying).
+- No code changes this session, only docs/roadmap + memory + skill files.
 
 ## Next session starts with
 
-- Run `/verify ai cut paid re-run` — use the manual checklist in `docs/adr/rough-cut/0002-ai-cut-paid-rerun/verify.md` (signed-in session: run AI Cut 3x, hit the 4th-run cap, switch/delete runs, confirm renumbering).
-- Then `/test ai cut paid re-run` to lock it in and flip the feature to `done` (which also mirrors the ADR `Status` `In Progress` → `Accepted`).
-- Separately still pending from before this session: deciding whether/how to commit the *previous* session's Editor Studio UX Safety changes and the wallet auto-recharge/security-audit fixes (both still uncommitted, unrelated to this feature).
+- If picking up either queued `_root` follow-up: run `/architect auto-recharge notification channel` or `/architect ai cut differentiated retail rate` (neither is urgent/blocking).
+- Consider whether to symlink `.claude/skills/` ↔ `.agents/skills/` instead of copying, if more skills get installed there in the future — currently a manual-copy step is needed each time.
+- Separately still open from prior sessions: whether/how to commit long-uncommitted changes (Editor Studio UX Safety, wallet auto-recharge/security fixes) — status unconfirmed this session, worth checking `git status` at the start of the next one.
 
 ## Open questions
 
-- Whether prod needs a first-deploy baseline step before this migration can ever be applied there — not urgent since prod isn't deployed yet (per `project_vercel_deploy_readiness` memory), but flag it when deploy planning starts.
-- Carried over, still open: the Postgres-backed `ON CONFLICT` idempotency integration test (wallet) and whether the Gemini AI Cut prompt should eventually consume utterance boundaries — both deferred in the prior session, untouched here.
+- The member monthly grant's final money-era form (dollar grant vs free minutes vs dropped) is still an open client conversation — the allowlist-email gate shipped this week is explicitly a stopgap, not the answer.
+- Prod deploy readiness: last confirmed NOT yet deployed as of 2026-07-08 (per `project_vercel_deploy_readiness` memory); this session did not re-verify current deploy status.

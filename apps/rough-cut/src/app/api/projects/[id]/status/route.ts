@@ -1,6 +1,7 @@
 import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import { getOwnedProjectStatus } from "@/lib/projects";
+import { readRateLimit } from "@/lib/rate-limit";
 import { reportError } from "@/lib/observability";
 
 /**
@@ -20,6 +21,14 @@ export async function GET(
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const limit = await readRateLimit(clerkId);
+  if (!limit.allowed) {
+    return NextResponse.json(
+      { error: "Too many requests. Please wait a bit and try again." },
+      { status: 429 }
+    );
+  }
+
   try {
     const { id } = await params;
     const transcriptStatus = await getOwnedProjectStatus(id, clerkId);
@@ -28,7 +37,12 @@ export async function GET(
       return NextResponse.json({ error: "Project not found." }, { status: 404 });
     }
 
-    return NextResponse.json({ transcriptStatus });
+    // Explicit no-store: this is polled per-user state — a cache or proxy
+    // serving a stale "transcribing" would strand the dashboard's poll loop.
+    return NextResponse.json(
+      { transcriptStatus },
+      { headers: { "Cache-Control": "no-store" } }
+    );
   } catch (error) {
     reportError("Error fetching project status", error);
     return NextResponse.json(

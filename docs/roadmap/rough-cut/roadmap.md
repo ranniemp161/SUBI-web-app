@@ -25,6 +25,7 @@ The core product: browser-based video transcription and AI-assisted rough cuttin
 | 4 | Surface AI Cut last-run timestamp | Slice 4 | done |
 | 5 | Tune cut logic against utterance boundaries | Slice 4 | done |
 | 6 | Named/labeled AI Cut runs | Slice 5 | done |
+| 7 | Studio auto-cut flow | Slice 6 | done |
 
 ## Existing (pre-workflow, enrolled 2026-07-08)
 
@@ -133,11 +134,27 @@ A user can label a stored AI Cut run (e.g. "longer intro kept") to tell runs apa
 - [x] Verify it: `/verify nameable ai cut runs`
 - [x] Test it: `/test nameable ai cut runs`
 
+## Slice 6
+
+### 7. Studio auto-cut flow · done
+Client-requested UX redesign: the studio auto-runs the free mechanical rough cut, then the AI polish pass (consented and priced at upload via a default-on toggle), behind one loader, the moment a fresh project opens with a ready transcript. The always-on paid AI button, paid re-runs, and the run-list UI are removed (a deterministic AI pass can never differ on an unchanged transcript); a free "Restore AI suggestions" replaces them. The exit toast becomes a real blocking confirm dialog. ADR: [0003](../../adr/rough-cut/0003-studio-auto-cut-flow/index.md)
+**Done when:** uploading shows one combined price with an AI-polish opt-out, opening a fresh ready project lands the user on the finished (mechanical, and if requested AI-polished) cut with no clicks, exactly one automatic AI attempt can ever fire per project, AI failure or empty funds lands safely on the mechanical result, and leaving the studio asks a real are-you-sure dialog instead of a toast.
+- [x] Design it (ADR): [0003](../../adr/rough-cut/0003-studio-auto-cut-flow/index.md)
+- [x] Build it: `/develop studio auto-cut flow`
+  - [x] Auto-cut pipeline end to end: `ai_polish_requested` migration, upload toggle + combined cost estimate, auto-chain on studio open with the unified loader, one-shot flip, failure and 402 handling (AC-1..5, AC-9, AC-10)
+  - [x] AI re-run removal + free restore: single conditional "Polish with AI" button, run-list UI removed, "Restore AI suggestions" action (AC-6, AC-7, AC-10)
+  - [x] Exit confirm dialog: Radix AlertDialog primitive in `packages/ui`, wired to both Dashboard links, beforeunload only while the AI pass runs (AC-8)
+  code in `packages/db/src/schema.ts`, `packages/db/drizzle/0010_watery_vision.sql`, `packages/ui/src/confirm-dialog.tsx`, `apps/rough-cut/src/lib/validation.ts`, `apps/rough-cut/src/lib/projects.ts`, `apps/rough-cut/src/app/api/projects/route.ts`, `apps/rough-cut/src/app/(app)/dashboard/page.tsx`, `apps/rough-cut/src/app/(app)/dashboard/[id]/page.tsx`, `apps/rough-cut/src/components/transcript-panel.tsx`
+- [x] Verify it: `/verify studio auto-cut flow` (manual signed-in pass by engineer on 2026-07-11 confirmed working end-to-end, including race-condition bug fix validated in live app)
+- [x] Test it: `/test studio auto-cut flow`
+
 ## Deferred
 
-Surfaced as follow-ups while building Slice 2 and Slice 3, not yet scheduled into a slice. Each has its own decision status; none are urgent.
+Surfaced as follow-ups while building earlier slices, not yet scheduled into a slice. Each has its own decision status; none are urgent.
 
-*(None currently)*
+### Prune the dead AI-run machinery `from ADR 0003`
+Once the studio auto-cut flow has been live long enough to confirm no multi-run use case resurfaces: remove the dead run-list routes (`PATCH .../ai-cut/active`, `DELETE .../ai-cut/runs/[runId]`, rename), and revisit `AI_CUT_RUN_LIMIT` (possibly collapse `ai_cut_runs` toward one row per project).
+**Done when:** the dead routes are removed and the run cap is right-sized, with no user-facing change.
 
 
 

@@ -6,6 +6,7 @@ import { eq } from "drizzle-orm";
 import { getOwnedProject, listAiCutRuns } from "@/lib/projects";
 import { settleHold } from "@/lib/credits";
 import { patchProjectSchema } from "@/lib/validation";
+import { readRateLimit } from "@/lib/rate-limit";
 import { reportError } from "@/lib/observability";
 
 /**
@@ -19,6 +20,14 @@ export async function GET(
 
   if (!clerkId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const limit = await readRateLimit(clerkId);
+  if (!limit.allowed) {
+    return NextResponse.json(
+      { error: "Too many requests. Please wait a bit and try again." },
+      { status: 429 }
+    );
   }
 
   try {

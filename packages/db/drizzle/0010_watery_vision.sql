@@ -1,0 +1,1 @@
+ALTER TABLE "projects" ADD COLUMN "ai_polish_requested" boolean DEFAULT false NOT NULL;

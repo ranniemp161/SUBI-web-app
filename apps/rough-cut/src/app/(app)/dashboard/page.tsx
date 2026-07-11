@@ -203,6 +203,16 @@ export default function DashboardPage() {
 
   const [isDraggingPage, setIsDraggingPage] = useState(false);
 
+  // A selected file waiting on the upload confirm panel (ADR 0003 child 1).
+  // The panel shows the combined price and the AI-polish toggle before any
+  // project row is created or any charge is reserved. `aiPolish` starts on:
+  // AI polish is the default, opt-out choice.
+  const [pendingUpload, setPendingUpload] = useState<{
+    file: File;
+    metadata: VideoMetadata;
+  } | null>(null);
+  const [pendingAiPolish, setPendingAiPolish] = useState(true);
+
   // Advance the estimated transcription percentages while any are in flight.
   const hasTranscribing = Object.values(activeUploads).some(
     (job) => job.step === "transcribing"
@@ -433,49 +443,74 @@ export default function DashboardPage() {
     [credits]
   );
 
-  const handleFileSelected = useCallback(
-    async (file: File, metadata: VideoMetadata) => {
-      // Note: no up-front size gate on the video itself — what's uploaded is
-      // the extracted audio track, which kickOffTranscription size-checks
-      // against the Deepgram cap after extraction.
-      if (blockedByCredits(metadata.durationMs)) return;
-      setIsCreating(true);
+  // File selection no longer creates the project immediately (ADR 0003 child
+  // 1): it holds the selection so the confirm panel can show the combined price
+  // and the AI-polish choice first. Nothing is charged until the user confirms.
+  const handleFileSelected = useCallback((file: File, metadata: VideoMetadata) => {
+    setPendingUpload({ file, metadata });
+    setPendingAiPolish(true);
+  }, []);
 
-      try {
-        const response = await fetch("/api/projects", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            fileName: metadata.fileName,
-            durationMs: metadata.durationMs,
-            fileSize: metadata.fileSize,
-            fileType: metadata.fileType,
-          }),
-        });
+  const cancelPendingUpload = useCallback(() => {
+    setPendingUpload(null);
+  }, []);
 
-        if (!response.ok) {
-          throw new Error("Failed to create project");
-        }
+  // Confirm the held upload: create the project (carrying the AI-polish choice),
+  // then kick off transcription. This is the one place a charge is set in motion.
+  const confirmPendingUpload = useCallback(async () => {
+    if (!pendingUpload) return;
+    const { file, metadata } = pendingUpload;
+    // Note: no up-front size gate on the video itself — what's uploaded is
+    // the extracted audio track, which kickOffTranscription size-checks
+    // against the Deepgram cap after extraction.
+    if (blockedByCredits(metadata.durationMs)) return;
+    setIsCreating(true);
 
-        const project = await response.json();
-        // Add new project to the list immediately for instant feedback.
-        // Mark it "processing" right away (instead of waiting on a poll
-        // tick) so the progress bar shows from the start — startTranscription
-        // is about to set this same status server-side anyway.
-        setProjects((prev) => [
-          { ...project, transcriptStatus: "processing" },
-          ...prev,
-        ]);
+    try {
+      const response = await fetch("/api/projects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fileName: metadata.fileName,
+          durationMs: metadata.durationMs,
+          fileSize: metadata.fileSize,
+          fileType: metadata.fileType,
+          aiPolish: pendingAiPolish,
+        }),
+      });
 
-        kickOffTranscription(project.id, file);
-      } catch (error) {
-        console.error("Failed to create project:", error);
-      } finally {
-        setIsCreating(false);
+      if (!response.ok) {
+        throw new Error("Failed to create project");
       }
-    },
-    [kickOffTranscription, blockedByCredits]
-  );
+
+      const project = await response.json();
+      // Add new project to the list immediately for instant feedback.
+      // Mark it "processing" right away (instead of waiting on a poll
+      // tick) so the progress bar shows from the start — startTranscription
+      // is about to set this same status server-side anyway.
+      setProjects((prev) => [
+        { ...project, transcriptStatus: "processing" },
+        ...prev,
+      ]);
+      setPendingUpload(null);
+
+      kickOffTranscription(project.id, file);
+    } catch (error) {
+      console.error("Failed to create project:", error);
+    } finally {
+      setIsCreating(false);
+    }
+  }, [pendingUpload, pendingAiPolish, kickOffTranscription, blockedByCredits]);
+
+  // Escape closes the upload confirm panel (unless a create is already firing).
+  useEffect(() => {
+    if (!pendingUpload || isCreating) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setPendingUpload(null);
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [pendingUpload, isCreating]);
 
   /** Page-level drag-and-drop listener. */
   useEffect(() => {
@@ -1051,6 +1086,131 @@ export default function DashboardPage() {
           </div>
         </div>
       )}
+
+      {/* Upload confirm panel — shows the combined price and the AI-polish
+          choice before any project is created or any charge reserved (ADR 0003
+          child 1). AC-1. */}
+      {pendingUpload && (() => {
+        const seconds =
+          pendingUpload.metadata.durationMs && pendingUpload.metadata.durationMs > 0
+            ? Math.ceil(pendingUpload.metadata.durationMs / 1000)
+            : 60;
+        const transcriptionMicros = chargeMicrosForSeconds(seconds);
+        const aiPolishMicros = chargeMicrosForSeconds(seconds);
+        const totalMicros = transcriptionMicros + (pendingAiPolish ? aiPolishMicros : 0);
+        return (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center p-4"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="upload-confirm-title"
+          >
+            <div
+              onClick={() => {
+                if (!isCreating) cancelPendingUpload();
+              }}
+              className="fixed inset-0 bg-black/75 backdrop-blur-md transition-opacity duration-300"
+            />
+            <div className="relative w-full max-w-md transform overflow-hidden rounded-2xl border border-white/10 bg-surface/95 p-6 shadow-2xl transition-all duration-300">
+              <h3 id="upload-confirm-title" className="text-lg font-bold text-white">
+                Start this video?
+              </h3>
+              <p className="mt-1.5 truncate text-sm text-zinc-400" title={pendingUpload.metadata.fileName}>
+                <span className="font-semibold text-zinc-200">{pendingUpload.metadata.fileName}</span>
+                {pendingUpload.metadata.durationMs != null && (
+                  <> · {formatDuration(pendingUpload.metadata.durationMs)}</>
+                )}
+              </p>
+
+              {/* AI polish toggle — defaulted on (opt-out). */}
+              <button
+                type="button"
+                onClick={() => setPendingAiPolish((v) => !v)}
+                aria-pressed={pendingAiPolish}
+                disabled={isCreating}
+                className={`mt-5 flex w-full items-start gap-3 rounded-xl border p-4 text-left transition-colors disabled:opacity-60 ${
+                  pendingAiPolish
+                    ? "border-blue-500/40 bg-blue-500/[0.08]"
+                    : "border-white/10 bg-white/[0.02] hover:bg-white/[0.04]"
+                }`}
+              >
+                <span
+                  className={`mt-0.5 flex h-5 w-9 shrink-0 items-center rounded-full p-0.5 transition-colors ${
+                    pendingAiPolish ? "bg-blue-600" : "bg-white/15"
+                  }`}
+                >
+                  <span
+                    className={`h-4 w-4 rounded-full bg-white transition-transform ${
+                      pendingAiPolish ? "translate-x-4" : "translate-x-0"
+                    }`}
+                  />
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-sm font-semibold text-white">
+                    Add AI polish ({formatUsd(aiPolishMicros)})
+                  </span>
+                  <span className="mt-0.5 block text-xs text-zinc-400">
+                    After the rough cut, AI removes false starts, stumbles &amp; flubbed
+                    takes automatically. You can turn this off and add it later.
+                  </span>
+                </span>
+              </button>
+
+              {/* Combined price breakdown. */}
+              <div className="mt-4 space-y-1.5 rounded-xl border border-white/10 bg-white/[0.02] p-4 text-sm">
+                <div className="flex items-center justify-between text-zinc-400">
+                  <span>Transcription</span>
+                  <span className="tabular-nums text-zinc-300">{formatUsd(transcriptionMicros)}</span>
+                </div>
+                {pendingAiPolish && (
+                  <div className="flex items-center justify-between text-zinc-400">
+                    <span>AI polish</span>
+                    <span className="tabular-nums text-zinc-300">{formatUsd(aiPolishMicros)}</span>
+                  </div>
+                )}
+                <div className="mt-1 flex items-center justify-between border-t border-white/10 pt-2 font-semibold text-white">
+                  <span>Estimated total</span>
+                  <span className="tabular-nums">{formatUsd(totalMicros)}</span>
+                </div>
+              </div>
+              <p className="mt-2 text-[11px] text-zinc-500">
+                Estimated from the video length; you&apos;re charged for the actual
+                transcribed duration.
+              </p>
+
+              <div className="mt-6 flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={cancelPendingUpload}
+                  disabled={isCreating}
+                  className="rounded-lg border border-white/10 bg-white/[0.03] px-4 py-2 text-xs font-semibold text-zinc-300 transition-all duration-200 hover:bg-white/[0.06] hover:text-white disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmPendingUpload}
+                  disabled={isCreating}
+                  autoFocus
+                  className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-xs font-semibold text-white shadow-md shadow-blue-600/25 transition-all duration-200 hover:bg-blue-500 active:scale-95 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
+                >
+                  {isCreating ? (
+                    <>
+                      <svg className="h-3 w-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                      Starting…
+                    </>
+                  ) : (
+                    "Start transcription"
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Delete confirmation — same modal treatment as the buy-credits panel. */}
       {confirmDeleteProject && (

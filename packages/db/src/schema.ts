@@ -101,6 +101,17 @@ export const projects = pgTable("projects", {
   holdMicros: integer("hold_micros"),
   edl: jsonb("edl"),
   /**
+   * Whether the user asked (and agreed to pay) for the AI polish pass at upload
+   * time (ADR 0003 child 1). Set from the upload confirm panel's toggle when the
+   * row is created; the single thing that decides whether the studio's automatic
+   * AI attempt fires on open. Flips to false, atomically, the instant any AI Cut
+   * claim succeeds for this project (automatic or manual — see claimAiCutSlot),
+   * so exactly one automatic attempt can ever fire. Defaults false so every row
+   * that predates this column (and every project uploaded with the toggle off)
+   * is inert under the auto-fire logic.
+   */
+  aiPolishRequested: boolean("ai_polish_requested").notNull().default(false),
+  /**
    * Which stored `ai_cut_runs` row is currently applied to the timeline. Null
    * when the project has no runs yet, or its last run was deleted (see ADR
    * 0002-ai-cut-paid-rerun: this can only happen with zero runs remaining).
