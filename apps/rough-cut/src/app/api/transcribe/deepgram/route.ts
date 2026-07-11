@@ -204,10 +204,22 @@ export async function POST(request: Request) {
   // verified as ours. Sync mode reads the transcript here, so no token/callback.
   const callbackToken = useSync ? null : randomBytes(32).toString("hex");
   if (!useSync && callbackToken) {
-    params.set(
-      "callback",
-      `${callbackBase}/api/transcribe/callback?projectId=${projectId}&token=${callbackToken}&blobUrl=${encodeURIComponent(blobUrl)}`
-    );
+    const callbackUrl = new URL(`${callbackBase}/api/transcribe/callback`);
+    callbackUrl.searchParams.set("projectId", projectId);
+    callbackUrl.searchParams.set("token", callbackToken);
+    callbackUrl.searchParams.set("blobUrl", blobUrl);
+    // Vercel Deployment Protection (Vercel Authentication) blocks unauthenticated
+    // requests to every route, including this callback — Deepgram's server has no
+    // Vercel session, so without this bypass its callback never reaches us and the
+    // project sits stuck on "processing" forever. Only set when Deployment
+    // Protection's "Protection Bypass for Automation" secret is configured.
+    if (process.env.VERCEL_AUTOMATION_BYPASS_SECRET) {
+      callbackUrl.searchParams.set(
+        "x-vercel-protection-bypass",
+        process.env.VERCEL_AUTOMATION_BYPASS_SECRET
+      );
+    }
+    params.set("callback", callbackUrl.toString());
   }
 
   await db
