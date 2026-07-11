@@ -36,7 +36,6 @@ import {
   renameAiCutRun,
   AI_CUT_CLAIM_STALE_MS,
 } from "@/lib/projects";
-import { db } from "@repo/db";
 
 /**
  * Render a drizzle `sql` template's chunks back into a rough SQL string plus

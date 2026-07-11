@@ -225,9 +225,6 @@ export default function EditorPage() {
         const data: Project = await response.json();
         setProject(data);
 
-        const durationSeconds =
-          data.transcript?.duration ?? (data.durationMs ? data.durationMs / 1000 : 0);
-
         // A saved EDL that keeps nothing is unusable (you can't export an empty
         // cut) and is almost certainly a corrupted auto-build from before the
         // keep-all safety floor existed — rebuild it instead of loading it.
@@ -864,7 +861,14 @@ export default function EditorPage() {
     if (edl !== null) return;
     if (words.length === 0 || durationSeconds <= 0) return;
     autoChainedRef.current = true;
-    void runAutoChain();
+    // Deferred to a microtask so the chain's first setState (setAutoCutBusy)
+    // isn't a synchronous call within the effect body itself
+    // (react-hooks/set-state-in-effect). No cancellation on cleanup: the
+    // autoChainedRef guard above already makes this fire at most once ever
+    // for this mounted studio, so there's nothing to race — a stray fire
+    // after unmount is a harmless no-op (React 18+ ignores a setState call
+    // on an unmounted component).
+    queueMicrotask(() => void runAutoChain());
   }, [project, edl, words, durationSeconds, runAutoChain]);
 
   // Divergence check (ADR 0003 child 2): true when the user has drifted from
