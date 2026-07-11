@@ -33,6 +33,7 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 .env.local*
+!.env.example
 
 # vercel
 .vercel
@@ -46,4 +47,7 @@ next-env.d.ts
 
 #app review
 .app-review
+
+# local-only ops scripts — must never be committed/deployed
+packages/db/scripts/topup-demo-account.ts
 

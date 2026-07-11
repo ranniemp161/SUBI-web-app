@@ -42,8 +42,12 @@ export const users = pgTable(
      * and rolls back the whole (single-statement) credit mutation.
      */
     balanceMicros: integer("balance_micros").notNull().default(0),
-    /** Skool community member — receives the monthly credit grant. */
-    isMember: boolean("is_member").notNull().default(true),
+    /**
+     * Member — receives the monthly credit grant. Defaults to false: only the
+     * allowlisted demo email (MEMBER_ALLOWLIST_EMAIL, set in provisionUser)
+     * is granted membership; everyone else pays via Stripe.
+     */
+    isMember: boolean("is_member").notNull().default(false),
     /**
      * Auto-recharge (ADR 0002/0002): buy more automatically off-session when
      * the balance drops below a user-set line. We store only Stripe ids, never
