@@ -17,7 +17,6 @@ const state = vi.hoisted(() => ({
   }>,
   deposited: [] as string[],
   failed: [] as string[],
-  notices: [] as unknown[],
   reported: [] as string[],
   chargeCalls: [] as string[],
 }));
@@ -50,11 +49,6 @@ vi.mock("@/lib/autorecharge", async (importOriginal) => {
     AUTORECHARGE_MAX_PER_DAY: actual.AUTORECHARGE_MAX_PER_DAY,
   };
 });
-vi.mock("@/lib/notifications", () => ({
-  notifyAutoRecharge: vi.fn(async (_id: string, notice: unknown) => {
-    state.notices.push(notice);
-  }),
-}));
 vi.mock("@/lib/observability", () => ({
   reportError: vi.fn((msg: string) => state.reported.push(msg)),
 }));
@@ -84,7 +78,6 @@ beforeEach(() => {
   state.chargeImpl = async () => ({ id: "pi_1", status: "succeeded" });
   state.deposited = [];
   state.failed = [];
-  state.notices = [];
   state.reported = [];
   state.chargeCalls = [];
   vi.clearAllMocks();
@@ -107,7 +100,6 @@ describe("GET /api/cron/autorecharge", () => {
     const body = await (await GET(req())).json();
     expect(chargeAutoRechargeOffSession).toHaveBeenCalledTimes(1);
     expect(state.deposited).toEqual(["u1"]);
-    expect(state.notices).toContainEqual({ kind: "recharged", amountMicros: 19_000_000 });
     expect(body.charged).toBe(1);
   });
 

@@ -1,15 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { useParams } from "next/navigation";
-import Link from "next/link";
+import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft,
   Clapperboard,
   Undo2,
   Redo2,
   Download,
-  Scissors,
   Sparkles,
   ListChecks,
   Play,
@@ -24,10 +22,7 @@ import {
   Loader2,
   Clock,
   Check,
-  Eraser,
   RotateCcw,
-  Wand2,
-  Pencil,
   type LucideIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -58,6 +53,7 @@ import {
   setRangeStatus as setRangeStatusInEdl,
   splitAt as splitAtInEdl,
   reRoughCut as reRoughCutInEdl,
+  buildInitialEDL,
   pinTrimmedBoundary as pinTrimmedBoundaryInEdl,
   findSegmentAt,
   findFillerWords,
@@ -71,6 +67,7 @@ import {
   type TranscriptWord,
 } from "@/lib/edl";
 import { applyAiCuts, type AiCutRun } from "@/lib/ai-cuts";
+import { ConfirmDialog } from "@repo/ui";
 
 // A project holds at most this many stored AI Cut runs at once (ADR 0002-ai-cut-paid-rerun).
 const AI_CUT_RUN_LIMIT = 3;
@@ -84,25 +81,35 @@ interface Project {
   transcript: Transcript | null;
   transcriptStatus: "idle" | "processing" | "ready" | "failed";
   edl: EDL | null;
+  /** Whether AI polish was requested (and paid-consented) at upload (ADR 0003). */
+  aiPolishRequested: boolean;
   activeAiCutRunId: string | null;
   aiCutRuns: AiCutRun[];
-}
-
-// Fired on every editor→dashboard navigation: pure reassurance, never a
-// blocker — autosave is real, so nothing is unsaved. The one non-obvious fact
-// a user needs is that reopening requires reselecting the same source file
-// (the video never touches the server). The dashboard mounts its own Toaster,
-// so the toast survives the navigation.
-function showExitReassuranceToast() {
-  toast("Project saved", {
-    description:
-      "Your edits are stored automatically. To reopen this project, just reselect the same source video.",
-  });
 }
 
 const AUTOSAVE_DELAY_MS = 800;
 const MIN_TRANSCRIPT_W = 300;
 const MAX_TRANSCRIPT_W = 640;
+
+/**
+ * Structural equality on an EDL's cut layout — same segment boundaries and
+ * statuses. Used for divergence detection (ADR 0003 child 2): the user has
+ * drifted from the AI's suggestions when re-applying the stored run would
+ * change the current cut layout. Compares only start/end/status because those
+ * are what a cut/restore changes; `reason` isn't load-bearing here.
+ */
+function edlSegmentsEqual(a: EDL, b: EDL): boolean {
+  if (a === b) return true;
+  if (a.segments.length !== b.segments.length) return false;
+  for (let i = 0; i < a.segments.length; i++) {
+    const x = a.segments[i];
+    const y = b.segments[i];
+    if (x.start !== y.start || x.end !== y.end || x.status !== y.status) {
+      return false;
+    }
+  }
+  return true;
+}
 
 // Export support is a fixed property of the browser, so probe it once and cache
 // the (stable-reference) result — useSyncExternalStore compares snapshots by
@@ -116,102 +123,6 @@ const exportSupportSnapshot = (): ExportSupport =>
 const exportSupportServerSnapshot = (): ExportSupport | null => null;
 const exportSupportSubscribe = () => () => {};
 
-function AiCutRunDisplay({
-  run,
-  isActive,
-  onSwitch,
-  onDelete,
-  onRename,
-}: {
-  run: AiCutRun;
-  isActive: boolean;
-  onSwitch: () => void;
-  onDelete: () => void;
-  onRename: (newName: string | null) => void;
-}) {
-  const [isEditing, setIsEditing] = useState(false);
-  const [draftName, setDraftName] = useState(run.name || "");
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (isEditing && inputRef.current) {
-      inputRef.current.focus();
-    }
-  }, [isEditing]);
-
-  const handleSave = () => {
-    setIsEditing(false);
-    const newName = draftName.trim();
-    if (newName !== (run.name || "")) {
-      onRename(newName === "" ? null : newName);
-    }
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") {
-      handleSave();
-    } else if (e.key === "Escape") {
-      setIsEditing(false);
-      setDraftName(run.name || "");
-    }
-  };
-
-  return (
-    <div className="flex items-center gap-0.5">
-      {isEditing ? (
-        <input
-          ref={inputRef}
-          type="text"
-          value={draftName}
-          onChange={(e) => setDraftName(e.target.value)}
-          onBlur={handleSave}
-          onKeyDown={handleKeyDown}
-          maxLength={100}
-          className="w-24 rounded-md border border-blue-500 bg-transparent px-1.5 py-0.5 text-xs text-foreground outline-none"
-        />
-      ) : (
-        <button
-          type="button"
-          onClick={() => !isActive && onSwitch()}
-          aria-pressed={isActive}
-          title={
-            isActive
-              ? `Run ${run.runNumber} — currently active`
-              : `Switch to run ${run.runNumber} (${run.ranges.length} cuts)`
-          }
-          className={`rounded-md border px-1.5 py-0.5 transition-colors ${
-            isActive
-              ? "border-blue-500/40 bg-blue-600/20 text-blue-300"
-              : "border-foreground/10 text-foreground/70 hover:bg-foreground/10 hover:text-foreground"
-          }`}
-        >
-          {run.name || `Run ${run.runNumber}`}
-        </button>
-      )}
-      {!isEditing && (
-        <button
-          type="button"
-          onClick={() => setIsEditing(true)}
-          title={`Rename run ${run.runNumber}`}
-          className="rounded-md border border-foreground/10 p-0.5 text-foreground/50 transition-colors hover:bg-foreground/10 hover:text-foreground"
-        >
-          <Pencil className="h-3 w-3" />
-        </button>
-      )}
-      {!isActive && !isEditing && (
-        <button
-          type="button"
-          onClick={onDelete}
-          title={`Delete run ${run.runNumber}`}
-          className="rounded-md border border-foreground/10 p-0.5 text-foreground/50 transition-colors hover:bg-foreground/10 hover:text-foreground"
-        >
-          <Eraser className="h-3 w-3" />
-        </button>
-      )}
-    </div>
-  );
-}
-
 export default function EditorPage() {
   const { id } = useParams<{ id: string }>();
   const [project, setProject] = useState<Project | null>(null);
@@ -221,9 +132,15 @@ export default function EditorPage() {
   const [sourceFile, setSourceFile] = useState<File | null>(null);
 
   const [edl, setEdl] = useState<EDL | null>(null);
-  // The hero prompt shows until the user edits (any accepted edit dismisses
-  // it), dismisses it, or opens a project that already has a saved EDL.
-  const [heroDismissed, setHeroDismissed] = useState(false);
+  // Auto-cut chain (ADR 0003 child 1): a fresh, ready project runs the
+  // mechanical cut — and, if AI polish was requested at upload, the AI pass —
+  // automatically on open, with no click. `autoCutBusy` spans the whole chain
+  // (it drives the unified loader alongside `aiBusy`); `autoChainedRef` makes
+  // the effect body run at most once per mounted studio; `freshOnLoadRef`
+  // records whether the just-loaded project had no usable saved EDL.
+  const [autoCutBusy, setAutoCutBusy] = useState(false);
+  const autoChainedRef = useRef(false);
+  const freshOnLoadRef = useRef(false);
   // The last completed cut pass — drives the transcript panel's summary card
   // (which auto-collapses a few seconds after each event).
   const [cutEvent, setCutEvent] = useState<{ kind: "rough" | "ai"; at: number } | null>(
@@ -319,29 +236,17 @@ export default function EditorPage() {
 
         if (savedEdl?.sensitivity) setSensitivity(savedEdl.sensitivity);
 
-        // A saved EDL means this project has been edited before — even one
-        // where every cut was later restored. Don't float the first-run hero
-        // over work in progress.
-        if (savedEdl) setHeroDismissed(true);
+        // A ready project with no usable saved EDL is "fresh" — the auto-cut
+        // chain (below) will build the mechanical cut (and, if requested, the
+        // AI pass) automatically. A saved EDL, a manually-edited project, or one
+        // with an existing run is not fresh and never auto-fires (AC-4, AC-10).
+        freshOnLoadRef.current =
+          data.transcriptStatus === "ready" && !savedEdl;
 
-        // No automatic rough cut: a fresh project opens with the full, uncut
-        // timeline and a hero prompt to create the rough cut. The user sees
-        // their raw footage first and watches the cuts happen on their click —
-        // nothing is ever removed without an action they took.
-        setEdl(
-          data.transcriptStatus === "ready"
-            ? savedEdl ?? {
-                segments: [
-                  {
-                    start: 0,
-                    end: Math.max(durationSeconds, 0),
-                    status: "keep" as const,
-                    reason: null,
-                  },
-                ],
-              }
-            : savedEdl
-        );
+        // The mechanical cut is no longer gated behind a click: a fresh ready
+        // project starts with no EDL, and the auto-cut effect populates the cut
+        // timeline the moment it runs. A saved EDL loads as-is.
+        setEdl(savedEdl);
       } catch {
         setLoadError("Failed to load project.");
       } finally {
@@ -460,7 +365,6 @@ export default function EditorPage() {
         return false;
       }
       hasEditedRef.current = true;
-      setHeroDismissed(true);
       setEdl((prev) => {
         if (prev) undoStack.current.push(prev);
         redoStack.current = [];
@@ -579,8 +483,6 @@ export default function EditorPage() {
   // must not each push a new undo entry, or undo would only step back a pixel.
   const handleTrimStart = useCallback(() => {
     hasEditedRef.current = true;
-    // A trim drag is an edit like any other — the first-run hero goes away.
-    setHeroDismissed(true);
     setEdl((prev) => {
       if (prev) undoStack.current.push(prev);
       redoStack.current = [];
@@ -750,12 +652,6 @@ export default function EditorPage() {
     [project]
   );
 
-  const showRoughCutHero =
-    !!edl &&
-    words.length > 0 &&
-    !heroDismissed &&
-    edl.segments.every((s) => s.status === "keep");
-
   // The one stored AI Cut run currently applied to the timeline (ADR
   // 0002-ai-cut-paid-rerun) — null when the project has never run AI Cut, or
   // its last active run was deleted.
@@ -805,136 +701,17 @@ export default function EditorPage() {
   const [aiBusy, setAiBusy] = useState(false);
   const aiCutIdempotencyKey = useRef<string | null>(null);
 
-  // Switch which stored run is active (AC-3). Discards the current manual
-  // edits by re-applying the target run's ranges onto a fresh EDL layer, same
-  // as a freshly returned POST result.
-  const switchActiveAiCutRun = useCallback(
-    async (runId: string) => {
-      try {
-        const response = await fetch(`/api/projects/${id}/ai-cut/active`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ runId }),
-        });
-        const data = await response.json().catch(() => null);
-        if (!response.ok || !edl) {
-          toast.error("Couldn't switch runs", {
-            description: (data as { error?: string } | null)?.error ?? "Try again in a moment.",
-          });
-          return;
-        }
-        const run = data as AiCutRun;
-        setProject((prev) => (prev ? { ...prev, activeAiCutRunId: run.id } : prev));
-        if (!applyEdl(applyAiCuts(edl, run, words))) return;
-        setCutEvent({ kind: "ai", at: Date.now() });
-        toast.success(`Switched to run ${run.runNumber}`, {
-          description: `${run.ranges.length} mistake${run.ranges.length === 1 ? "" : "s"} applied — your prior manual edits were discarded.`,
-        });
-      } catch {
-        toast.error("Couldn't switch runs", {
-          description: "Check your connection and try again.",
-        });
-      }
-    },
-    [id, edl, words, applyEdl]
-  );
-
-  // Confirm via a sonner action-toast (the app has no Dialog primitive; this
-  // is the same deliberate-action pattern the undo toasts use). Only the
-  // explicit Switch press fires the PATCH — Cancel or dismiss does nothing.
-  const requestSwitchActiveAiCutRun = useCallback(
-    (run: AiCutRun) => {
-      toast(`Switch to run ${run.runNumber}?`, {
-        description:
-          "This discards your current manual edits and applies this run's suggestions instead.",
-        action: { label: "Switch", onClick: () => void switchActiveAiCutRun(run.id) },
-        cancel: { label: "Cancel", onClick: () => {} },
-      });
-    },
-    [switchActiveAiCutRun]
-  );
-
-  // Delete a non-active stored run (AC-4) — no charge, no refund. The active
-  // run can't be deleted directly (the button for it isn't even shown), but
-  // the server enforces this regardless.
-  const deleteAiCutRun = useCallback(
-    async (runId: string) => {
-      try {
-        const response = await fetch(`/api/projects/${id}/ai-cut/runs/${runId}`, {
-          method: "DELETE",
-        });
-        const data = await response.json().catch(() => null);
-        if (!response.ok) {
-          toast.error("Couldn't delete that run", {
-            description: (data as { error?: string } | null)?.error ?? "Try again in a moment.",
-          });
-          return;
-        }
-        setProject((prev) =>
-          prev ? { ...prev, aiCutRuns: prev.aiCutRuns.filter((r) => r.id !== runId) } : prev
-        );
-        toast.success("AI Cut run deleted");
-      } catch {
-        toast.error("Couldn't delete that run", {
-          description: "Check your connection and try again.",
-        });
-      }
-    },
-    [id]
-  );
-
-  const requestDeleteAiCutRun = useCallback(
-    (run: AiCutRun) => {
-      toast(`Delete run ${run.runNumber}?`, {
-        description: "This removes this stored run for good — no refund.",
-        action: { label: "Delete", onClick: () => void deleteAiCutRun(run.id) },
-        cancel: { label: "Cancel", onClick: () => {} },
-      });
-    },
-    [deleteAiCutRun]
-  );
-
-  const requestRenameAiCutRun = useCallback(
-    async (runId: string, newName: string | null) => {
-      const toastId = toast.loading("Renaming…");
-      try {
-        const response = await fetch(`/api/projects/${id}/ai-cut/runs/${runId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: newName }),
-        });
-        if (response.ok) {
-          const updatedRun = await response.json();
-          setProject((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  aiCutRuns: prev.aiCutRuns.map((r) => (r.id === runId ? updatedRun : r)),
-                }
-              : prev
-          );
-          toast.success("Run renamed", { id: toastId });
-        } else {
-          const { error } = await response.json();
-          toast.error("Couldn't rename run", {
-            id: toastId,
-            description: error || "Try again.",
-          });
-        }
-      } catch {
-        toast.error("Couldn't rename run", {
-          id: toastId,
-          description: "Check your connection and try again.",
-        });
-      }
-    },
-    [id]
-  );
-
-  const runAiCut = useCallback(async () => {
-    if (!edl || aiBusy) return;
+  // `sourceEdl` lets a caller run the AI pass against a just-built EDL that
+  // isn't yet in `edl` state (the auto-chain's mechanical result). Because
+  // setEdl is async, reading `edl` from the render closure right after applying
+  // the mechanical cut would see the stale, pre-cut EDL — so the auto-chain
+  // passes the fresh EDL through explicitly (ADR 0003 child 1, stale-closure
+  // invariant). Manual clicks omit it and use the current `edl`.
+  const runAiCut = useCallback(async (sourceEdl?: EDL) => {
+    const base = sourceEdl ?? edl;
+    if (!base || aiBusy) return;
     setAiBusy(true);
-    
+
     if (!aiCutIdempotencyKey.current) {
       aiCutIdempotencyKey.current = crypto.randomUUID();
     }
@@ -997,7 +774,7 @@ export default function EditorPage() {
         });
         return;
       }
-      if (!applyEdl(applyAiCuts(edl, run, words))) {
+      if (!applyEdl(applyAiCuts(base, run, words))) {
         toast.dismiss("ai-cut");
         return;
       }
@@ -1016,6 +793,87 @@ export default function EditorPage() {
       setAiBusy(false);
     }
   }, [edl, aiBusy, id, words, applyEdl, undo]);
+
+  // The auto-cut chain (ADR 0003 child 1): build the mechanical rough cut, then
+  // — if AI polish was requested at upload and no run exists yet — run the AI
+  // pass, all behind one loader (`autoCutBusy` + `aiBusy`). Builds the mechanical
+  // EDL from scratch (buildInitialEDL, pure, no network) at balanced sensitivity
+  // and passes it straight into runAiCut so the AI phase never reads a stale EDL.
+  const runAutoChain = useCallback(async () => {
+    if (durationSeconds <= 0 || words.length === 0) return;
+    setAutoCutBusy(true);
+    try {
+      const mechanical = buildInitialEDL(
+        words,
+        durationSeconds,
+        SENSITIVITY_PRESETS.balanced,
+        project?.transcript?.utteranceEnds
+      );
+      applyEdl(mechanical);
+      setCutEvent({ kind: "rough", at: Date.now() });
+      // AC-3/AC-4: chain into the AI pass only when it was requested at upload
+      // and no run has ever been stored. The server claim (which flips
+      // ai_polish_requested false atomically) is the real exactly-once guard;
+      // this client check just avoids a pointless request.
+      if (project?.aiPolishRequested && project.aiCutRuns.length === 0) {
+        await runAiCut(mechanical);
+      }
+    } finally {
+      setAutoCutBusy(false);
+    }
+  }, [durationSeconds, words, project, applyEdl, runAiCut]);
+
+  // Fire the auto-chain exactly once, when a fresh ready project has finished
+  // loading (no usable saved EDL — freshOnLoadRef). autoChainedRef guards
+  // re-entry within one mounted studio; the effect re-runs as edl/project
+  // settle but only the first pass does the work. Legacy rows, saved-EDL
+  // projects, and projects with an existing run set freshOnLoadRef false and
+  // are provably inert here (AC-4, AC-10).
+  useEffect(() => {
+    if (autoChainedRef.current) return;
+    if (!freshOnLoadRef.current) return;
+    if (!project || project.transcriptStatus !== "ready") return;
+    if (edl !== null) return;
+    if (words.length === 0 || durationSeconds <= 0) return;
+    autoChainedRef.current = true;
+    void runAutoChain();
+  }, [project, edl, words, durationSeconds, runAutoChain]);
+
+  // Divergence check (ADR 0003 child 2): true when the user has drifted from
+  // the active AI run's suggestions, i.e. re-applying the run would change the
+  // current cut layout. Both the "Restore AI suggestions" affordance and its
+  // action derive from this same pure re-application.
+  const hasDivergedFromAi = useMemo(() => {
+    if (!edl || !activeAiCutRun) return false;
+    return !edlSegmentsEqual(applyAiCuts(edl, activeAiCutRun, words), edl);
+  }, [edl, activeAiCutRun, words]);
+
+  // Free "Restore AI suggestions" (AC-7): re-apply the stored run's ranges
+  // client-side — no Gemini call, no charge. Same pure applyAiCuts the paid run
+  // was originally applied with.
+  const restoreAiSuggestions = useCallback(() => {
+    if (!edl || !activeAiCutRun) return;
+    if (!applyEdl(applyAiCuts(edl, activeAiCutRun, words))) return;
+    setCutEvent({ kind: "ai", at: Date.now() });
+    toast.success("AI suggestions restored", {
+      action: { label: "Undo", onClick: () => undo() },
+    });
+  }, [edl, activeAiCutRun, words, applyEdl, undo]);
+
+  // Native browser leave-warning (ADR 0003 child 3): attached only while the AI
+  // pass is actively running (aiBusy — set for both the automatic chain and a
+  // manual "Polish with AI" click), the one moment leaving risks abandoning a
+  // paid, in-flight operation. Ordinary editing never triggers it.
+  useEffect(() => {
+    if (!aiBusy) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [aiBusy]);
+
   // Signal the in-flight export to stop. Only reachable once a handle exists
   // (the Cancel control is shown only in "exporting"/"cancelling"); the guard
   // is belt-and-suspenders. The worker throws ExportError("cancelled"), which
@@ -1292,25 +1150,18 @@ export default function EditorPage() {
     durationSeconds > 0
       ? `${formatDuration(durationSeconds * 1000)} of credits`
       : "1:00 of credits";
-  const hasAiCuts = (activeAiCutRun?.ranges.length ?? 0) > 0;
+  // No successful AI run has ever been stored — the manual "Polish with AI"
+  // button shows only in this state (ADR 0003 child 2, AC-6); a run that found
+  // nothing to cut still counts, so this keys off run count, not ranges.
+  const noAiRunYet = (project?.aiCutRuns.length ?? 0) === 0;
   const railTools: {
     Icon: LucideIcon;
     label: string;
     badge?: number;
     active?: boolean;
     title?: string;
-    action: "ai-cut" | "filler" | "review";
+    action: "filler" | "review";
   }[] = [
-    {
-      Icon: Wand2,
-      label: "AI Cut",
-      active: !aiBusy,
-      badge: edl?.segments.filter((s) => s.status === "cut" && s.reason === "ai").length,
-      title: aiBusy
-        ? "AI is reviewing your transcript…"
-        : `AI pass — remove false starts, stumbles & flubbed takes (uses ${aiCostLabel})`,
-      action: "ai-cut",
-    },
     {
       Icon: Sparkles,
       label: "Filler",
@@ -1369,11 +1220,9 @@ export default function EditorPage() {
               type="button"
               disabled={!tool.active}
               onClick={
-                tool.action === "ai-cut"
-                  ? runAiCut
-                  : tool.action === "filler"
-                    ? removeFillerWords
-                    : () => setShowRetakeReview(true)
+                tool.action === "filler"
+                  ? removeFillerWords
+                  : () => setShowRetakeReview(true)
               }
               title={tool.title ?? tool.label}
               className={`relative flex w-14 flex-col items-center gap-1 rounded-lg py-2 text-[10px] ${
@@ -1412,7 +1261,7 @@ export default function EditorPage() {
                   {resolutionLabel.aspect && <span>{resolutionLabel.aspect}</span>}
                 </div>
               )}
-              {!isPlaying && !showRoughCutHero && (
+              {!isPlaying && (
                 <button
                   type="button"
                   aria-label="Play"
@@ -1423,15 +1272,7 @@ export default function EditorPage() {
                 </button>
               )}
             </div>
-            {showRoughCutHero && (
-              <RoughCutHero
-                sensitivity={sensitivity}
-                onSensitivityChange={setSensitivity}
-                onRun={reRunRoughCut}
-                onDismiss={() => setHeroDismissed(true)}
-              />
-            )}
-            {aiBusy && <AiCutOverlay wordCount={words.length} />}
+            {(aiBusy || autoCutBusy) && <AiCutOverlay wordCount={words.length} />}
           </div>
 
           {/* Transport bar */}
@@ -1526,10 +1367,12 @@ export default function EditorPage() {
             onRestoreSegment={handleRestoreSegment}
             onOpenRetakeReview={() => setShowRetakeReview(true)}
             cutEvent={cutEvent}
-            onEnhanceAi={runAiCut}
+            onPolishWithAi={() => runAiCut()}
             aiBusy={aiBusy}
             aiCostLabel={aiCostLabel}
-            hasAiCuts={hasAiCuts}
+            noAiRunYet={noAiRunYet}
+            hasDiverged={hasDivergedFromAi}
+            onRestoreAiSuggestions={restoreAiSuggestions}
             lastAiCutTime={activeAiCutRun?.createdAt}
           />
         </div>
@@ -1602,23 +1445,6 @@ export default function EditorPage() {
           >
             <RotateCcw className="h-3 w-3" /> Re-run rough cut
           </button>
-          {project && project.aiCutRuns.length > 0 && (
-            <div className="flex items-center gap-1" title="Stored AI Cut runs — click a number to switch, the eraser to delete">
-              <span className="text-foreground/40">
-                AI runs ({project.aiCutRuns.length}/{AI_CUT_RUN_LIMIT})
-              </span>
-              {project.aiCutRuns.map((run) => (
-                <AiCutRunDisplay
-                  key={run.id}
-                  run={run}
-                  isActive={run.id === project.activeAiCutRunId}
-                  onSwitch={() => requestSwitchActiveAiCutRun(run)}
-                  onDelete={() => requestDeleteAiCutRun(run)}
-                  onRename={(newName) => requestRenameAiCutRun(run.id, newName)}
-                />
-              ))}
-            </div>
-          )}
           <button
             type="button"
             onClick={() => setShowShortcuts(true)}
@@ -1692,76 +1518,37 @@ function AiCutOverlay({ wordCount }: { wordCount: number }) {
 }
 
 /**
- * First-run hero: floats over the video preview until the user creates their
- * rough cut (or dismisses it). Deliberately not a modal — the raw footage
- * stays scrubbable and watchable behind it.
+ * Blocking "leave the editor?" exit link (ADR 0003 child 3). Replaces the old
+ * fire-and-forget toast: clicking it opens a real confirm dialog instead of
+ * navigating immediately, so the exit is an impossible-to-miss decision. Kept
+ * as a self-contained component (own dialog state + router) so both the
+ * StatusScreen and TopBar exit points get the same copy and behavior even
+ * though StatusScreen renders as an early return, before the editor body.
  */
-function RoughCutHero({
-  sensitivity,
-  onSensitivityChange,
-  onRun,
-  onDismiss,
+function ExitToDashboardLink({
+  className,
+  children,
 }: {
-  sensitivity: SensitivityLevel;
-  onSensitivityChange: (level: SensitivityLevel) => void;
-  onRun: () => void;
-  onDismiss: () => void;
+  className?: string;
+  children: ReactNode;
 }) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
   return (
-    <div className="absolute bottom-6 left-1/2 z-10 w-full max-w-xl -translate-x-1/2 px-4">
-      <div className="rounded-2xl border border-white/10 bg-surface/90 p-5 shadow-2xl shadow-black/50 backdrop-blur-md">
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-blue-500/15 text-blue-300">
-              <Scissors className="h-4.5 w-4.5" />
-            </span>
-            <div>
-              <h3 className="text-sm font-bold text-white">Create your rough cut</h3>
-              <p className="mt-0.5 text-xs text-zinc-400">
-                Removes silences, retakes & repeated words — instant, free, and
-                fully undoable.
-              </p>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={onDismiss}
-            aria-label="Dismiss"
-            className="rounded-lg p-1.5 text-zinc-500 hover:bg-white/10 hover:text-white"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-        <div className="mt-4 flex items-center justify-between gap-3">
-          <div className="flex overflow-hidden rounded-lg border border-white/10">
-            {(["light", "balanced", "aggressive"] as SensitivityLevel[]).map((level) => (
-              <button
-                key={level}
-                type="button"
-                onClick={() => onSensitivityChange(level)}
-                aria-pressed={sensitivity === level}
-                title={`${level} auto-cut`}
-                className={`px-3 py-1.5 text-xs capitalize transition-colors ${
-                  sensitivity === level
-                    ? "bg-blue-600 text-white"
-                    : "text-zinc-400 hover:bg-white/10 hover:text-zinc-200"
-                }`}
-              >
-                {level}
-              </button>
-            ))}
-          </div>
-          <button
-            type="button"
-            onClick={onRun}
-            className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-blue-600/25 transition-colors hover:bg-blue-500"
-          >
-            <Scissors className="h-4 w-4" />
-            Create rough cut
-          </button>
-        </div>
-      </div>
-    </div>
+    <>
+      <button type="button" onClick={() => setOpen(true)} className={className}>
+        {children}
+      </button>
+      <ConfirmDialog
+        open={open}
+        onOpenChange={setOpen}
+        title="Leave the editor?"
+        description="Your edits are saved automatically. To reopen this project, reselect the same source video from your computer."
+        confirmLabel="Leave"
+        cancelLabel="Keep editing"
+        onConfirm={() => router.push("/dashboard")}
+      />
+    </>
   );
 }
 
@@ -1789,13 +1576,9 @@ function StatusScreen({
         <h1 className="text-lg font-bold text-foreground">{title}</h1>
         <p className="max-w-md text-sm text-foreground/50">{message}</p>
       </div>
-      <Link
-        href="/dashboard"
-        onClick={showExitReassuranceToast}
-        className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-foreground/10 px-3 py-1.5 text-sm text-foreground/70 hover:bg-foreground/10"
-      >
+      <ExitToDashboardLink className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-foreground/10 px-3 py-1.5 text-sm text-foreground/70 hover:bg-foreground/10">
         <ArrowLeft className="h-4 w-4" /> Back to dashboard
-      </Link>
+      </ExitToDashboardLink>
     </div>
   );
 }
@@ -1897,13 +1680,9 @@ function TopBar({
   return (
     <div className="flex shrink-0 items-center justify-between border-b border-foreground/10 px-3 py-2">
       <div className="flex items-center gap-3">
-        <Link
-          href="/dashboard"
-          onClick={showExitReassuranceToast}
-          className="flex items-center gap-1.5 rounded-lg border border-foreground/10 px-3 py-1.5 text-sm text-foreground/70 hover:bg-foreground/10"
-        >
+        <ExitToDashboardLink className="flex items-center gap-1.5 rounded-lg border border-foreground/10 px-3 py-1.5 text-sm text-foreground/70 hover:bg-foreground/10">
           <ArrowLeft className="h-4 w-4" /> Dashboard
-        </Link>
+        </ExitToDashboardLink>
         <div className="flex items-center gap-2">
           <span className="flex h-7 w-7 items-center justify-center rounded-md bg-blue-500/15 text-blue-300">
             <Clapperboard className="h-4 w-4" />

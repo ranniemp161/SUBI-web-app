@@ -58,6 +58,11 @@ export const createProjectSchema = z.strictObject({
   durationMs: durationMsSchema.nullable().optional(),
   fileSize: z.number().min(0).max(100 * 1024 * 1024 * 1024).nullable().optional(),
   fileType: z.string().max(100).nullable().optional(),
+  // Whether the user opted into (and agreed to pay for) the AI polish pass at
+  // upload (ADR 0003 child 1). The dashboard's confirm panel always sends it;
+  // optional + default false keeps any older client that omits it inert under
+  // the auto-fire logic.
+  aiPolish: z.boolean().optional().default(false),
 });
 
 // PATCH /api/projects/:id — every field optional; only those present are

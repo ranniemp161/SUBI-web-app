@@ -174,15 +174,10 @@ function CutText({ children }: { children: React.ReactNode }) {
   );
 }
 
-import { auth } from "@clerk/nextjs/server";
-import { redirect } from "next/navigation";
-
-export default async function LandingPage() {
-  const { userId } = await auth();
-  if (userId) {
-    redirect("/dashboard");
-  }
-
+// Signed-in visitors are redirected to /dashboard by the Clerk middleware
+// (src/proxy.ts), not here — calling auth() in this component would force a
+// dynamic render and give up static/CDN serving for the marketing page.
+export default function LandingPage() {
   return (
     <div
       className={`${bricolage.variable} ${plexMono.variable} ${instrumentSans.variable} flex min-h-screen flex-col overflow-x-hidden bg-[#070B12] font-[family-name:var(--font-instrument)] text-[#E8EDF6] antialiased selection:bg-[rgba(77,141,255,0.35)]`}

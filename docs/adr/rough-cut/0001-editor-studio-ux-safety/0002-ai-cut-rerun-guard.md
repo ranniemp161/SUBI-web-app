@@ -1,5 +1,7 @@
 # Child 2 — AI Cut Re-run Guard
 
+> Superseded by [0003 child 1](../0003-studio-auto-cut-flow/0001-auto-cut-pipeline.md) and [0003 child 2](../0003-studio-auto-cut-flow/0002-ai-rerun-removal.md) (2026-07-11): the Clear-then-re-run mechanism described here is superseded, since the manual "Clear AI Cuts" action and the button it protected are both removed. The core principle this child established, never charge for an operation whose result cannot differ, is inherited and now enforced structurally: 0003 makes the single AI attempt automatic and one-shot (a server-side flip on the project row), rather than relying on a client-confirmed clear-then-rerun step to prevent a second charge.
+
 ## Summary
 
 AI Cut charges credits on every POST, even though re-running it on the same transcript produces the same result. The only thing stopping a re-run today is a hidden button in the UI, which a direct API call ignores. We block the re-run on the server: once results exist, the route refuses with a 409 and charges nothing. To run a fresh paid pass, the user must first clear the existing results through an explicit, confirmed "Clear AI Cuts" action.

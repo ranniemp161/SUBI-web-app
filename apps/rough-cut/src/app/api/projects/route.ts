@@ -5,7 +5,7 @@ import { projects, users } from "@repo/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { getAuthorizedDbUser } from "@/lib/authz";
 import { createProjectSchema } from "@/lib/validation";
-import { rateLimit } from "@/lib/rate-limit";
+import { rateLimit, readRateLimit } from "@/lib/rate-limit";
 import { reportError } from "@/lib/observability";
 
 // Guards against a runaway client spraying project rows.
@@ -55,7 +55,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const { fileName, durationMs, fileSize, fileType } = parsed.data;
+    const { fileName, durationMs, fileSize, fileType, aiPolish } = parsed.data;
 
     const [project] = await db
       .insert(projects)
@@ -65,6 +65,7 @@ export async function POST(request: Request) {
         durationMs: durationMs ?? null,
         fileSize: fileSize ?? null,
         fileType: fileType ?? null,
+        aiPolishRequested: aiPolish,
       })
       .returning();
 
@@ -88,6 +89,14 @@ export async function GET() {
 
   if (!clerkId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const limit = await readRateLimit(clerkId);
+  if (!limit.allowed) {
+    return NextResponse.json(
+      { error: "Too many requests. Please wait a bit and try again." },
+      { status: 429 }
+    );
   }
 
   try {

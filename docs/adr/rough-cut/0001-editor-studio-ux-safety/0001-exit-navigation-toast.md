@@ -1,5 +1,7 @@
 # Child 1 — Exit Navigation Reassurance Toast
 
+> Superseded by [0003 child 3](../0003-studio-auto-cut-flow/0003-exit-confirm-dialog.md) (2026-07-11): the reassurance toast is replaced by a blocking confirm dialog.
+
 ## Summary
 
 When a user leaves the editor and returns to the dashboard, nothing tells them their work is safe. Everything already autosaves, so there is nothing to confirm, only something to reassure. We fire a short `sonner` toast on every exit navigation that says the project is saved and reopening it just needs the same source video. No blocking dialog, no state tracking.

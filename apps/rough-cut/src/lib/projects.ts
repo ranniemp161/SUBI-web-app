@@ -86,6 +86,14 @@ function toAiCutRun(row: Row): AiCutRun {
  * The claim is decoupled from the stored runs (ADR 0002-ai-cut-paid-rerun):
  * it protects concurrent create requests only, independent of how many runs
  * are stored or which one is active.
+ *
+ * The same UPDATE also clears `ai_polish_requested` (ADR 0003 child 1): the one
+ * caller that wins the claim always consumes the auto-fire flag in the same
+ * atomic statement, whether the request came from the studio's automatic chain
+ * or a later manual "Polish with AI" click. Setting false to false is a no-op
+ * on a project that never requested polish, and correct on one that did — so
+ * exactly one automatic AI attempt can ever fire per project, even if the run
+ * that follows the claim later fails or is refunded.
  */
 export async function claimAiCutSlot(
   projectId: string,
@@ -93,7 +101,7 @@ export async function claimAiCutSlot(
 ): Promise<boolean> {
   const [row] = await executeRows(sql`
     UPDATE projects
-    SET ai_cut_claim_at = now()
+    SET ai_cut_claim_at = now(), ai_polish_requested = false
     WHERE id = ${projectId}
       AND user_id = ${userId}
       AND (

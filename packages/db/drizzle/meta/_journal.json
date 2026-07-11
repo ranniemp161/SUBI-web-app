@@ -71,6 +71,13 @@
       "when": 1783742922418,
       "tag": "0009_dizzy_human_fly",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1783768514082,
+      "tag": "0010_watery_vision",
+      "breakpoints": true
     }
   ]
 }

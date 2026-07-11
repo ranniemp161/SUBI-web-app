@@ -81,7 +81,8 @@ describe("GET /api/billing/autorecharge", () => {
       autorechargeThresholdMicros: 5_000_000,
       autorechargeAmountMicros: 19_000_000,
     };
-    const body = await (await GET()).json();
+    const res = await GET();
+    const body = await res.json();
     expect(body).toEqual({
       enabled: true,
       thresholdMicros: 5_000_000,
@@ -89,6 +90,8 @@ describe("GET /api/billing/autorecharge", () => {
       hasCard: true,
       failures: 0,
     });
+    // Per-user billing settings must never be cached by any proxy in front.
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
   });
 });
 
