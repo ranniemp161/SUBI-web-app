@@ -273,6 +273,145 @@ describe("EditorPage — auto-cut chain on open", () => {
     );
     expect(aiPost).toBeUndefined();
   });
+
+  // covers AC-5: a 402 on the automatic AI pass lands on the mechanical
+  // result — a clear "not enough funds" toast fires, nothing throws, and the
+  // busy state resolves (no stuck loader). The manual "Add funds" deep link
+  // and the reappearing "Polish with AI" button are UI-only and stay on
+  // verify.md's manual checklist (TranscriptPanel is stubbed here).
+  it("surfaces a not-enough-funds toast and clears the busy state when the automatic AI pass 402s (AC-5)", async () => {
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/projects/proj-1") {
+        return jsonResponse({ ...READY_PROJECT, aiPolishRequested: true });
+      }
+      if (url.endsWith("/ai-cut") && init?.method === "POST") {
+        return jsonResponse({ error: "insufficient credits" }, { ok: false, status: 402 });
+      }
+      return jsonResponse({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<EditorPage />);
+    await screen.findByRole("button", { name: /^dashboard$/i });
+
+    await waitFor(() =>
+      expect(toastMock.error).toHaveBeenCalledWith(
+        "Not enough funds",
+        expect.objectContaining({ id: "ai-cut" })
+      )
+    );
+
+    // Busy state resolved: no beforeunload handler left attached, the way it
+    // would be if the AI pass were still (incorrectly) treated as running.
+    const addSpy = vi.spyOn(window, "addEventListener");
+    await new Promise((r) => setTimeout(r, 20));
+    const beforeUnloadAdds = addSpy.mock.calls.filter(([type]) => type === "beforeunload");
+    expect(beforeUnloadAdds).toHaveLength(0);
+    addSpy.mockRestore();
+  });
+
+  // Regression: two overlapping "transcript is ready" detections (the 4s
+  // interval and a focus/visibilitychange handler can both fire checkStatus
+  // around the same moment) used to each bump reloadNonce and each re-fetch
+  // the project, and a second, redundant reload re-seeded `edl` from the
+  // server's still-null value (the debounced autosave hadn't landed yet),
+  // silently discarding the auto-chain's just-applied mechanical cut. Fixed by
+  // deduping the "ready" detection to fire reloadNonce at most once per
+  // transition. Uses manually-resolved promises (rather than real timing) to
+  // deterministically control exactly when each overlapping check resolves —
+  // the second is resolved only after the first has already driven a reload,
+  // matching the real race without depending on jsdom microtask ordering.
+  it("does not reload the project a second time when two overlapping status checks both detect ready", async () => {
+    const projectCalls: string[] = [];
+    let statusCallCount = 0;
+    const statusResolvers: Array<(v: unknown) => void> = [];
+
+    const fetchMock = vi.fn((url: string) => {
+      if (typeof url === "string" && url === "/api/projects/proj-1") {
+        projectCalls.push(url);
+        // First call: still processing (no transcript/words yet). Every call
+        // after: ready, matching what the real server would return once the
+        // Deepgram callback lands — a fresh project with nothing saved yet.
+        return Promise.resolve(
+          jsonResponse(
+            projectCalls.length === 1
+              ? { ...READY_PROJECT, transcriptStatus: "processing" as const, transcript: null }
+              : READY_PROJECT
+          )
+        );
+      }
+      if (typeof url === "string" && url === "/api/projects/proj-1/status") {
+        statusCallCount++;
+        return new Promise((resolve) => statusResolvers.push(resolve));
+      }
+      return Promise.resolve(jsonResponse({}));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<EditorPage />);
+
+    // Starts on the "Transcribing your video" screen (transcriptStatus: processing).
+    await screen.findByText(/transcribing your video/i);
+    expect(projectCalls).toHaveLength(1);
+
+    // Two overlapping triggers for the same "ready" transition, both starting
+    // (and both fetching /status) before either resolves — the poll interval
+    // ticking right as the tab regains focus.
+    window.dispatchEvent(new Event("focus"));
+    window.dispatchEvent(new Event("focus"));
+    await waitFor(() => expect(statusCallCount).toBe(2));
+
+    // Resolve the first: this is what drives the (single) reload.
+    statusResolvers[0](jsonResponse({ transcriptStatus: "ready" }));
+    await screen.findByRole("button", { name: /^dashboard$/i });
+    expect(projectCalls).toHaveLength(2);
+
+    // Resolve the second — arriving after the first already reloaded, the
+    // real shape of the race. It must not trigger a further reload.
+    statusResolvers[1](jsonResponse({ transcriptStatus: "ready" }));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(projectCalls).toHaveLength(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Sensitivity picker in the status bar (AC-9) — the picker's continued
+// presence (and the removed floating hero) is exercised at the component
+// level here; actually observing the hero's absence in the full page layout
+// stays on verify.md's manual checklist.
+// ---------------------------------------------------------------------------
+describe("EditorPage — sensitivity picker in the status bar (AC-9)", () => {
+  it("renders light/balanced/aggressive controls with balanced pressed by default", async () => {
+    stubFetchForProject(READY_PROJECT);
+    render(<EditorPage />);
+    const pickButton = await screen.findByRole("button", { name: "pick-file" });
+    await userEvent.click(pickButton);
+    await screen.findByTestId("timeline-bar-stub");
+
+    const light = screen.getByRole("button", { name: /^light$/i });
+    const balanced = screen.getByRole("button", { name: /^balanced$/i });
+    const aggressive = screen.getByRole("button", { name: /^aggressive$/i });
+    expect(light).toHaveAttribute("aria-pressed", "false");
+    expect(balanced).toHaveAttribute("aria-pressed", "true");
+    expect(aggressive).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("switches the pressed control when a different sensitivity is clicked", async () => {
+    stubFetchForProject(READY_PROJECT);
+    render(<EditorPage />);
+    const pickButton = await screen.findByRole("button", { name: "pick-file" });
+    await userEvent.click(pickButton);
+    await screen.findByTestId("timeline-bar-stub");
+
+    await userEvent.click(screen.getByRole("button", { name: /^aggressive$/i }));
+    expect(screen.getByRole("button", { name: /^aggressive$/i })).toHaveAttribute(
+      "aria-pressed",
+      "true"
+    );
+    expect(screen.getByRole("button", { name: /^balanced$/i })).toHaveAttribute(
+      "aria-pressed",
+      "false"
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -145,8 +145,8 @@ Client-requested UX redesign: the studio auto-runs the free mechanical rough cut
   - [x] AI re-run removal + free restore: single conditional "Polish with AI" button, run-list UI removed, "Restore AI suggestions" action (AC-6, AC-7, AC-10)
   - [x] Exit confirm dialog: Radix AlertDialog primitive in `packages/ui`, wired to both Dashboard links, beforeunload only while the AI pass runs (AC-8)
   code in `packages/db/src/schema.ts`, `packages/db/drizzle/0010_watery_vision.sql`, `packages/ui/src/confirm-dialog.tsx`, `apps/rough-cut/src/lib/validation.ts`, `apps/rough-cut/src/lib/projects.ts`, `apps/rough-cut/src/app/api/projects/route.ts`, `apps/rough-cut/src/app/(app)/dashboard/page.tsx`, `apps/rough-cut/src/app/(app)/dashboard/[id]/page.tsx`, `apps/rough-cut/src/components/transcript-panel.tsx`
-- [ ] Verify it: `/verify studio auto-cut flow`
-- [ ] Test it: `/test studio auto-cut flow`
+- [ ] Verify it: `/verify studio auto-cut flow` (BLOCKED — no browser automation tool or Clerk test credentials available to click through the signed-in flow; see `verify.md`)
+- [x] Test it: `/test studio auto-cut flow`
 
 ## Deferred
 

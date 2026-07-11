@@ -234,19 +234,31 @@ export default function EditorPage() {
         const savedEdl =
           data.edl && keptDuration(data.edl) > 0 ? data.edl : null;
 
-        if (savedEdl?.sensitivity) setSensitivity(savedEdl.sensitivity);
+        // A reload can be triggered more than once while transcription is
+        // still finishing (the "processing -> ready" poll below fires
+        // checkStatus from a 4s interval AND from visibilitychange/focus, so a
+        // user switching tabs while waiting can cause two overlapping polls to
+        // both detect "ready" and both bump reloadNonce). Once this project's
+        // EDL has been edited locally — including by the auto-cut chain, which
+        // edits it the instant it fires — a later reload must not re-seed it
+        // from the server: the debounced autosave (AUTOSAVE_DELAY_MS) may not
+        // have persisted that edit yet, so the server's `data.edl` here can
+        // still be stale/null and would silently wipe out the local cut.
+        if (!hasEditedRef.current) {
+          if (savedEdl?.sensitivity) setSensitivity(savedEdl.sensitivity);
 
-        // A ready project with no usable saved EDL is "fresh" — the auto-cut
-        // chain (below) will build the mechanical cut (and, if requested, the
-        // AI pass) automatically. A saved EDL, a manually-edited project, or one
-        // with an existing run is not fresh and never auto-fires (AC-4, AC-10).
-        freshOnLoadRef.current =
-          data.transcriptStatus === "ready" && !savedEdl;
+          // A ready project with no usable saved EDL is "fresh" — the auto-cut
+          // chain (below) will build the mechanical cut (and, if requested, the
+          // AI pass) automatically. A saved EDL, a manually-edited project, or one
+          // with an existing run is not fresh and never auto-fires (AC-4, AC-10).
+          freshOnLoadRef.current =
+            data.transcriptStatus === "ready" && !savedEdl;
 
-        // The mechanical cut is no longer gated behind a click: a fresh ready
-        // project starts with no EDL, and the auto-cut effect populates the cut
-        // timeline the moment it runs. A saved EDL loads as-is.
-        setEdl(savedEdl);
+          // The mechanical cut is no longer gated behind a click: a fresh ready
+          // project starts with no EDL, and the auto-cut effect populates the cut
+          // timeline the moment it runs. A saved EDL loads as-is.
+          setEdl(savedEdl);
+        }
       } catch {
         setLoadError("Failed to load project.");
       } finally {
@@ -264,6 +276,16 @@ export default function EditorPage() {
   useEffect(() => {
     if (transcriptStatus !== "processing") return;
     const abortController = new AbortController();
+    // The 4s interval and the visibilitychange/focus handlers below can both
+    // call checkStatus around the same moment (e.g. the tab regains focus
+    // right as the interval also ticks) — without this guard, two overlapping
+    // calls can both observe the terminal status and each bump reloadNonce,
+    // triggering a second, redundant reload of the project a moment after the
+    // first. That second reload reads server state that may still predate
+    // anything the client has since done locally (like the auto-cut chain's
+    // mechanical cut, saved only after a debounced autosave), so a "ready"
+    // detection must only ever act once per transition.
+    let settled = false;
 
     const checkStatus = async () => {
       try {
@@ -278,7 +300,11 @@ export default function EditorPage() {
         // Terminal either way (ready or failed): re-run the fetch effect so
         // the screen reflects the real outcome. The refreshed status also
         // shuts this poll down.
-        if (updated.transcriptStatus === "ready" || updated.transcriptStatus === "failed") {
+        if (
+          !settled &&
+          (updated.transcriptStatus === "ready" || updated.transcriptStatus === "failed")
+        ) {
+          settled = true;
           setReloadNonce((n) => n + 1);
         }
       } catch (error) {
@@ -809,7 +835,9 @@ export default function EditorPage() {
         SENSITIVITY_PRESETS.balanced,
         project?.transcript?.utteranceEnds
       );
-      applyEdl(mechanical);
+      // Never claim the cut applied when it didn't (applyEdl refuses an edit
+      // that would keep nothing) — matches every other applyEdl call site.
+      if (!applyEdl(mechanical)) return;
       setCutEvent({ kind: "rough", at: Date.now() });
       // AC-3/AC-4: chain into the AI pass only when it was requested at upload
       // and no run has ever been stored. The server claim (which flips
