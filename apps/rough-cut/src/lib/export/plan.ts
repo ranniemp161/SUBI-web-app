@@ -6,6 +6,7 @@
  * No browser/WebCodecs APIs here — this is exercised directly by vitest.
  */
 import type { EDL } from "@/lib/edl";
+import { MIN_CLIP_SECONDS } from "@/lib/export/timebase";
 
 export interface KeepRange {
   start: number;
@@ -22,6 +23,17 @@ export function getKeepRanges(edl: EDL): KeepRange[] {
 
 export function totalKeptSeconds(ranges: KeepRange[]): number {
   return ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
+}
+
+/**
+ * Whether the EDL has at least one kept range the NLE exporters will actually
+ * emit as a clip/event — i.e. one at or above MIN_CLIP_SECONDS, matching the
+ * exporters' own per-range filter. keptDuration(edl) > 0 is NOT equivalent:
+ * several sub-frame kept segments can sum to a positive total while every
+ * individual range still gets dropped, producing a file with zero clips.
+ */
+export function hasExportableRanges(edl: EDL): boolean {
+  return getKeepRanges(edl).some((r) => r.end - r.start >= MIN_CLIP_SECONDS);
 }
 
 /**

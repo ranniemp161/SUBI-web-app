@@ -12,6 +12,12 @@ import { MIN_CLIP_SECONDS, formatTimecode } from "@/lib/export/timebase";
 /** Conventional reel name for file-based/auxiliary sources when no real reel exists. */
 const FALLBACK_REEL_NAME = "AX";
 
+/** Strips C0 control characters (newlines, tabs, etc.) that would break the fixed-line CMX 3600 format. */
+function stripControlChars(value: string): string {
+  // eslint-disable-next-line no-control-regex
+  return value.replace(/[\x00-\x1f\x7f]/g, "");
+}
+
 /** Derives an 8-character, uppercased reel name from the source filename. */
 function reelName(sourceFilename: string): string {
   const cleaned = sourceFilename.replace(/[^a-zA-Z0-9]/g, "");
@@ -27,6 +33,8 @@ function reelName(sourceFilename: string): string {
 export function buildCmx3600Edl(edl: EDL, projectTitle: string, sourceFilename: string): string {
   const ranges = getKeepRanges(edl).filter((r) => r.end - r.start >= MIN_CLIP_SECONDS);
   const reel = reelName(sourceFilename);
+  const safeTitle = stripControlChars(projectTitle);
+  const safeSourceFilename = stripControlChars(sourceFilename);
 
   let recordCursor = 0;
   const events = ranges
@@ -39,10 +47,10 @@ export function buildCmx3600Edl(edl: EDL, projectTitle: string, sourceFilename: 
       const recordIn = formatTimecode(recordCursor);
       recordCursor += duration;
       const recordOut = formatTimecode(recordCursor);
-      return `${eventNumber}  ${reel}      V     C        ${sourceIn} ${sourceOut} ${recordIn} ${recordOut}\n* FROM CLIP NAME: ${sourceFilename}`;
+      return `${eventNumber}  ${reel}      V     C        ${sourceIn} ${sourceOut} ${recordIn} ${recordOut}\n* FROM CLIP NAME: ${safeSourceFilename}`;
     })
     .filter((event): event is string => event !== null)
     .join("\n");
 
-  return `TITLE: ${projectTitle}\nFCM: NON-DROP FRAME\n\n${events}\n`;
+  return `TITLE: ${safeTitle}\nFCM: NON-DROP FRAME\n\n${events}\n`;
 }

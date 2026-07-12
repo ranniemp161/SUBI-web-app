@@ -15,7 +15,7 @@
 import "@testing-library/jest-dom/vitest";
 import { render, screen, cleanup, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vitest";
 import { forwardRef } from "react";
 
 afterEach(() => {
@@ -90,6 +90,7 @@ vi.mock("@/lib/env", () => ({
 
 import EditorPage from "./page";
 import type { AiCutRun } from "@/lib/ai-cuts";
+import type { EDL } from "@/lib/edl";
 
 const READY_PROJECT = {
   id: "proj-1",
@@ -103,7 +104,7 @@ const READY_PROJECT = {
     duration: 5,
   },
   transcriptStatus: "ready" as const,
-  edl: null,
+  edl: null as EDL | null,
   aiPolishRequested: false,
   activeAiCutRunId: null as string | null,
   aiCutRuns: [] as AiCutRun[],
@@ -411,6 +412,172 @@ describe("EditorPage — sensitivity picker in the status bar (AC-9)", () => {
       "aria-pressed",
       "false"
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Export dropdowns rebuilt on Radix (AC-8, AC-16) — StyledSelect and
+// ExportFormatMenu used to be hand-rolled (outside-click/Escape listeners,
+// no arrow-key navigation, focus lost to <body> after a selection unmounted
+// the option list). Rebuilt on @radix-ui/react-select and
+// @radix-ui/react-dropdown-menu, which are exercised here instead of relying
+// on Radix's own test suite: this covers OUR wiring (props, gating,
+// callbacks), not Radix's internal a11y implementation.
+// ---------------------------------------------------------------------------
+describe("EditorPage — export dropdowns (Radix rebuild, AC-8, AC-16)", () => {
+  // jsdom implements neither the pointer-capture trio nor scrollIntoView nor
+  // ResizeObserver, all of which Radix Select's positioning/pointer handling
+  // calls unconditionally; without these polyfills, opening the Select
+  // throws inside jsdom before any assertion runs.
+  beforeAll(() => {
+    Element.prototype.hasPointerCapture = vi.fn(() => false);
+    Element.prototype.setPointerCapture = vi.fn();
+    Element.prototype.releasePointerCapture = vi.fn();
+    Element.prototype.scrollIntoView = vi.fn();
+    if (!("ResizeObserver" in globalThis)) {
+      globalThis.ResizeObserver = class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      } as unknown as typeof ResizeObserver;
+    }
+    // jsdom has no PointerEvent constructor; Radix's menu/select item
+    // selection is driven by pointerdown/pointerup, so without this,
+    // userEvent's synthesized pointer sequence never reaches Radix's
+    // handlers and a click on an item silently does nothing.
+    if (!("PointerEvent" in globalThis)) {
+      class MockPointerEvent extends MouseEvent {
+        pointerType: string;
+        constructor(type: string, props: PointerEventInit = {}) {
+          super(type, props);
+          this.pointerType = props.pointerType ?? "mouse";
+        }
+      }
+      globalThis.PointerEvent = MockPointerEvent as unknown as typeof PointerEvent;
+    }
+  });
+
+  const PROJECT_WITH_KEPT_EDL = {
+    ...READY_PROJECT,
+    edl: {
+      segments: [
+        { start: 0, end: 5, status: "keep" as const, reason: null },
+        { start: 5, end: 8, status: "cut" as const, reason: "silence" as const },
+      ],
+    },
+  };
+
+  // The fully wired TopBar (with real export handlers) only mounts once a
+  // source video is re-selected (`sourceUrl` truthy); before that, page.tsx
+  // renders a stripped-down TopBar (no onExportFcpxml/onExportCmx3600/
+  // exportFormatBlockedReason at all) on the "re-select your source file"
+  // screen. Every test below must pick a file first, or it silently exercises
+  // that disconnected TopBar instead of the real one.
+  async function renderEditorWithSource(project: typeof READY_PROJECT) {
+    stubFetchForProject(project);
+    render(<EditorPage />);
+    await userEvent.click(await screen.findByRole("button", { name: "pick-file" }));
+    return screen.findByTestId("timeline-bar-stub");
+  }
+
+  it("renders the resolution trigger and format menu trigger with accessible names, not native <select> chrome", async () => {
+    await renderEditorWithSource(PROJECT_WITH_KEPT_EDL);
+
+    const resolutionTrigger = await screen.findByRole("combobox", { name: "Export resolution" });
+    expect(resolutionTrigger).toBeVisible();
+    expect(resolutionTrigger.tagName).not.toBe("SELECT");
+    expect(screen.getByRole("button", { name: /for davinci \/ premiere/i })).toBeVisible();
+  });
+
+  it("opens the resolution select and selects an option, updating the trigger", async () => {
+    const user = userEvent.setup();
+    await renderEditorWithSource(PROJECT_WITH_KEPT_EDL);
+
+    const trigger = screen.getByRole("combobox", { name: "Export resolution" });
+    expect(trigger).toHaveTextContent("Source");
+
+    await user.click(trigger);
+    const options = await screen.findAllByRole("option");
+    expect(options.map((o) => o.textContent)).toEqual(["Source", "1080p", "720p"]);
+
+    await user.click(screen.getByRole("option", { name: "1080p" }));
+
+    await waitFor(() => expect(trigger).toHaveTextContent("1080p"));
+  });
+
+  it("closes the resolution select on Escape without changing the selection, and returns focus to the trigger", async () => {
+    const user = userEvent.setup();
+    await renderEditorWithSource(PROJECT_WITH_KEPT_EDL);
+
+    const trigger = screen.getByRole("combobox", { name: "Export resolution" });
+    await user.click(trigger);
+    await screen.findAllByRole("option");
+
+    await user.keyboard("{Escape}");
+
+    await waitFor(() => expect(screen.queryByRole("option")).toBeNull());
+    expect(trigger).toHaveTextContent("Source"); // unchanged
+    expect(document.activeElement).toBe(trigger); // focus not lost to <body>
+  });
+
+  it("opens the export format menu, lists both formats, and closes on Escape with focus back on the trigger", async () => {
+    const user = userEvent.setup();
+    await renderEditorWithSource(PROJECT_WITH_KEPT_EDL);
+
+    const trigger = screen.getByRole("button", { name: /for davinci \/ premiere/i });
+    await user.click(trigger);
+
+    const items = await screen.findAllByRole("menuitem");
+    expect(items.map((i) => i.textContent)).toEqual(["FCPXML (.fcpxml)", "CMX 3600 EDL (.edl)"]);
+
+    await user.keyboard("{Escape}");
+
+    await waitFor(() => expect(screen.queryByRole("menuitem")).toBeNull());
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it("downloads an .fcpxml file when the FCPXML menu item is selected", async () => {
+    const user = userEvent.setup();
+    const createObjectURL = vi.fn<typeof URL.createObjectURL>(() => "blob:mock-url");
+    URL.createObjectURL = createObjectURL;
+    URL.revokeObjectURL = vi.fn();
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+
+    await renderEditorWithSource(PROJECT_WITH_KEPT_EDL);
+
+    await user.click(screen.getByRole("button", { name: /for davinci \/ premiere/i }));
+    await user.click(await screen.findByRole("menuitem", { name: "FCPXML (.fcpxml)" }));
+
+    // createObjectURL is also called once for the re-selected source file's
+    // own preview URL (sourceUrl, page.tsx), so find the download's blob by
+    // mime type rather than assuming call order.
+    await waitFor(() => expect(clickSpy).toHaveBeenCalledTimes(1));
+    const xmlCall = createObjectURL.mock.calls.find(
+      ([blob]) => (blob as Blob).type === "application/xml"
+    );
+    expect(xmlCall).toBeDefined();
+    clickSpy.mockRestore();
+  });
+
+  it("downloads an .edl file when the CMX 3600 EDL menu item is selected", async () => {
+    const user = userEvent.setup();
+    const createObjectURL = vi.fn<typeof URL.createObjectURL>(() => "blob:mock-url");
+    URL.createObjectURL = createObjectURL;
+    URL.revokeObjectURL = vi.fn();
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+
+    await renderEditorWithSource(PROJECT_WITH_KEPT_EDL);
+
+    await user.click(screen.getByRole("button", { name: /for davinci \/ premiere/i }));
+    await user.click(await screen.findByRole("menuitem", { name: "CMX 3600 EDL (.edl)" }));
+
+    // createObjectURL is also called once for the re-selected source file's
+    // own preview URL (sourceUrl, page.tsx), so find the download's blob by
+    // mime type rather than assuming call order.
+    await waitFor(() => expect(clickSpy).toHaveBeenCalledTimes(1));
+    const edlCall = createObjectURL.mock.calls.find(([blob]) => (blob as Blob).type === "text/plain");
+    expect(edlCall).toBeDefined();
+    clickSpy.mockRestore();
   });
 });
 

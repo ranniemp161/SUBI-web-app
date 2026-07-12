@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useParams, useRouter } from "next/navigation";
+import * as Select from "@radix-ui/react-select";
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
   ArrowLeft,
   Clapperboard,
@@ -48,6 +50,7 @@ import {
 import { buildFcpxml } from "@/lib/export/fcpxml";
 import { buildCmx3600Edl } from "@/lib/export/cmx3600";
 import { sanitizeFilename } from "@/lib/export/filename";
+import { hasExportableRanges } from "@/lib/export/plan";
 import { downloadTextFile } from "@/lib/download-text-file";
 import {
   absorbCutResidue,
@@ -990,21 +993,28 @@ export default function EditorPage() {
   // reselected source video required, since both formats only reference the
   // source by filename.
   const handleExportFcpxml = useCallback(() => {
-    if (!edl || !project || keptDuration(edl) <= 0) {
+    if (!edl || !project || !hasExportableRanges(edl)) {
       toast.error("Nothing to export", {
         description: "This project has no kept segments yet.",
       });
       return;
     }
-    const xml = buildFcpxml(edl, project.fileName, project.fileName);
+    const xml = buildFcpxml(
+      edl,
+      project.fileName,
+      project.fileName,
+      videoMeta && videoMeta.width && videoMeta.height
+        ? { width: videoMeta.width, height: videoMeta.height }
+        : undefined
+    );
     downloadTextFile(xml, `${sanitizeFilename(project.fileName)}.fcpxml`, "application/xml");
     toast.success("FCPXML exported", {
       description: "Open it in DaVinci Resolve or Premiere Pro and relink your source file.",
     });
-  }, [edl, project]);
+  }, [edl, project, videoMeta]);
 
   const handleExportCmx3600 = useCallback(() => {
-    if (!edl || !project || keptDuration(edl) <= 0) {
+    if (!edl || !project || !hasExportableRanges(edl)) {
       toast.error("Nothing to export", {
         description: "This project has no kept segments yet.",
       });
@@ -1281,7 +1291,7 @@ export default function EditorPage() {
         onExportFcpxml={handleExportFcpxml}
         onExportCmx3600={handleExportCmx3600}
         exportFormatBlockedReason={
-          !edl || keptDuration(edl) <= 0 ? "Nothing to export yet" : undefined
+          !edl || !hasExportableRanges(edl) ? "Nothing to export yet" : undefined
         }
       />
 
@@ -1724,9 +1734,12 @@ const dropdownOptionClass =
   "flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm transition-colors hover:bg-foreground/10";
 
 /**
- * A hand-rolled, design-token-styled listbox replacing the browser's native
- * `<select>` chrome (AC-8) — a plain button that toggles an absolutely
- * positioned option list, closed on outside click or Escape.
+ * A design-token-styled listbox replacing the browser's native `<select>`
+ * chrome (AC-8), built on Radix Select rather than hand-rolled dismiss/focus
+ * logic (the pattern packages/ui/src/confirm-dialog.tsx already established:
+ * prefer Radix over reimplementing focus trapping, ESC handling, and overlay
+ * dismissal). Radix supplies arrow-key navigation between options and
+ * restores focus to the trigger on close for free.
  */
 function StyledSelect<T extends string>({
   id,
@@ -1745,73 +1758,38 @@ function StyledSelect<T extends string>({
   disabled?: boolean;
   title?: string;
 }) {
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onPointerDown = (e: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("mousedown", onPointerDown);
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", onPointerDown);
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [open]);
-
-  const current = options.find((o) => o.value === value) ?? options[0];
-
   return (
-    <div ref={rootRef} className="relative">
-      <span id={`${id}-label`} className="sr-only">
-        {label}
-      </span>
-      <button
-        type="button"
-        id={id}
-        disabled={disabled}
-        title={title}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-labelledby={`${id}-label ${id}`}
-        onClick={() => setOpen((o) => !o)}
-        className={dropdownTriggerClass}
-      >
-        {current?.label}
-        <ChevronDown className="h-3.5 w-3.5" />
-      </button>
-      {open && (
-        <ul
-          role="listbox"
-          aria-labelledby={`${id}-label`}
-          className="absolute right-0 top-full z-20 mt-1 min-w-full overflow-hidden rounded-lg border border-foreground/10 bg-background py-1 shadow-lg"
+    <Select.Root value={value} onValueChange={(v) => onChange(v as T)} disabled={disabled}>
+      <Select.Trigger id={id} title={title} aria-label={label} className={dropdownTriggerClass}>
+        <Select.Value />
+        <Select.Icon>
+          <ChevronDown className="h-3.5 w-3.5" />
+        </Select.Icon>
+      </Select.Trigger>
+      <Select.Portal>
+        <Select.Content
+          position="popper"
+          sideOffset={4}
+          align="end"
+          className="z-20 min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-lg border border-foreground/10 bg-background py-1 shadow-lg"
         >
-          {options.map((opt) => (
-            <li key={opt.value}>
-              <button
-                type="button"
-                role="option"
-                aria-selected={opt.value === value}
-                onClick={() => {
-                  onChange(opt.value);
-                  setOpen(false);
-                }}
-                className={`${dropdownOptionClass} ${
-                  opt.value === value ? "text-blue-300" : "text-foreground/70"
-                }`}
+          <Select.Viewport>
+            {options.map((opt) => (
+              <Select.Item
+                key={opt.value}
+                value={opt.value}
+                className={`${dropdownOptionClass} cursor-pointer select-none outline-none data-[highlighted]:bg-foreground/10 data-[state=checked]:text-blue-300 data-[state=unchecked]:text-foreground/70`}
               >
-                {opt.label}
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
+                <Select.ItemText>{opt.label}</Select.ItemText>
+                <Select.ItemIndicator className="ml-auto">
+                  <Check className="h-3.5 w-3.5" />
+                </Select.ItemIndicator>
+              </Select.Item>
+            ))}
+          </Select.Viewport>
+        </Select.Content>
+      </Select.Portal>
+    </Select.Root>
   );
 }
 
@@ -1819,7 +1797,10 @@ function StyledSelect<T extends string>({
  * The export cluster's format menu (AC-16): one styled trigger, matching the
  * resolution dropdown, opening two action entries (FCPXML, CMX 3600 EDL).
  * Each entry immediately generates and downloads its format, then closes —
- * there's no persisted selection, just two actions behind one control.
+ * there's no persisted selection, just two actions behind one control. Built
+ * on Radix DropdownMenu for the same reason as StyledSelect above: this is a
+ * menu of actions, not a value picker, so DropdownMenu (not Select) is the
+ * semantic fit.
  */
 function ExportFormatMenu({
   onExportFcpxml,
@@ -1832,74 +1813,38 @@ function ExportFormatMenu({
   disabled?: boolean;
   title?: string;
 }) {
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onPointerDown = (e: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("mousedown", onPointerDown);
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", onPointerDown);
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [open]);
-
   return (
-    <div ref={rootRef} className="relative">
-      <button
-        type="button"
+    <DropdownMenu.Root>
+      <DropdownMenu.Trigger
         disabled={disabled}
         title={title ?? "Export cut list for DaVinci Resolve or Premiere Pro"}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
         className={dropdownTriggerClass}
       >
         <Film className="h-4 w-4" />
         For DaVinci / Premiere
         <ChevronDown className="h-3.5 w-3.5" />
-      </button>
-      {open && (
-        <ul
-          role="menu"
-          className="absolute right-0 top-full z-20 mt-1 min-w-full overflow-hidden rounded-lg border border-foreground/10 bg-background py-1 shadow-lg"
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Portal>
+        <DropdownMenu.Content
+          align="end"
+          sideOffset={4}
+          className="z-20 min-w-[12rem] overflow-hidden rounded-lg border border-foreground/10 bg-background py-1 shadow-lg"
         >
-          <li>
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                onExportFcpxml?.();
-                setOpen(false);
-              }}
-              className={dropdownOptionClass}
-            >
-              FCPXML (.fcpxml)
-            </button>
-          </li>
-          <li>
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                onExportCmx3600?.();
-                setOpen(false);
-              }}
-              className={dropdownOptionClass}
-            >
-              CMX 3600 EDL (.edl)
-            </button>
-          </li>
-        </ul>
-      )}
-    </div>
+          <DropdownMenu.Item
+            onSelect={() => onExportFcpxml?.()}
+            className={`${dropdownOptionClass} cursor-pointer select-none outline-none data-[highlighted]:bg-foreground/10`}
+          >
+            FCPXML (.fcpxml)
+          </DropdownMenu.Item>
+          <DropdownMenu.Item
+            onSelect={() => onExportCmx3600?.()}
+            className={`${dropdownOptionClass} cursor-pointer select-none outline-none data-[highlighted]:bg-foreground/10`}
+          >
+            CMX 3600 EDL (.edl)
+          </DropdownMenu.Item>
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+    </DropdownMenu.Root>
   );
 }
 
