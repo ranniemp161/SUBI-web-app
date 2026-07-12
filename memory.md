@@ -1,39 +1,49 @@
-# Memory — Roadmap reconciliation + prod-* skills install
+# Memory — Studio auto-cut flow (ADR 0003, merged) + server-shared extraction (in progress)
 
-Last updated: 2026-07-11
+Last updated: 2026-07-12
 
 ## What was built
 
-- Ran `/roadmap` (replan behavior, no argument) against the `_root` (ecosystem-wide) workspace roadmap in a monorepo split by workspace (`docs/roadmap/index.md`, `docs/roadmap/_root/roadmap.md`, `docs/roadmap/rough-cut/roadmap.md`).
-- `docs/roadmap/_root/roadmap.md`: enrolled feature 2 "Demo-only free credits gate" as `existing` (shipped off-plan via commits fd01b3d + 0f57c7c, no ADR: `is_member` now defaults to false, monthly grant restricted to a single `MEMBER_ALLOWLIST_EMAIL`). Queued feature 3 "Auto-recharge notification channel" and feature 4 "AI Cut differentiated retail rate" as new `planned` rows, sourced from ADR `_root/0002-usd-wallet`'s Follow-up section. Reworded the Open Questions note on the member monthly grant to clarify the allowlist gate is an interim demo stopgap, not the client's final decision.
-- `docs/roadmap/index.md`: updated the `_root` rollup line to reflect the above.
-- `docs/roadmap/rough-cut/roadmap.md`: reviewed, no changes needed — its Deferred section and Accepted risks already covered everything in its ADRs' Follow-up sections; two other recent commits (wallet nav rename, Vercel Deployment Protection bypass for Deepgram callback) are pure fixes inside already-`existing`/`done` features, not new decisions.
-- Copied six new skills from `.agents/skills/` into `.claude/skills/` so they're invocable as Claude Code slash commands: `prod-architecture`, `prod-cloud-infra`, `prod-code-review`, `prod-launch-checklist`, `prod-readiness`, `prod-security`. (`.agents/skills/` and `.claude/skills/` were exact mirrors for every pre-existing skill; only these six were missing from `.claude/skills/`.)
-- Updated the auto-memory naming record: wallet app nav now reads "Founder's Frame Wallet" (was tracked as placeholder "SUBI Wallet"), per commit 6e37de1.
+### ADR 0003 Studio auto-cut flow — done, merged (prior session)
+- Full `/develop` → `/verify` → `/test` → `/debug` → `/sync` → merge cycle for **ADR 0003, Studio auto-cut flow** (`docs/adr/rough-cut/0003-studio-auto-cut-flow/`), roadmap feature 7 in `docs/roadmap/rough-cut/roadmap.md`. `done`, merged to `client-preview`.
+- **Child 1 (auto-cut pipeline)**: `packages/db/src/schema.ts` + migration `0010_watery_vision.sql` add `projects.ai_polish_requested` (now applied to **both dev and prod** — see Current state). `apps/rough-cut/src/lib/validation.ts` (`createProjectSchema.aiPolish`), `src/app/api/projects/route.ts` (persists it), `src/lib/projects.ts` (`claimAiCutSlot` flips the flag false atomically in the same UPDATE as the claim). `src/app/(app)/dashboard/page.tsx` — upload now holds the file selection and shows a confirm panel (combined price, AI-polish toggle default-on) before creating the project. `src/app/(app)/dashboard/[id]/page.tsx` — new `runAutoChain`/auto-chain effect chaining `buildInitialEDL` into `runAiCut(sourceEdl)` under one loader. Removed `RoughCutHero` and the old "all keep" placeholder.
+- **Child 2 (AI re-run removal + free restore)**: removed the always-on "AI Cut" rail button and run-list UI (`AiCutRunDisplay`, switch/rename/delete wiring) from the studio page. `src/components/transcript-panel.tsx` shows exactly one of: "Polish with AI", free "Restore AI suggestions" (via `applyAiCuts` divergence check), or neither.
+- **Child 3 (exit confirm dialog)**: `packages/ui/src/confirm-dialog.tsx` — new `ConfirmDialog`, first shared component in `@repo/ui` (Radix `@radix-ui/react-alert-dialog`). Replaces the old exit toast; `beforeunload` only attaches while `aiBusy`.
+- Tests: new/extended across dashboard page, projects lib, projects route, confirm-dialog (+ `packages/ui/vitest.config.ts`), studio page, transcript-panel. 377 rough-cut / 17 ui tests passing at merge.
+- **Merged**: PR #15, `feat/studio-auto-cut` → `client-preview` (merge commit `4c6f652`). Both branches deleted.
+
+### `@repo/server-shared` extraction — uncommitted, in progress (this session)
+- New workspace package `packages/server-shared/` (`@repo/server-shared`, added as a dependency to both `apps/rough-cut/package.json` and `apps/wallet/package.json`). Exports `reportError` (from `./observability`) and `rateLimit`/`RateLimitResult` (from `./rate-limit`) via `src/index.ts`, plus subpath exports `@repo/server-shared/observability` and `@repo/server-shared/rate-limit`.
+- Deduplicates what used to be near-identical `src/lib/rate-limit.ts` (Upstash fixed-window limiter, `failClosed` option) and `src/lib/observability.ts` (`Sentry.captureException` wrapper) copies in both apps. Each app's local `src/lib/rate-limit.ts` / `observability.ts` is now a thin re-export, with only the app-specific named limiters (e.g. rough-cut's `readRateLimit`, new `aiCutRateLimit` at 10/hour shared across all AI Cut routes per ADR 0002) staying local.
+- Old `apps/rough-cut/src/lib/rate-limit.test.ts` and `apps/wallet/src/lib/rate-limit.test.ts` deleted (their coverage moves to `packages/server-shared/src/rate-limit.test.ts`).
+- Along the way, also pulled `deleteBlobQuietly` (rough-cut `src/lib/blob.ts`) and `settleHoldQuietly` (rough-cut `src/lib/credits.ts`) out of `transcribe/callback/route.ts` into their owning modules as named exports — same behavior, just de-duplicated from being route-local helpers.
+- **Not yet committed.** No commit made this session; `git status` still shows all these files as modified/untracked.
 
 ## Decisions made
 
-- Enrolled the free-credits-gate change as `existing` rather than `done`, since it shipped without going through `/architect`/`/develop` (no ADR) — matches the roadmap skill's "drift" convention for off-plan shipped work.
-- Kept both new `_root` follow-ups (notification channel, AI Cut rate) as `planned`/queued rather than actively sequencing them now — neither is blocking, and pricing-rate change explicitly needs real `cost_micros` usage data first.
-- Chose to copy (not symlink) the prod-* skill folders into `.claude/skills/`, matching how the rest of the skills already exist as independent copies in both `.agents/skills/` and `.claude/skills/` (no existing symlink pattern to follow). Flagged to the user that this means future `.agents/` installs won't auto-sync and will need the same manual copy (or a symlink setup, if preferred).
+- Auto-chain (ADR 0003) fires only when `transcriptStatus === "ready" && !savedEdl` — deliberately conjunctive so legacy/manually-edited/already-run projects are provably inert (AC-4, AC-10).
+- Kept ADR 0002's `ai_cut_runs` table, claim machinery, and switch/rename/delete routes in place unmodified (the "strangler seam") — only the client stopped calling them. Tracked as deliberate debt in ADR 0003's Follow-up, not pruned this round.
+- `verify.md` is the durable, AC-tagged checklist beside each ADR; `/verify` and `/test` both read/write it rather than re-deriving criteria each time.
+- `server-shared` keeps the `failClosed` semantics from the original rate-limiter untouched (fail-open for ordinary abuse caps, fail-closed for money-moving paths like the AI Cut idempotency lock) — this is preserved behavior, not a design change.
 
 ## Problems solved
 
-- None — this session was reconciliation/config, not debugging.
+- **Real production bug, found via manual testing, root-caused via `/debug`**: studio showed "Rough cut done — 0 silences removed" with an empty timeline, chained AI pass then failed. Root cause: the "processing → ready" poll effect calls `checkStatus()` from both a 4s interval **and** `visibilitychange`/`focus` listeners with no dedup guard — overlapping detections could each bump `reloadNonce`, causing a redundant reload that clobbered the auto-chain's just-applied cut before the 800ms debounced autosave landed. Fixed with a `settled` guard local to each poll-effect instance, a `hasEditedRef.current` skip in reload's EDL-seeding, and an `if (!applyEdl(...)) return;` consistency check in `runAutoChain`. Regression test added.
+- **CI-only lint failure, not visible locally**: `react-hooks/set-state-in-effect` on the auto-chain effect — never caught locally because turbo's lint cache was stale. Fixed by deferring the kickoff via `queueMicrotask()`.
+- Migration `0010` was tracked as applied by drizzle-kit but the DDL didn't execute against the live dev DB (known drift mode) — applied the column directly via a one-off script, re-ran `db:verify` to confirm.
 
 ## Current state
 
-- Roadmap files (`_root/roadmap.md`, `index.md`) are edited in place and reflect current shipped state as of commit 0f57c7c. Not yet committed to git (uncommitted working tree changes).
-- The six `prod-*` skills are live in `.claude/skills/` and confirmed showing up in the available-skills list (verified via a tool-search round trip after copying).
-- No code changes this session, only docs/roadmap + memory + skill files.
+- ADR 0003 is `done` on the roadmap, ADR 0003 index Status is `Accepted`, `verify.md` fully checked. Merged and live on `client-preview`.
+- **Prod migration `0010_watery_vision.sql` (`ai_polish_requested` column) has now been applied to prod** (done this session) — the previous session's open item is resolved. Both dev and prod Neon branches are current.
+- The `@repo/server-shared` refactor is a real, working but **uncommitted** change on top of that — `git status` shows it as the entire outstanding diff (rate-limit/observability consolidation, blob/credits quiet-helper extraction, new `packages/server-shared/`, package.json + package-lock.json updates).
 
 ## Next session starts with
 
-- If picking up either queued `_root` follow-up: run `/architect auto-recharge notification channel` or `/architect ai cut differentiated retail rate` (neither is urgent/blocking).
-- Consider whether to symlink `.claude/skills/` ↔ `.agents/skills/` instead of copying, if more skills get installed there in the future — currently a manual-copy step is needed each time.
-- Separately still open from prior sessions: whether/how to commit long-uncommitted changes (Editor Studio UX Safety, wallet auto-recharge/security fixes) — status unconfirmed this session, worth checking `git status` at the start of the next one.
+- Decide whether to run the `server-shared` package's tests (`packages/server-shared` has its own `vitest.config.ts` and `rate-limit.test.ts`) plus the full rough-cut/wallet suites, then commit the extraction — it's functionally a pure refactor (no behavior change intended) but hasn't been verified or committed yet this session.
+- ADR 0003's Follow-up section still has two queued cleanup items once auto-cut has been live a while: prune the dead run-list routes (`PATCH .../ai-cut/active`, `DELETE .../ai-cut/runs/[runId]`, rename) and consider shrinking `AI_CUT_RUN_LIMIT` (currently 3) — not urgent.
 
 ## Open questions
 
-- The member monthly grant's final money-era form (dollar grant vs free minutes vs dropped) is still an open client conversation — the allowlist-email gate shipped this week is explicitly a stopgap, not the answer.
-- Prod deploy readiness: last confirmed NOT yet deployed as of 2026-07-08 (per `project_vercel_deploy_readiness` memory); this session did not re-verify current deploy status.
+- Is the `server-shared` extraction meant to be its own PR, or folded into whatever the next feature branch is? Not yet decided this session.
+- General open items from the broader project (member monthly grant final form, overall prod deploy readiness) are unchanged and tracked in auto-memory, not repeated here.
