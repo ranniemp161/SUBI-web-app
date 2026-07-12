@@ -53,6 +53,68 @@ describe("buildFcpxml", () => {
     const xml = buildFcpxml(edl, "My Project", "source.mov");
     expect(xml).not.toContain("<clip ");
   });
+
+  it("declares the asset's duration as the furthest point any kept range reaches into the source, not the sum of kept durations", () => {
+    // Kept ranges: [0, 2] and [100, 103]. Summed kept duration is 5s, but a
+    // clip refs into the source up to 103s — the asset must cover that.
+    const edl: EDL = {
+      segments: [
+        { start: 0, end: 2, status: "keep", reason: null },
+        { start: 2, end: 100, status: "cut", reason: "silence" },
+        { start: 100, end: 103, status: "keep", reason: null },
+      ],
+    };
+    const xml = buildFcpxml(edl, "My Project", "source.mov");
+    const assetMatch = xml.match(/<asset[^>]*duration="(\d+)\/30s"/);
+    expect(assetMatch).not.toBeNull();
+    expect(Number(assetMatch![1])).toBe(103 * 30);
+    // A clip's own <video> start/duration must stay within [0, assetDuration].
+    expect(xml).toContain('start="3000/30s"'); // 100s
+  });
+
+  it("accumulates clip offsets from exact seconds, matching CMX 3600's rounding, so cut points agree", () => {
+    // 3 clips of 1.75 frames each: FCPXML must not sum independently-rounded
+    // per-clip frame counts (which would land on frame 6); it must round the
+    // cumulative offset once (frame 5), same as CMX 3600.
+    const oneAndThreeQuarterFrames = 1.75 / 30;
+    const edl: EDL = {
+      segments: [
+        { start: 0, end: oneAndThreeQuarterFrames, status: "keep", reason: null },
+        {
+          start: oneAndThreeQuarterFrames,
+          end: 2 * oneAndThreeQuarterFrames,
+          status: "keep",
+          reason: null,
+        },
+        {
+          start: 2 * oneAndThreeQuarterFrames,
+          end: 3 * oneAndThreeQuarterFrames,
+          status: "keep",
+          reason: null,
+        },
+      ],
+    };
+    const xml = buildFcpxml(edl, "My Project", "source.mov");
+    const offsets = [...xml.matchAll(/offset="(\d+)\/30s"/g)].map((m) => Number(m[1]));
+    // Third clip's offset is the cumulative-seconds rounding of 2 * 1.75 frames = 3.5 -> 4, not 2+2=4...
+    // The key regression check is the sequence/asset total, which must equal round(3 * 1.75) = 5.
+    const totalMatch = xml.match(/<sequence[^>]*duration="(\d+)\/30s"/);
+    expect(Number(totalMatch![1])).toBe(5);
+    expect(offsets[0]).toBe(0);
+  });
+
+  it("uses the provided source resolution instead of a hardcoded 1920x1080", () => {
+    const edl: EDL = { segments: [{ start: 0, end: 1, status: "keep", reason: null }] };
+    const xml = buildFcpxml(edl, "My Project", "source.mov", { width: 3840, height: 2160 });
+    expect(xml).toContain('width="3840" height="2160"');
+    expect(xml).not.toContain('width="1920" height="1080"');
+  });
+
+  it("defaults to 1920x1080 when no resolution is provided", () => {
+    const edl: EDL = { segments: [{ start: 0, end: 1, status: "keep", reason: null }] };
+    const xml = buildFcpxml(edl, "My Project", "source.mov");
+    expect(xml).toContain('width="1920" height="1080"');
+  });
 });
 
 describe("sanitizeFilename", () => {

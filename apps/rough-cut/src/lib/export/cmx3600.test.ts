@@ -65,6 +65,20 @@ describe("buildCmx3600Edl", () => {
     const eventLines = doc.split("\n").filter((line) => /^\d{3}\s/.test(line));
     expect(eventLines).toHaveLength(0);
   });
+
+  it("strips control characters from the title so a newline can't inject an extra line", () => {
+    const edl: EDL = { segments: [{ start: 0, end: 3, status: "keep", reason: null }] };
+    const doc = buildCmx3600Edl(edl, "My Project\nFCM: DROP FRAME", "source.mov");
+    const lines = doc.split("\n");
+    expect(lines[0]).toBe("TITLE: My ProjectFCM: DROP FRAME");
+    expect(lines[1]).toBe("FCM: NON-DROP FRAME");
+  });
+
+  it("strips control characters from the source filename in FROM CLIP NAME", () => {
+    const edl: EDL = { segments: [{ start: 0, end: 3, status: "keep", reason: null }] };
+    const doc = buildCmx3600Edl(edl, "My Project", "source\n.mov");
+    expect(doc).toContain("* FROM CLIP NAME: source.mov");
+  });
 });
 
 describe("FCPXML and CMX 3600 EDL cross-format consistency", () => {

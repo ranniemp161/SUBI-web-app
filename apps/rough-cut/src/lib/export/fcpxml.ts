@@ -21,21 +21,33 @@ function escapeXml(value: string): string {
  * clips, in order, at a fixed 30fps timebase. Segments shorter than one
  * frame are dropped rather than included as zero-length clips.
  */
-export function buildFcpxml(edl: EDL, projectTitle: string, sourceFilename: string): string {
+export function buildFcpxml(
+  edl: EDL,
+  projectTitle: string,
+  sourceFilename: string,
+  resolution: { width: number; height: number } = { width: 1920, height: 1080 }
+): string {
   const ranges = getKeepRanges(edl).filter((r) => r.end - r.start >= MIN_CLIP_SECONDS);
   const totalFrames = toFrames(totalKeptSeconds(ranges));
+  // The asset's duration must bound every clip ref into it, so it has to cover
+  // the furthest point any kept range reaches into the source — not the sum of
+  // kept durations, which is the edited timeline's length, not the source's.
+  const sourceDurationFrames = toFrames(Math.max(0, ...ranges.map((r) => r.end)));
   const safeTitle = escapeXml(projectTitle);
   const safeSourceFilename = escapeXml(sourceFilename);
 
-  let cursorFrames = 0;
+  let cursorSeconds = 0;
   const clips = ranges
     .map((range) => {
       const durationFrames = toFrames(range.end - range.start);
       if (durationFrames <= 0) return null;
-      const clip = `        <clip name="${safeTitle}" offset="${cursorFrames}/${FPS}s" duration="${durationFrames}/${FPS}s" start="${toFrames(range.start)}/${FPS}s" tcFormat="NDF">
+      // Accumulate exact seconds and round only once, at emission, so this
+      // matches CMX 3600's accumulation and the two formats agree on cut points.
+      const offsetFrames = toFrames(cursorSeconds);
+      const clip = `        <clip name="${safeTitle}" offset="${offsetFrames}/${FPS}s" duration="${durationFrames}/${FPS}s" start="${toFrames(range.start)}/${FPS}s" tcFormat="NDF">
           <video ref="r2" offset="${toFrames(range.start)}/${FPS}s" duration="${durationFrames}/${FPS}s" start="${toFrames(range.start)}/${FPS}s"/>
         </clip>`;
-      cursorFrames += durationFrames;
+      cursorSeconds += range.end - range.start;
       return clip;
     })
     .filter((clip): clip is string => clip !== null)
@@ -45,8 +57,8 @@ export function buildFcpxml(edl: EDL, projectTitle: string, sourceFilename: stri
 <!DOCTYPE fcpxml>
 <fcpxml version="1.10">
   <resources>
-    <format id="r1" name="FFVideoFormat1080p30" frameDuration="1/${FPS}s" width="1920" height="1080"/>
-    <asset id="r2" name="${safeSourceFilename}" src="file:///${safeSourceFilename}" hasVideo="1" hasAudio="1" format="r1" duration="${totalFrames}/${FPS}s"/>
+    <format id="r1" name="FFVideoFormat1080p30" frameDuration="1/${FPS}s" width="${resolution.width}" height="${resolution.height}"/>
+    <asset id="r2" name="${safeSourceFilename}" src="file:///${safeSourceFilename}" hasVideo="1" hasAudio="1" format="r1" duration="${sourceDurationFrames}/${FPS}s"/>
   </resources>
   <library>
     <event name="${safeTitle}">

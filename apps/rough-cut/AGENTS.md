@@ -54,6 +54,10 @@ npm -w @repo/rough-cut typecheck
   no-op until `SENTRY_DSN`/`NEXT_PUBLIC_SENTRY_DSN` are set.
 - Tests are colocated `*.test.ts(x)` next to source, run with Vitest.
 - **ESLint & Mocking**: When mocking components with `forwardRef` in tests, avoid anonymous arrow functions. Use named function expressions (e.g. `forwardRef(function VideoPlayerStub() {})`) to satisfy `react/display-name`. Do not declare unused arguments in callback parameters (e.g. `props`, `ref`, `url`, `init`) to satisfy `@typescript-eslint/no-unused-vars`.
+- **Dropdowns/menus**: build on Radix (`@radix-ui/react-select` for a value picker, `@radix-ui/react-dropdown-menu` for an action menu), never hand-roll outside-click/Escape/focus logic — the same precedent `packages/ui/src/confirm-dialog.tsx` set for dialogs. See the export cluster's `StyledSelect`/`ExportFormatMenu` in `src/app/(app)/dashboard/[id]/page.tsx` for the pattern.
+
+## Agent skills
+- Declined: Radix UI tooling (`radix-ui-design-system` skill, `radix-mcp-server` MCP) — Radix's own docs plus the local `confirm-dialog.tsx`/`StyledSelect` precedent are enough for now.
 
 ## Gotchas
 - Deepgram's transcription callback isn't signed — a per-project random token
