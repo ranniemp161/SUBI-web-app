@@ -26,6 +26,7 @@ The core product: browser-based video transcription and AI-assisted rough cuttin
 | 5 | Tune cut logic against utterance boundaries | Slice 4 | done |
 | 6 | Named/labeled AI Cut runs | Slice 5 | done |
 | 7 | Studio auto-cut flow | Slice 6 | done |
+| 8 | Export to DaVinci Resolve / Premiere Pro (FCPXML) | Slice 7 | done |
 
 ## Existing (pre-workflow, enrolled 2026-07-08)
 
@@ -147,6 +148,22 @@ Client-requested UX redesign: the studio auto-runs the free mechanical rough cut
   code in `packages/db/src/schema.ts`, `packages/db/drizzle/0010_watery_vision.sql`, `packages/ui/src/confirm-dialog.tsx`, `apps/rough-cut/src/lib/validation.ts`, `apps/rough-cut/src/lib/projects.ts`, `apps/rough-cut/src/app/api/projects/route.ts`, `apps/rough-cut/src/app/(app)/dashboard/page.tsx`, `apps/rough-cut/src/app/(app)/dashboard/[id]/page.tsx`, `apps/rough-cut/src/components/transcript-panel.tsx`
 - [x] Verify it: `/verify studio auto-cut flow` (manual signed-in pass by engineer on 2026-07-11 confirmed working end-to-end, including race-condition bug fix validated in live app)
 - [x] Test it: `/test studio auto-cut flow`
+
+## Slice 7
+
+### 8. Export to DaVinci Resolve / Premiere Pro (FCPXML + CMX 3600 EDL) · done
+Alongside the existing browser MP4 export, let a user export their cut list as an FCPXML file, or a CMX 3600 EDL, so they can finish the video (color grade, mix audio) in a professional NLE instead of only ever getting a flattened MP4. Spec: [0001](../../specs/rough-cut/0001-nle-export-fcpxml/index.md)
+**Done when:** a project with a saved, non-empty EDL can export a valid FCPXML file and/or a valid CMX 3600 EDL file, each containing only the kept segments in order, referencing the source clip by its original filename, at a fixed 30fps timebase; both are reachable from one shared, styled menu control in the export cluster (alongside the resolution dropdown).
+code in `apps/rough-cut/src/lib/export/fcpxml.ts`, `apps/rough-cut/src/lib/export/cmx3600.ts`, `apps/rough-cut/src/lib/export/timebase.ts`, `apps/rough-cut/src/lib/export/filename.ts`, `apps/rough-cut/src/lib/download-text-file.ts`, `apps/rough-cut/src/app/(app)/dashboard/[id]/page.tsx`
+- [x] Design it (spec): [0001](../../specs/rough-cut/0001-nle-export-fcpxml/index.md)
+- [x] Build it: `/develop export to davinci premiere fcpxml`
+  - [x] FCPXML generator + entry point + gating + restyled controls (spec tasks 1 to 4)
+  - [x] Extract shared frame math + filename sanitizing helpers (spec task 5)
+  - [x] CMX 3600 EDL generator (spec tasks 6 to 7)
+  - [x] Format picker menu (FCPXML vs CMX 3600 EDL) wired into the top bar (spec task 8)
+  - [x] Test coverage for the new format, plus a cross format consistency check (spec task 9)
+- [x] Verify it: `/check verify export to davinci premiere fcpxml` (automated pass 2026-07-12 + engineer manual sign-off 2026-07-12 on the UI-only items, see verify.md)
+- [x] Test it: `/test export to davinci premiere fcpxml`
 
 ## Deferred
 
