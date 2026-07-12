@@ -130,7 +130,7 @@ const exportSupportSnapshot = (): ExportSupport =>
 // on the server and during hydration (button ungated), then swap to the real
 // answer on the client. No effect, no hydration mismatch.
 const exportSupportServerSnapshot = (): ExportSupport | null => null;
-const exportSupportSubscribe = () => () => {};
+const exportSupportSubscribe = () => () => { };
 
 export default function EditorPage() {
   const { id } = useParams<{ id: string }>();
@@ -1196,7 +1196,7 @@ export default function EditorPage() {
       <div className="flex h-screen flex-col">
         <TopBar fileName={project.fileName} savedAt={savedAt} disabled />
         <div className="mx-auto mt-16 max-w-2xl px-6">
-          <h1 className="text-2xl font-bold text-foreground">{project.fileName}</h1>
+          <h1 className="text-2xl font-bold text-foreground"> STEP 2 reselect your video file: {project.fileName}</h1>
           <p className="mt-2 text-foreground/50">
             Your video isn&apos;t stored on our server. Re-select{" "}
             <span className="text-foreground/80">{project.fileName}</span> from your
@@ -1242,29 +1242,29 @@ export default function EditorPage() {
     title?: string;
     action: "filler" | "review";
   }[] = [
-    {
-      Icon: Sparkles,
-      label: "Filler",
-      active: fillerWords.length > 0,
-      badge: fillerWords.length,
-      title:
-        fillerWords.length > 0
-          ? `Remove ${fillerWords.length} filler word${fillerWords.length === 1 ? "" : "s"} (um, uh, …)`
-          : "No filler words detected",
-      action: "filler",
-    },
-    {
-      Icon: ListChecks,
-      label: "Review",
-      active: retakeCount > 0,
-      badge: retakeCount,
-      title:
-        retakeCount > 0
-          ? `Review ${retakeCount} auto-cut retake${retakeCount === 1 ? "" : "s"} one by one`
-          : "No auto-cut retakes to review",
-      action: "review",
-    },
-  ];
+      {
+        Icon: Sparkles,
+        label: "Filler",
+        active: fillerWords.length > 0,
+        badge: fillerWords.length,
+        title:
+          fillerWords.length > 0
+            ? `Remove ${fillerWords.length} filler word${fillerWords.length === 1 ? "" : "s"} (um, uh, …)`
+            : "No filler words detected",
+        action: "filler",
+      },
+      {
+        Icon: ListChecks,
+        label: "Review",
+        active: retakeCount > 0,
+        badge: retakeCount,
+        title:
+          retakeCount > 0
+            ? `Review ${retakeCount} auto-cut retake${retakeCount === 1 ? "" : "s"} one by one`
+            : "No auto-cut retakes to review",
+        action: "review",
+      },
+    ];
 
   const transportBtn =
     "flex h-9 w-9 items-center justify-center rounded-lg text-foreground/70 transition-colors hover:bg-foreground/10 hover:text-foreground";
@@ -1310,11 +1310,10 @@ export default function EditorPage() {
                   : () => setShowRetakeReview(true)
               }
               title={tool.title ?? tool.label}
-              className={`relative flex w-14 flex-col items-center gap-1 rounded-lg py-2 text-[10px] ${
-                tool.active
-                  ? "bg-blue-500/15 text-blue-300 transition-colors hover:bg-blue-500/25"
-                  : "cursor-not-allowed text-foreground/30"
-              }`}
+              className={`relative flex w-14 flex-col items-center gap-1 rounded-lg py-2 text-[10px] ${tool.active
+                ? "bg-blue-500/15 text-blue-300 transition-colors hover:bg-blue-500/25"
+                : "cursor-not-allowed text-foreground/30"
+                }`}
             >
               <tool.Icon className="h-5 w-5" strokeWidth={1.75} />
               {tool.label}
@@ -1511,11 +1510,10 @@ export default function EditorPage() {
                   onClick={() => setSensitivity(level)}
                   aria-pressed={sensitivity === level}
                   title={`${level} auto-cut`}
-                  className={`px-2 py-0.5 capitalize transition-colors ${
-                    sensitivity === level
-                      ? "bg-blue-600 text-white"
-                      : "text-foreground/55 hover:bg-foreground/10 hover:text-foreground/80"
-                  }`}
+                  className={`px-2 py-0.5 capitalize transition-colors ${sensitivity === level
+                    ? "bg-blue-600 text-white"
+                    : "text-foreground/55 hover:bg-foreground/10 hover:text-foreground/80"
+                    }`}
                 >
                   {level}
                 </button>
@@ -1651,9 +1649,8 @@ function StatusScreen({
   return (
     <div className="flex h-screen flex-col items-center justify-center gap-4 bg-background px-6 text-center">
       <div
-        className={`flex h-14 w-14 items-center justify-center rounded-2xl ${
-          tone === "error" ? "bg-red-500/10 text-red-400" : "bg-blue-500/15 text-blue-300"
-        }`}
+        className={`flex h-14 w-14 items-center justify-center rounded-2xl ${tone === "error" ? "bg-red-500/10 text-red-400" : "bg-blue-500/15 text-blue-300"
+          }`}
       >
         {icon}
       </div>
@@ -1912,9 +1909,8 @@ function TopBar({
               className="flex items-center gap-1 text-[11px] text-foreground/55"
             >
               <span
-                className={`h-1.5 w-1.5 rounded-full ${
-                  savedAt === "saving" ? "bg-amber-400" : "bg-emerald-400"
-                }`}
+                className={`h-1.5 w-1.5 rounded-full ${savedAt === "saving" ? "bg-amber-400" : "bg-emerald-400"
+                  }`}
               />
               {savedAt === "saving" ? "Saving…" : "All changes saved"}
             </div>

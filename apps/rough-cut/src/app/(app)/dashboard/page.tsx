@@ -151,7 +151,7 @@ async function startDeepgramTranscription(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ blobUrl: blob.url }),
       keepalive: true,
-    }).catch(() => {});
+    }).catch(() => { });
     throw error;
   }
 }
@@ -798,10 +798,10 @@ export default function DashboardPage() {
       <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold tracking-tight text-foreground sm:text-4xl">
-            Your Projects
+            Step 1: Audio Extraction and Transcription
           </h1>
           <p className="mt-2 text-foreground/50">
-            Turn raw footage into a rough cut — start by adding a video below.
+            Upload your video and we&apos;ll extract the audio and transcribe it before you can proceed to step 2.⬇️
           </p>
         </div>
         <div className="flex flex-col items-end gap-2">
@@ -811,12 +811,12 @@ export default function DashboardPage() {
               <span className="inline-flex items-center gap-1.5 rounded-full bg-foreground/[0.04] px-3 py-1.5 font-medium text-foreground/60 ring-1 ring-inset ring-foreground/10">
                 {projects.length} {projects.length === 1 ? "project" : "projects"}
               </span>
-            {readyCount > 0 && (
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-3 py-1.5 font-medium text-emerald-200 ring-1 ring-inset ring-emerald-400/20">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-                {readyCount} ready
-              </span>
-            )}
+              {readyCount > 0 && (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-3 py-1.5 font-medium text-emerald-200 ring-1 ring-inset ring-emerald-400/20">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                  {readyCount} ready
+                </span>
+              )}
               {processingCount > 0 && (
                 <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-500/10 px-3 py-1.5 font-medium text-blue-200 ring-1 ring-inset ring-blue-400/20">
                   <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-blue-400" />
@@ -896,10 +896,10 @@ export default function DashboardPage() {
                   ? null
                   : activeUpload.step === "transcribing"
                     ? estimateTranscribePercent(
-                        activeUpload.startedAt,
-                        project.durationMs,
-                        nowTick
-                      )
+                      activeUpload.startedAt,
+                      project.durationMs,
+                      nowTick
+                    )
                     : activeUpload.percent;
               const jobLabel =
                 activeUpload?.step === "extracting"
@@ -950,11 +950,10 @@ export default function DashboardPage() {
                           className={`absolute left-3 top-3 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold backdrop-blur-md ${status.chip} ${status.text}`}
                         >
                           <span
-                            className={`h-1.5 w-1.5 rounded-full ${status.dot} ${
-                              project.transcriptStatus === "processing"
-                                ? "animate-pulse"
-                                : ""
-                            }`}
+                            className={`h-1.5 w-1.5 rounded-full ${status.dot} ${project.transcriptStatus === "processing"
+                              ? "animate-pulse"
+                              : ""
+                              }`}
                           />
                           {status.label}
                         </span>
@@ -1004,30 +1003,30 @@ export default function DashboardPage() {
                       server-side, so this re-prompts for the file. */}
                   {(project.transcriptStatus === "failed" ||
                     project.transcriptStatus === "idle") && (
-                    <div className="px-4 pb-4">
-                      <button
-                        onClick={(e) => handleRetryClick(e, project)}
-                        className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-white/[0.03] hover:bg-blue-500/10 border border-white/5 hover:border-blue-500/20 px-3 py-2 text-xs font-semibold text-zinc-300 hover:text-white transition-all duration-200 cursor-pointer"
-                      >
-                        <svg
-                          className="h-3.5 w-3.5 text-zinc-400 group-hover:text-blue-400 transition-colors"
-                          fill="none"
-                          stroke="currentColor"
-                          viewBox="0 0 24 24"
+                      <div className="px-4 pb-4">
+                        <button
+                          onClick={(e) => handleRetryClick(e, project)}
+                          className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-white/[0.03] hover:bg-blue-500/10 border border-white/5 hover:border-blue-500/20 px-3 py-2 text-xs font-semibold text-zinc-300 hover:text-white transition-all duration-200 cursor-pointer"
                         >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2}
-                            d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                          />
-                        </svg>
-                        {project.transcriptStatus === "failed"
-                          ? "Retry transcription"
-                          : "Start transcription"}
-                      </button>
-                    </div>
-                  )}
+                          <svg
+                            className="h-3.5 w-3.5 text-zinc-400 group-hover:text-blue-400 transition-colors"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                            />
+                          </svg>
+                          {project.transcriptStatus === "failed"
+                            ? "Retry transcription"
+                            : "Start transcription"}
+                        </button>
+                      </div>
+                    )}
 
                   {/* Delete — opens the confirmation modal; nothing is
                       deleted until the user confirms there. */}
@@ -1128,21 +1127,18 @@ export default function DashboardPage() {
                 onClick={() => setPendingAiPolish((v) => !v)}
                 aria-pressed={pendingAiPolish}
                 disabled={isCreating}
-                className={`mt-5 flex w-full items-start gap-3 rounded-xl border p-4 text-left transition-colors disabled:opacity-60 ${
-                  pendingAiPolish
-                    ? "border-blue-500/40 bg-blue-500/[0.08]"
-                    : "border-white/10 bg-white/[0.02] hover:bg-white/[0.04]"
-                }`}
+                className={`mt-5 flex w-full items-start gap-3 rounded-xl border p-4 text-left transition-colors disabled:opacity-60 ${pendingAiPolish
+                  ? "border-blue-500/40 bg-blue-500/[0.08]"
+                  : "border-white/10 bg-white/[0.02] hover:bg-white/[0.04]"
+                  }`}
               >
                 <span
-                  className={`mt-0.5 flex h-5 w-9 shrink-0 items-center rounded-full p-0.5 transition-colors ${
-                    pendingAiPolish ? "bg-blue-600" : "bg-white/15"
-                  }`}
+                  className={`mt-0.5 flex h-5 w-9 shrink-0 items-center rounded-full p-0.5 transition-colors ${pendingAiPolish ? "bg-blue-600" : "bg-white/15"
+                    }`}
                 >
                   <span
-                    className={`h-4 w-4 rounded-full bg-white transition-transform ${
-                      pendingAiPolish ? "translate-x-4" : "translate-x-0"
-                    }`}
+                    className={`h-4 w-4 rounded-full bg-white transition-transform ${pendingAiPolish ? "translate-x-4" : "translate-x-0"
+                      }`}
                   />
                 </span>
                 <span className="min-w-0">
