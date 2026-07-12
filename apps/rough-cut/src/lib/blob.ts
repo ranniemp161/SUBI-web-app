@@ -1,3 +1,6 @@
+import { del } from "@vercel/blob";
+import { reportError } from "@/lib/observability";
+
 /**
  * Shared helpers for validating our own Vercel Blob store's public URLs.
  *
@@ -60,5 +63,14 @@ export function projectIdFromBlobUrl(url: string): string | null {
     return match ? decodeURIComponent(match[1]) : null;
   } catch {
     return null;
+  }
+}
+
+/** Best-effort blob cleanup — a failed delete shouldn't mask the real result. */
+export async function deleteBlobQuietly(blobUrl: string): Promise<void> {
+  try {
+    await del(blobUrl);
+  } catch (error) {
+    reportError("Failed to delete transcription blob", error);
   }
 }

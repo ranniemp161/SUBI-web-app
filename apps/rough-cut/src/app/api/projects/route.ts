@@ -130,7 +130,11 @@ export async function GET() {
         .orderBy(desc(projects.createdAt))
     );
 
-    return NextResponse.json(userProjects);
+    // Explicit no-store: per-user project list must never be served stale or
+    // shared across users by an intermediary.
+    return NextResponse.json(userProjects, {
+      headers: { "Cache-Control": "no-store" },
+    });
   } catch (error) {
     reportError("Error listing projects", error);
     return NextResponse.json(

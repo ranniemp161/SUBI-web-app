@@ -1,13 +1,8 @@
 import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import { getOwnedProject, getAiCutRun, deleteAiCutRunAndRenumber, renameAiCutRun } from "@/lib/projects";
-import { rateLimit } from "@/lib/rate-limit";
+import { aiCutRateLimit } from "@/lib/rate-limit";
 import { reportError } from "@/lib/observability";
-
-// Same bucket/window as POST — DELETE carries no charge, but an unbounded loop
-// is still unwanted request volume against the database (ADR 0002-ai-cut-paid-rerun).
-const AI_CUT_LIMIT = 10;
-const AI_CUT_WINDOW_SECONDS = 3600;
 
 /**
  * DELETE /api/projects/:id/ai-cut/runs/:runId — delete a non-active stored AI
@@ -25,7 +20,7 @@ export async function DELETE(
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const limit = await rateLimit(`ai-cut:${clerkId}`, AI_CUT_LIMIT, AI_CUT_WINDOW_SECONDS);
+  const limit = await aiCutRateLimit(clerkId);
   if (!limit.allowed) {
     return NextResponse.json(
       { error: "Too many AI cut requests — try again in a bit." },
@@ -81,7 +76,7 @@ export async function PATCH(
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const limit = await rateLimit(`ai-cut:${clerkId}`, AI_CUT_LIMIT, AI_CUT_WINDOW_SECONDS);
+  const limit = await aiCutRateLimit(clerkId);
   if (!limit.allowed) {
     return NextResponse.json(
       { error: "Too many AI cut requests — try again in a bit." },

@@ -24,7 +24,7 @@ vi.mock("@/lib/projects", () => ({
 }));
 
 vi.mock("@/lib/rate-limit", () => ({
-  rateLimit: vi.fn(async () => ({
+  aiCutRateLimit: vi.fn(async () => ({
     allowed: state.rateAllowed,
     remaining: state.rateAllowed ? 9 : 0,
     limit: 10,

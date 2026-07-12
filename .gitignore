@@ -51,3 +51,7 @@ next-env.d.ts
 # local-only ops scripts — must never be committed/deployed
 packages/db/scripts/topup-demo-account.ts
 
+# AI agent skills — local workflow tooling, not shared via git
+.claude/
+.agents/skills/
+

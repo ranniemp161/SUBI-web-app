@@ -318,6 +318,18 @@ export async function settleHold(
   }
 }
 
+/** Best-effort settle — a credits hiccup must never mask the transcript result. */
+export async function settleHoldQuietly(
+  projectId: string,
+  actualSeconds: number | null
+): Promise<void> {
+  try {
+    await settleHold(projectId, actualSeconds);
+  } catch (error) {
+    reportError("Failed to settle credit hold", error, { projectId });
+  }
+}
+
 /**
  * Credit a Stripe purchase, idempotently keyed on the Checkout session id.
  * `micros` is the USD-micros value to add. Returns false on a duplicate

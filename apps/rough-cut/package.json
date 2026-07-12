@@ -16,6 +16,7 @@
     "@deepgram/sdk": "^5.5.0",
     "@neondatabase/serverless": "^1.1.0",
     "@repo/db": "*",
+    "@repo/server-shared": "*",
     "@repo/ui": "*",
     "@sentry/nextjs": "^10.63.0",
     "@upstash/ratelimit": "^2.0.8",
