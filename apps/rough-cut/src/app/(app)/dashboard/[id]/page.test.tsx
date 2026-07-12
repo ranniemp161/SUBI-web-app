@@ -13,14 +13,15 @@
 // VideoPlayer, TranscriptPanel, TimelineBar and FilePicker are mocked as
 // boundary stubs (each has its own dedicated test file).
 import "@testing-library/jest-dom/vitest";
-import { render, screen, cleanup, waitFor } from "@testing-library/react";
+import { render, screen, cleanup, waitFor, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vitest";
-import { forwardRef } from "react";
+import { forwardRef, useImperativeHandle } from "react";
 
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  togglePlayMock.mockClear();
 });
 
 const pushMock = vi.hoisted(() => vi.fn());
@@ -61,9 +62,14 @@ vi.mock("@/components/file-picker", () => ({
   ),
 }));
 
+// Exposes a real (mocked) togglePlay through the imperative handle so the
+// global Space/K keyboard shortcut test can observe it being called.
+const togglePlayMock = vi.hoisted(() => vi.fn());
+
 vi.mock("@/components/video-player", () => ({
   __esModule: true,
-  default: forwardRef(function VideoPlayerStub() {
+  default: forwardRef(function VideoPlayerStub(_props, ref) {
+    useImperativeHandle(ref, () => ({ togglePlay: togglePlayMock }));
     return <div data-testid="video-player-stub" />;
   }),
 }));
@@ -612,5 +618,55 @@ describe("EditorPage — removed AI-run surfaces (AC-6)", () => {
     expect(screen.queryByRole("button", { name: /^run 2$/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /delete run/i })).toBeNull();
     expect(screen.queryByText(/AI runs \(/i)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Global keyboard shortcuts — Space auto-repeat guard
+//
+// The timeline's hand-tool pan (timeline-bar.tsx) lets a user hold Space to
+// drag-pan. Holding a key fires repeated "keydown" events (the OS's normal
+// key-repeat), and this handler used to call togglePlay() on every one of
+// them with no e.repeat guard — so holding Space to pan also rapid-fired
+// play/pause the whole time. Covers the fix at page.tsx's global keydown
+// handler (the `if (e.key === " " && e.repeat) return;` line).
+// ---------------------------------------------------------------------------
+describe("EditorPage — global keyboard shortcuts (Space repeat guard)", () => {
+  async function renderWithSource(project: typeof READY_PROJECT) {
+    stubFetchForProject(project);
+    render(<EditorPage />);
+    const pickButton = await screen.findByRole("button", { name: "pick-file" });
+    await userEvent.click(pickButton);
+    await screen.findByTestId("video-player-stub");
+  }
+
+  it("toggles play/pause once on a fresh Space press", async () => {
+    await renderWithSource(READY_PROJECT);
+
+    fireEvent.keyDown(window, { key: " ", code: "Space" });
+
+    expect(togglePlayMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores auto-repeat Space keydowns so holding it to pan doesn't rapid-fire play/pause", async () => {
+    await renderWithSource(READY_PROJECT);
+
+    fireEvent.keyDown(window, { key: " ", code: "Space" }); // real press
+    fireEvent.keyDown(window, { key: " ", code: "Space", repeat: true }); // OS repeat
+    fireEvent.keyDown(window, { key: " ", code: "Space", repeat: true }); // OS repeat
+    fireEvent.keyDown(window, { key: " ", code: "Space", repeat: true }); // OS repeat
+
+    expect(togglePlayMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("still toggles on 'k' repeats (only Space's repeat is guarded)", async () => {
+    // Documents the guard's scope: it targets Space specifically (the key the
+    // hand-tool pan holds down), not every transport shortcut.
+    await renderWithSource(READY_PROJECT);
+
+    fireEvent.keyDown(window, { key: "k", code: "KeyK" });
+    fireEvent.keyDown(window, { key: "k", code: "KeyK", repeat: true });
+
+    expect(togglePlayMock).toHaveBeenCalledTimes(2);
   });
 });

@@ -582,6 +582,11 @@ export default function EditorPage() {
       // Don't swallow other browser/OS chords (e.g. Cmd+R, Cmd+L).
       if (e.metaKey || e.ctrlKey) return;
 
+      // Space auto-repeats while held (the timeline's hand-tool pan relies on
+      // that) — ignore the repeats here so holding it to pan doesn't rapid-fire
+      // play/pause.
+      if (e.key === " " && e.repeat) return;
+
       switch (e.key) {
         case " ":
         case "k":
