@@ -1,13 +1,13 @@
 import { timingSafeEqual } from "crypto";
 import { NextResponse } from "next/server";
-import { del } from "@vercel/blob";
 import { db } from "@repo/db";
 import { projects } from "@repo/db/schema";
 import { eq } from "drizzle-orm";
 import { normalizeDeepgram } from "@/lib/deepgram";
-import { secondsFromDeepgramDuration, settleHold } from "@/lib/credits";
+import { secondsFromDeepgramDuration, settleHoldQuietly } from "@/lib/credits";
 import { reportError } from "@/lib/observability";
 import { ipRateLimit } from "@/lib/ip-rate-limit";
+import { deleteBlobQuietly } from "@/lib/blob";
 
 // Headroom for parsing large Deepgram payloads on long videos.
 export const maxDuration = 60;
@@ -26,24 +26,6 @@ const CALLBACK_WINDOW_SECONDS = 600;
 // rejecting anything else here costs nothing (no DB, no rate limiter) and
 // filters out the vast majority of garbage before either.
 const TOKEN_SHAPE = /^[0-9a-f]{64}$/i;
-
-/** Best-effort blob cleanup — a failed delete shouldn't mask the real result. */
-async function deleteBlobQuietly(blobUrl: string) {
-  try {
-    await del(blobUrl);
-  } catch (error) {
-    reportError("Failed to delete transcription blob", error);
-  }
-}
-
-/** Best-effort settle — a credits hiccup must never mask the transcript result. */
-async function settleHoldQuietly(projectId: string, actualSeconds: number | null) {
-  try {
-    await settleHold(projectId, actualSeconds);
-  } catch (error) {
-    reportError("Failed to settle credit hold", error, { projectId });
-  }
-}
 
 /**
  * POST /api/transcribe/callback

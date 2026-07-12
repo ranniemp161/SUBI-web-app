@@ -8,7 +8,7 @@ import {
   createAiCutRun,
   AI_CUT_RUN_LIMIT,
 } from "@/lib/projects";
-import { rateLimit } from "@/lib/rate-limit";
+import { aiCutRateLimit, rateLimit } from "@/lib/rate-limit";
 import { runAiRoughCut, isAiRoughCutConfigured } from "@/lib/ai-rough-cut";
 import { chargeAiCut, costSecondsForDurationMs, refundAiCut } from "@/lib/credits";
 import { reportError } from "@/lib/observability";
@@ -17,11 +17,6 @@ import type { Transcript } from "@/lib/edl";
 // Gemini legitimately takes minutes on a long transcript with thinking enabled
 // (capped at 240s in ai-rough-cut.ts) — don't let the platform cut it off first.
 export const maxDuration = 300;
-
-// Each run is a real Gemini call the account pays for; 10/hour is plenty for
-// "re-run it on a project or three", not enough to matter if a client loops.
-const AI_CUT_LIMIT = 10;
-const AI_CUT_WINDOW_SECONDS = 3600;
 
 /** Best-effort refund — a credits hiccup must never mask the real Gemini error. */
 async function refundAiCutQuietly(
@@ -55,7 +50,7 @@ export async function POST(
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const limit = await rateLimit(`ai-cut:${clerkId}`, AI_CUT_LIMIT, AI_CUT_WINDOW_SECONDS);
+  const limit = await aiCutRateLimit(clerkId);
   if (!limit.allowed) {
     return NextResponse.json(
       { error: "Too many AI cut runs — try again in a bit." },

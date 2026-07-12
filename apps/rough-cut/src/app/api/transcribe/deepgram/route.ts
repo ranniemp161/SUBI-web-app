@@ -1,7 +1,6 @@
 import { randomBytes } from "crypto";
 import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
-import { del } from "@vercel/blob";
 import { db } from "@repo/db";
 import { projects } from "@repo/db/schema";
 import { eq } from "drizzle-orm";
@@ -14,12 +13,12 @@ import {
   reclaimStaleHold,
   reserveCredits,
   secondsFromDeepgramDuration,
-  settleHold,
+  settleHoldQuietly,
   STALE_HOLD_MS,
 } from "@/lib/credits";
 import { rateLimit } from "@/lib/rate-limit";
 import { reportError } from "@/lib/observability";
-import { isOwnBlobUrl } from "@/lib/blob";
+import { deleteBlobQuietly, isOwnBlobUrl } from "@/lib/blob";
 import {
   extractDeepgramError,
   normalizeDeepgram,
@@ -30,6 +29,14 @@ import {
 // single user can kick it off.
 const TRANSCRIBE_LIMIT = 30;
 const TRANSCRIBE_WINDOW_SECONDS = 3600;
+
+// Callback mode (production): Deepgram only needs to acknowledge the job
+// here, so a hung request past this means something is actually wrong.
+const ACCEPT_TIMEOUT_MS = 30_000;
+// Sync mode (localhost only): this request blocks until Deepgram finishes
+// the full transcription, which can run minutes for longer recordings —
+// sized the same way as Gemini's REQUEST_TIMEOUT_MS in ai-rough-cut.ts.
+const SYNC_TRANSCRIBE_TIMEOUT_MS = 240_000;
 
 /**
  * POST /api/transcribe/deepgram?projectId=<id>
@@ -65,24 +72,6 @@ function isLocalHostname(hostname: string): boolean {
     hostname === "[::1]" ||
     hostname.endsWith(".local")
   );
-}
-
-/** Best-effort blob cleanup — a failed delete shouldn't mask the real result. */
-async function deleteBlobQuietly(blobUrl: string) {
-  try {
-    await del(blobUrl);
-  } catch (error) {
-    reportError("Failed to delete transcription blob", error);
-  }
-}
-
-/** Best-effort settle — a credits hiccup must never mask the transcript result. */
-async function settleHoldQuietly(projectId: string, actualSeconds: number | null) {
-  try {
-    await settleHold(projectId, actualSeconds);
-  } catch (error) {
-    reportError("Failed to settle credit hold", error, { projectId });
-  }
 }
 
 export async function POST(request: Request) {
@@ -241,6 +230,9 @@ export async function POST(request: Request) {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ url: blobUrl }),
+      signal: AbortSignal.timeout(
+        useSync ? SYNC_TRANSCRIBE_TIMEOUT_MS : ACCEPT_TIMEOUT_MS
+      ),
     });
 
     if (!dgResponse.ok) {

@@ -43,7 +43,12 @@ export async function GET(
 
     const aiCutRuns = await listAiCutRuns(id);
 
-    return NextResponse.json({ ...project, aiCutRuns });
+    // Explicit no-store: per-user project detail (transcript, EDL) must
+    // never be served stale or shared across users by an intermediary.
+    return NextResponse.json(
+      { ...project, aiCutRuns },
+      { headers: { "Cache-Control": "no-store" } }
+    );
   } catch (error) {
     reportError("Error fetching project", error);
     return NextResponse.json(

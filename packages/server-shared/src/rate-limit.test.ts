@@ -81,7 +81,7 @@ describe('rateLimit', () => {
   it('throws an error in production if KV_REST_API_URL or KV_REST_API_TOKEN is missing', async () => {
     vi.stubEnv("NODE_ENV", "production");
     delete process.env.KV_REST_API_URL;
-    
+
     await expect(rateLimit('prod:key', 10, 60)).rejects.toThrow(
       'KV_REST_API_URL and KV_REST_API_TOKEN must be set in production.'
     );
