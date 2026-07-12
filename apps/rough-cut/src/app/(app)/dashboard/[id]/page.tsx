@@ -23,6 +23,8 @@ import {
   Clock,
   Check,
   RotateCcw,
+  ChevronDown,
+  Film,
   type LucideIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -43,6 +45,10 @@ import {
   type ExportHandle,
   type ExportSupport,
 } from "@/lib/export/export-trigger";
+import { buildFcpxml } from "@/lib/export/fcpxml";
+import { buildCmx3600Edl } from "@/lib/export/cmx3600";
+import { sanitizeFilename } from "@/lib/export/filename";
+import { downloadTextFile } from "@/lib/download-text-file";
 import {
   absorbCutResidue,
   changedSpan,
@@ -979,6 +985,38 @@ export default function EditorPage() {
     }
   }, [sourceFile, edl, project, handleCancelExport, exportMaxHeight]);
 
+  // Builds an FCPXML or CMX 3600 EDL file describing the current EDL's kept
+  // segments and downloads it directly — no WebCodecs, no save picker, no
+  // reselected source video required, since both formats only reference the
+  // source by filename.
+  const handleExportFcpxml = useCallback(() => {
+    if (!edl || !project || keptDuration(edl) <= 0) {
+      toast.error("Nothing to export", {
+        description: "This project has no kept segments yet.",
+      });
+      return;
+    }
+    const xml = buildFcpxml(edl, project.fileName, project.fileName);
+    downloadTextFile(xml, `${sanitizeFilename(project.fileName)}.fcpxml`, "application/xml");
+    toast.success("FCPXML exported", {
+      description: "Open it in DaVinci Resolve or Premiere Pro and relink your source file.",
+    });
+  }, [edl, project]);
+
+  const handleExportCmx3600 = useCallback(() => {
+    if (!edl || !project || keptDuration(edl) <= 0) {
+      toast.error("Nothing to export", {
+        description: "This project has no kept segments yet.",
+      });
+      return;
+    }
+    const doc = buildCmx3600Edl(edl, project.fileName, project.fileName);
+    downloadTextFile(doc, `${sanitizeFilename(project.fileName)}.edl`, "text/plain");
+    toast.success("CMX 3600 EDL exported", {
+      description: "Open it in DaVinci Resolve or Premiere Pro and relink your source file.",
+    });
+  }, [edl, project]);
+
   // Warn on tab close/reload only while an export is actively encoding — that's
   // the one state with work worth losing. "starting" has nothing yet, and
   // "cancelling" is discarding its output on purpose, so neither warns.
@@ -1240,6 +1278,11 @@ export default function EditorPage() {
         exportState={exportState}
         exportMaxHeight={exportMaxHeight}
         onExportMaxHeightChange={setExportMaxHeight}
+        onExportFcpxml={handleExportFcpxml}
+        onExportCmx3600={handleExportCmx3600}
+        exportFormatBlockedReason={
+          !edl || keptDuration(edl) <= 0 ? "Nothing to export yet" : undefined
+        }
       />
 
       {/* Middle band: rail + preview + transcript */}
@@ -1674,6 +1717,192 @@ function EditorSkeleton() {
   );
 }
 
+/** Shared styling for the two select-style controls in the export cluster (AC-8). */
+const dropdownTriggerClass =
+  "flex items-center gap-1.5 rounded-lg border border-foreground/10 bg-transparent px-2 py-1.5 text-sm text-foreground/70 transition-colors hover:bg-foreground/10 disabled:cursor-not-allowed disabled:opacity-50";
+const dropdownOptionClass =
+  "flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm transition-colors hover:bg-foreground/10";
+
+/**
+ * A hand-rolled, design-token-styled listbox replacing the browser's native
+ * `<select>` chrome (AC-8) — a plain button that toggles an absolutely
+ * positioned option list, closed on outside click or Escape.
+ */
+function StyledSelect<T extends string>({
+  id,
+  label,
+  value,
+  options,
+  onChange,
+  disabled,
+  title,
+}: {
+  id: string;
+  label: string;
+  value: T;
+  options: { value: T; label: string }[];
+  onChange: (value: T) => void;
+  disabled?: boolean;
+  title?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  const current = options.find((o) => o.value === value) ?? options[0];
+
+  return (
+    <div ref={rootRef} className="relative">
+      <span id={`${id}-label`} className="sr-only">
+        {label}
+      </span>
+      <button
+        type="button"
+        id={id}
+        disabled={disabled}
+        title={title}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-labelledby={`${id}-label ${id}`}
+        onClick={() => setOpen((o) => !o)}
+        className={dropdownTriggerClass}
+      >
+        {current?.label}
+        <ChevronDown className="h-3.5 w-3.5" />
+      </button>
+      {open && (
+        <ul
+          role="listbox"
+          aria-labelledby={`${id}-label`}
+          className="absolute right-0 top-full z-20 mt-1 min-w-full overflow-hidden rounded-lg border border-foreground/10 bg-background py-1 shadow-lg"
+        >
+          {options.map((opt) => (
+            <li key={opt.value}>
+              <button
+                type="button"
+                role="option"
+                aria-selected={opt.value === value}
+                onClick={() => {
+                  onChange(opt.value);
+                  setOpen(false);
+                }}
+                className={`${dropdownOptionClass} ${
+                  opt.value === value ? "text-blue-300" : "text-foreground/70"
+                }`}
+              >
+                {opt.label}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The export cluster's format menu (AC-16): one styled trigger, matching the
+ * resolution dropdown, opening two action entries (FCPXML, CMX 3600 EDL).
+ * Each entry immediately generates and downloads its format, then closes —
+ * there's no persisted selection, just two actions behind one control.
+ */
+function ExportFormatMenu({
+  onExportFcpxml,
+  onExportCmx3600,
+  disabled,
+  title,
+}: {
+  onExportFcpxml?: () => void;
+  onExportCmx3600?: () => void;
+  disabled?: boolean;
+  title?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        type="button"
+        disabled={disabled}
+        title={title ?? "Export cut list for DaVinci Resolve or Premiere Pro"}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        className={dropdownTriggerClass}
+      >
+        <Film className="h-4 w-4" />
+        For DaVinci / Premiere
+        <ChevronDown className="h-3.5 w-3.5" />
+      </button>
+      {open && (
+        <ul
+          role="menu"
+          className="absolute right-0 top-full z-20 mt-1 min-w-full overflow-hidden rounded-lg border border-foreground/10 bg-background py-1 shadow-lg"
+        >
+          <li>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                onExportFcpxml?.();
+                setOpen(false);
+              }}
+              className={dropdownOptionClass}
+            >
+              FCPXML (.fcpxml)
+            </button>
+          </li>
+          <li>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                onExportCmx3600?.();
+                setOpen(false);
+              }}
+              className={dropdownOptionClass}
+            >
+              CMX 3600 EDL (.edl)
+            </button>
+          </li>
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function TopBar({
   fileName,
   savedAt,
@@ -1686,6 +1915,9 @@ function TopBar({
   exportState = "idle",
   exportMaxHeight = null,
   onExportMaxHeightChange,
+  onExportFcpxml,
+  onExportCmx3600,
+  exportFormatBlockedReason,
 }: {
   fileName: string;
   savedAt: "saved" | "saving";
@@ -1701,11 +1933,18 @@ function TopBar({
   // Output resolution cap for export; null = source resolution.
   exportMaxHeight?: number | null;
   onExportMaxHeightChange?: (height: number | null) => void;
+  // Exports the current EDL as an FCPXML file for DaVinci Resolve / Premiere Pro.
+  onExportFcpxml?: () => void;
+  // Exports the current EDL as a CMX 3600 EDL file, the alternate interchange format.
+  onExportCmx3600?: () => void;
+  // Non-empty when both format export options should be disabled (no kept EDL yet); doubles as the tooltip.
+  exportFormatBlockedReason?: string;
 }) {
   const iconBtn =
     "flex h-8 w-8 items-center justify-center rounded-md text-foreground/60 hover:bg-foreground/10 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40";
   const busy = exportState !== "idle";
   const exportDisabled = busy || Boolean(exportBlockedReason);
+  const exportFormatDisabled = Boolean(exportFormatBlockedReason);
   // Cancel is offered only once a cancellable handle exists — not during
   // "starting" (save dialog open, nothing to cancel yet).
   const showCancel = exportState === "exporting" || exportState === "cancelling";
@@ -1747,25 +1986,25 @@ function TopBar({
             <Redo2 className="h-4 w-4" />
           </button>
         </div>
-        <label htmlFor="export-quality" className="sr-only">
-          Export resolution
-        </label>
-        <select
+        <StyledSelect
           id="export-quality"
-          value={exportMaxHeight ?? "source"}
-          onChange={(e) =>
-            onExportMaxHeightChange?.(
-              e.target.value === "source" ? null : Number(e.target.value)
-            )
-          }
+          label="Export resolution"
+          value={exportMaxHeight === null ? "source" : String(exportMaxHeight)}
+          onChange={(v) => onExportMaxHeightChange?.(v === "source" ? null : Number(v))}
           disabled={busy}
           title="Export resolution — downscales larger sources, never upscales"
-          className="rounded-lg border border-foreground/10 bg-transparent px-2 py-1.5 text-sm text-foreground/70 transition-colors hover:bg-foreground/10 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          <option value="source">Source</option>
-          <option value="1080">1080p</option>
-          <option value="720">720p</option>
-        </select>
+          options={[
+            { value: "source", label: "Source" },
+            { value: "1080", label: "1080p" },
+            { value: "720", label: "720p" },
+          ]}
+        />
+        <ExportFormatMenu
+          onExportFcpxml={onExportFcpxml}
+          onExportCmx3600={onExportCmx3600}
+          disabled={exportFormatDisabled}
+          title={exportFormatBlockedReason}
+        />
         {showCancel && (
           <button
             type="button"
