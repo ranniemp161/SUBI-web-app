@@ -2,12 +2,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { downloadTextFile } from "./download-text-file";
 
 describe("downloadTextFile", () => {
-  let createObjectURL: ReturnType<typeof vi.fn>;
-  let revokeObjectURL: ReturnType<typeof vi.fn>;
+  let createObjectURL: ReturnType<typeof vi.fn<typeof URL.createObjectURL>>;
+  let revokeObjectURL: ReturnType<typeof vi.fn<typeof URL.revokeObjectURL>>;
 
   beforeEach(() => {
-    createObjectURL = vi.fn(() => "blob:mock-url");
-    revokeObjectURL = vi.fn();
+    createObjectURL = vi.fn<typeof URL.createObjectURL>(() => "blob:mock-url");
+    revokeObjectURL = vi.fn<typeof URL.revokeObjectURL>();
     // jsdom doesn't implement URL.createObjectURL/revokeObjectURL.
     URL.createObjectURL = createObjectURL;
     URL.revokeObjectURL = revokeObjectURL;
@@ -25,7 +25,7 @@ describe("downloadTextFile", () => {
     expect(createObjectURL).toHaveBeenCalledTimes(1);
     const [blobArg] = createObjectURL.mock.calls[0];
     expect(blobArg).toBeInstanceOf(Blob);
-    expect(blobArg.type).toBe("application/xml");
+    expect((blobArg as Blob).type).toBe("application/xml");
     expect(clickSpy).toHaveBeenCalledTimes(1);
   });
 
