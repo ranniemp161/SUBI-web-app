@@ -801,7 +801,7 @@ export default function DashboardPage() {
             Step 1: Audio Extraction and Transcription
           </h1>
           <p className="mt-2 text-foreground/50">
-            Upload your video and we'll extract the audio and transcribe it before you can proceed to step 2.⬇️
+            Upload your video and we&apos;ll extract the audio and transcribe it before you can proceed to step 2.⬇️
           </p>
         </div>
         <div className="flex flex-col items-end gap-2">
