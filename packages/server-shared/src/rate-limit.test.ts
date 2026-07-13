@@ -29,6 +29,7 @@ describe('rateLimit', () => {
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     process.env = originalEnv;
   });
 

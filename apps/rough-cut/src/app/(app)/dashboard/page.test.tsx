@@ -285,6 +285,25 @@ describe("DashboardPage — upload confirm panel (ADR 0003 child 1, AC-1)", () =
     // The panel stays open so the user can see why (no dialog dismissal on block).
     expect(screen.getByRole("dialog", { name: /start this video\?/i })).toBeVisible();
   });
+
+  it("blocks confirmation when balance exactly equals the combined transcription + AI polish cost", async () => {
+    // Combined cost of a 2-minute video with AI polish on (default).
+    const seconds = Math.ceil(CURRENT_METADATA.durationMs / 1000);
+    const combined = chargeMicrosForSeconds(seconds) * 2;
+    const fetchMock = stubFetch({ credits: { balanceMicros: combined, isMember: false } });
+    render(<DashboardPage />);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/credits"));
+
+    const dialog = await openConfirmPanel();
+    await userEvent.click(within(dialog).getByRole("button", { name: /start transcription/i }));
+
+    await waitFor(() => expect(toastMock.error).toHaveBeenCalled());
+    const postCalls = fetchMock.mock.calls.filter(
+      ([url, init]) => url === "/api/projects" && (init as RequestInit | undefined)?.method === "POST"
+    );
+    expect(postCalls).toHaveLength(0);
+    expect(screen.getByRole("dialog", { name: /start this video\?/i })).toBeVisible();
+  });
 });
 
 describe("DashboardPage — existing project list (regression coverage)", () => {

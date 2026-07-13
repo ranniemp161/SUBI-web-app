@@ -449,9 +449,10 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
     }
   }, [filmstrip, pxPerSec, view]);
 
-  // Keep the playhead in view during playback.
+  // Keep the playhead in view during playback. The Hand tool suspends
+  // auto-follow so the user's manual pan isn't fought by the recenter.
   useEffect(() => {
-    if (!isPlaying) return;
+    if (!isPlaying || handToolActive) return;
     const scroller = scrollRef.current;
     if (!scroller) return;
     const x = currentTime * pxPerSec;
@@ -460,7 +461,7 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
     if (x < left + 40 || x > right - 40) {
       scroller.scrollLeft = x - scroller.clientWidth / 2;
     }
-  }, [currentTime, isPlaying, pxPerSec]);
+  }, [currentTime, isPlaying, pxPerSec, handToolActive]);
 
   const timeFromClientX = useCallback(
     (clientX: number) => {
@@ -807,6 +808,24 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
                     key={index}
                     onClick={(e) => handleSegmentClick(e, segment)}
                     onPointerDown={(e) => e.stopPropagation()}
+                    // Cut clips are keyboard-selectable so the Restore button
+                    // can be reached without a mouse. Enter/Space activate the
+                    // same selection path as a click.
+                    {...(isCut
+                      ? {
+                          tabIndex: 0,
+                          role: "button",
+                          "aria-label": cutTooltip,
+                          onKeyDown: (e: React.KeyboardEvent<HTMLDivElement>) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              onSelectSegment(null);
+                              setSelectedCutStart(segment.start);
+                            }
+                          },
+                        }
+                      : {})}
                     title={isCut ? cutTooltip : "Keep — click to select, Delete to remove"}
                     style={{
                       left: segment.start * pxPerSec,

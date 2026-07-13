@@ -4,6 +4,7 @@
 Shared server-only utilities for the SUBI ecosystem, extracted out of `apps/rough-cut` so `apps/wallet` (and any future app) gets the same rate limiting and error reporting without duplicating the logic. Consumed by both `apps/rough-cut` and `apps/wallet`.
 
 ## Key files
+
 | File | Owns |
 |---|---|
 | `src/rate-limit.ts` | `rateLimit()` — fixed-window limiter backed by Upstash Redis (Vercel KV). Takes a `failClosed` option: false (default) fails open on a Redis error, true fails closed for money-moving/idempotency-guard paths. |

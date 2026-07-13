@@ -91,15 +91,15 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const limit = await readRateLimit(clerkId);
-  if (!limit.allowed) {
-    return NextResponse.json(
-      { error: "Too many requests. Please wait a bit and try again." },
-      { status: 429 }
-    );
-  }
-
   try {
+    const limit = await readRateLimit(clerkId);
+    if (!limit.allowed) {
+      return NextResponse.json(
+        { error: "Too many requests. Please wait a bit and try again." },
+        { status: 429 }
+      );
+    }
+
     const userRows = await withDbRetry(() =>
       db
         .select()
