@@ -428,10 +428,18 @@ export default function DashboardPage() {
    * and 402s). Returns true when the upload should be blocked.
    */
   const blockedByCredits = useCallback(
-    (durationMs: number | null | undefined): boolean => {
+    (
+      durationMs: number | null | undefined,
+      { includeAiPolish = false }: { includeAiPolish?: boolean } = {}
+    ): boolean => {
       if (credits == null || durationMs == null || durationMs <= 0) return false;
-      const neededMicros = chargeMicrosForSeconds(Math.ceil(durationMs / 1000));
-      if (neededMicros <= credits.balanceMicros) return false;
+      const seconds = Math.ceil(durationMs / 1000);
+      const transcriptionMicros = chargeMicrosForSeconds(seconds);
+      const aiPolishMicros = includeAiPolish ? chargeMicrosForSeconds(seconds) : 0;
+      const neededMicros = transcriptionMicros + aiPolishMicros;
+      // Strict `<`: a balance exactly equal to the combined cost is treated as
+      // blocked to leave headroom for the server's exact-duration re-charge.
+      if (neededMicros < credits.balanceMicros) return false;
       toast.error("Not enough funds for this video", {
         description: `It needs about ${formatUsd(neededMicros)} of credit — you have ${formatUsd(
           credits.balanceMicros
@@ -463,7 +471,7 @@ export default function DashboardPage() {
     // Note: no up-front size gate on the video itself — what's uploaded is
     // the extracted audio track, which kickOffTranscription size-checks
     // against the Deepgram cap after extraction.
-    if (blockedByCredits(metadata.durationMs)) return;
+    if (blockedByCredits(metadata.durationMs, { includeAiPolish: pendingAiPolish })) return;
     setIsCreating(true);
 
     try {

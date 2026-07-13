@@ -233,7 +233,11 @@ export default function TranscriptPanel({
     const timer = setTimeout(() => setDismissedAt(cutEvent.at), 10_000);
     return () => clearTimeout(timer);
   }, [cutEvent, aiBusy]);
-  const showCard = cutEvent !== null && cutEvent.at !== dismissedAt;
+  // Re-open (or stay open) whenever the user is diverged from the AI's
+  // suggestions, so the "Restore AI suggestions" button remains reachable even
+  // after the auto-collapse timer has fired.
+  const showCard =
+    cutEvent !== null && (cutEvent.at !== dismissedAt || hasDiverged);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const activeWordRef = useRef<HTMLSpanElement>(null);

@@ -39,15 +39,18 @@ export function buildFcpxml(
   let cursorSeconds = 0;
   const clips = ranges
     .map((range) => {
-      const durationFrames = toFrames(range.end - range.start);
-      if (durationFrames <= 0) return null;
-      // Accumulate exact seconds and round only once, at emission, so this
-      // matches CMX 3600's accumulation and the two formats agree on cut points.
+      // Accumulate exact seconds and take the frame difference between the
+      // rounded cumulative offsets so the last clip's boundary lands exactly
+      // on totalFrames (independent per-range rounding can drift). CMX 3600
+      // accumulates the exact-seconds cursor the same way.
       const offsetFrames = toFrames(cursorSeconds);
+      const nextCursorSeconds = cursorSeconds + (range.end - range.start);
+      const durationFrames = toFrames(nextCursorSeconds) - offsetFrames;
+      if (durationFrames <= 0) return null;
       const clip = `        <clip name="${safeTitle}" offset="${offsetFrames}/${FPS}s" duration="${durationFrames}/${FPS}s" start="${toFrames(range.start)}/${FPS}s" tcFormat="NDF">
           <video ref="r2" offset="${toFrames(range.start)}/${FPS}s" duration="${durationFrames}/${FPS}s" start="${toFrames(range.start)}/${FPS}s"/>
         </clip>`;
-      cursorSeconds += range.end - range.start;
+      cursorSeconds = nextCursorSeconds;
       return clip;
     })
     .filter((clip): clip is string => clip !== null)

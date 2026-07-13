@@ -53,7 +53,7 @@ export function ConfirmDialog({
             </AlertDialog.Cancel>
             <AlertDialog.Action
               onClick={onConfirm}
-              className="cursor-pointer rounded-lg bg-blue-600 px-4 py-2 text-xs font-semibold text-white shadow-md shadow-blue-600/25 transition-colors hover:bg-blue-500"
+              className="cursor-pointer rounded-lg bg-accent px-4 py-2 text-xs font-semibold text-accent-foreground shadow-md shadow-[var(--accent-shadow)] transition-colors hover:bg-accent-hover"
             >
               {confirmLabel}
             </AlertDialog.Action>

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { buildCmx3600Edl } from "./cmx3600";
 import { buildFcpxml } from "./fcpxml";
-import { toFrames } from "./timebase";
+import { MIN_CLIP_SECONDS, toFrames } from "./timebase";
 import { getKeepRanges, totalKeptSeconds } from "./plan";
 import type { EDL } from "@/lib/edl";
 
@@ -99,7 +99,7 @@ describe("FCPXML and CMX 3600 EDL cross-format consistency", () => {
     const eventCount = doc.split("\n").filter((line) => /^\d{3}\s/.test(line)).length;
     expect(clipCount).toBe(eventCount);
 
-    const ranges = getKeepRanges(edl).filter((r) => r.end - r.start >= 1 / 30);
+    const ranges = getKeepRanges(edl).filter((r) => r.end - r.start >= MIN_CLIP_SECONDS);
     const expectedTotalFrames = toFrames(totalKeptSeconds(ranges));
     expect(xml).toContain(`duration="${expectedTotalFrames}/30s"`);
 

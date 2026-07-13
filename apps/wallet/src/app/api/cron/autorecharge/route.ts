@@ -44,9 +44,10 @@ async function noteFailure(userId: string) {
  * confirm:true resolves synchronously, so every decline (including
  * `authentication_required`, which never emits a `payment_failed` webhook) is
  * caught in this try/catch. The webhook's `payment_intent.*` handlers are
- * idempotent backstops (see the webhook route). This is a placement refinement
- * of the ADR's task 5; the behaviour (notify, then auto-disable after N declines)
- * is unchanged.
+ * idempotent backstops (see the webhook route). Failures are recorded on the
+ * user row (`recordAutoRechargeFailure`) and surfaced by the Wallet dashboard;
+ * the sweep itself does not send notifications or auto-disable on a decline
+ * threshold.
  */
 export async function GET(request: Request) {
   const authHeader = request.headers.get("Authorization");

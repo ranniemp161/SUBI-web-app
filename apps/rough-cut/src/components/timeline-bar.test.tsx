@@ -177,4 +177,39 @@ describe("TimelineBar — cut-clip restore confirmation", () => {
     expect(screen.queryByRole("button", { name: /restore cut/i })).not.toBeInTheDocument();
     expect(props.onRestoreSegment).not.toHaveBeenCalled();
   });
+
+  it("cut clips are keyboard-activatable: Enter and Space surface the Restore button", () => {
+    const props = makeProps();
+    render(<TimelineBar {...props} />);
+    const cutClip = screen.getByTitle(/silence.*click to select, then restore/i);
+    // Focusable by keyboard tabbing.
+    expect(cutClip).toHaveAttribute("tabindex", "0");
+
+    fireEvent.keyDown(cutClip, { key: "Enter" });
+    expect(screen.getByRole("button", { name: /restore cut/i })).toBeVisible();
+
+    // A second cut clip would also react to Space; here we verify the same
+    // clip's Space activation stays selected.
+    fireEvent.keyDown(cutClip, { key: " " });
+    expect(screen.getByRole("button", { name: /restore cut/i })).toBeVisible();
+    expect(props.onRestoreSegment).not.toHaveBeenCalled();
+  });
+});
+
+describe("TimelineBar — playback auto-follow", () => {
+  it("does not recenter the playhead while the Hand tool is active (so pan isn't fought)", () => {
+    const props = makeProps({ isPlaying: true, currentTime: 0 });
+    const { container, rerender } = render(<TimelineBar {...props} />);
+    const scroller = getScroller(container);
+
+    // Pan the scroller manually with the Hand tool on.
+    fireEvent.click(screen.getByRole("button", { name: /hand/i }));
+    pointerDrag(scroller, 100, 40);
+    const pannedTo = scroller.scrollLeft;
+    expect(pannedTo).toBeGreaterThan(0);
+
+    // Advance playback — auto-follow must NOT snap scrollLeft back.
+    rerender(<TimelineBar {...makeProps({ isPlaying: true, currentTime: 3 })} />);
+    expect(scroller.scrollLeft).toBe(pannedTo);
+  });
 });

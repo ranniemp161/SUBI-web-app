@@ -13,11 +13,20 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+  /* Accent tokens — used by shared components (e.g. ConfirmDialog's confirm
+     action) so they inherit the ecosystem palette instead of hardcoding blue. */
+  --accent: #2563eb; /* blue-600 */
+  --accent-hover: #3b82f6; /* blue-500 */
+  --accent-foreground: #ffffff;
+  --accent-shadow: rgb(37 99 235 / 0.25);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-foreground: var(--accent-foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }

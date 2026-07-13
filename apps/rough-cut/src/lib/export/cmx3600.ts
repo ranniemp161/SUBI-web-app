@@ -18,11 +18,16 @@ function stripControlChars(value: string): string {
   return value.replace(/[\x00-\x1f\x7f]/g, "");
 }
 
-/** Derives an 8-character, uppercased reel name from the source filename. */
+/**
+ * Derives a fixed-width 8-character uppercase reel name from the source
+ * filename. Right-padded with spaces so the CMX 3600 event line's reel field
+ * is always the same width regardless of source name.
+ */
 function reelName(sourceFilename: string): string {
   const cleaned = sourceFilename.replace(/[^a-zA-Z0-9]/g, "");
   const upper = cleaned.toUpperCase().slice(0, 8);
-  return upper.length > 0 ? upper : FALLBACK_REEL_NAME;
+  const base = upper.length > 0 ? upper : FALLBACK_REEL_NAME;
+  return base.padEnd(8, " ");
 }
 
 /**
