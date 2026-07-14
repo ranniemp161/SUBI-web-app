@@ -34,7 +34,9 @@
         "SENTRY_PROJECT",
         "SENTRY_VERCEL_LOG_DRAIN_URL",
         "SENTRY_ORG",
-        "SENTRY_AUTH_TOKEN"
+        "SENTRY_AUTH_TOKEN",
+        "PUSHER_APP_ID",
+        "PUSHER_SECRET"
       ]
     },
     "lint": {
