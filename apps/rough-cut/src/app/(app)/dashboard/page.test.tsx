@@ -1,17 +1,16 @@
 // @vitest-environment jsdom
 //
-// Scope: this page's biggest new surface is the upload confirm panel (ADR
-// 0003 child 1, AC-1) — file selection no longer creates a project
-// immediately, it holds the selection and shows a combined price + an
-// AI-polish toggle (defaulted on) until the user confirms. These tests focus
-// on that panel; the pre-existing project list/retry/delete behavior is only
-// touched incidentally (e.g. the new project appearing in the list after
-// confirm).
+// Scope: this page's biggest new surface is the removal of the upload confirm
+// panel (ADR 0004 child 1, AC-1..AC-3) — file selection now goes straight into
+// project creation and transcription with no intermediate confirm panel and
+// no click required after selection. AI polish is mandatory (server-decided),
+// so the client sends no `aiPolish` field. On insufficient funds an inline,
+// non-modal message appears near the file picker instead of a toast/modal.
 import "@testing-library/jest-dom/vitest";
-import { render, screen, cleanup, waitFor, within } from "@testing-library/react";
+import { render, screen, cleanup, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { chargeMicrosForSeconds, formatUsd } from "@repo/ui";
+import { chargeMicrosForSeconds } from "@repo/ui";
 
 afterEach(() => {
   cleanup();
@@ -39,9 +38,9 @@ vi.mock("@/lib/env", () => ({
 }));
 
 vi.mock("@/lib/audio-extract", () => ({
-  // The confirm-panel tests never need transcription to actually complete —
-  // "no-audio" makes kickOffTranscription resolve (with a toast) instead of
-  // reaching the Vercel Blob upload / Deepgram call.
+  // These tests never need transcription to actually complete — "no-audio"
+  // makes kickOffTranscription resolve (with a toast) instead of reaching the
+  // Vercel Blob upload / Deepgram call.
   extractAudioForTranscription: vi.fn(async () => ({ kind: "no-audio" as const })),
 }));
 
@@ -125,184 +124,99 @@ beforeEach(() => {
   CURRENT_METADATA.durationMs = 120_000;
 });
 
-async function openConfirmPanel() {
-  const pickButton = await screen.findByRole("button", { name: "pick-file" });
-  await userEvent.click(pickButton);
-  return screen.findByRole("dialog", { name: /start this video\?/i });
+function postCallsFrom(fetchMock: ReturnType<typeof vi.fn>) {
+  return fetchMock.mock.calls.filter(
+    ([url, init]) => url === "/api/projects" && (init as RequestInit | undefined)?.method === "POST"
+  );
 }
 
-describe("DashboardPage — upload confirm panel (ADR 0003 child 1, AC-1)", () => {
-  it("does not create a project on file selection — only holds it for confirmation", async () => {
+describe("DashboardPage — no-click upload (ADR 0004 child 1, AC-1, AC-2)", () => {
+  it("selecting a file with sufficient funds creates the project immediately, with no confirm panel", async () => {
     const fetchMock = stubFetch();
     render(<DashboardPage />);
-    await openConfirmPanel();
+    await userEvent.click(await screen.findByRole("button", { name: "pick-file" }));
 
-    const postCalls = fetchMock.mock.calls.filter(
-      ([url, init]) => url === "/api/projects" && (init as RequestInit | undefined)?.method === "POST"
-    );
-    expect(postCalls).toHaveLength(0);
-  });
+    // No dialog/modal of any kind appears.
+    expect(screen.queryByRole("dialog")).toBeNull();
 
-  it("shows the combined price (transcription + AI polish) and an AI-polish toggle defaulted on", async () => {
-    stubFetch();
-    render(<DashboardPage />);
-    const dialog = await openConfirmPanel();
-
-    const seconds = Math.ceil(CURRENT_METADATA.durationMs / 1000);
-    const transcriptionMicros = chargeMicrosForSeconds(seconds);
-    const aiPolishMicros = chargeMicrosForSeconds(seconds);
-    const totalMicros = transcriptionMicros + aiPolishMicros;
-
-    const toggle = within(dialog).getByRole("button", { name: /add ai polish/i });
-    expect(toggle).toHaveAttribute("aria-pressed", "true");
-
-    expect(within(dialog).getByText("Transcription").closest("div")).toHaveTextContent(
-      formatUsd(transcriptionMicros)
-    );
-    expect(within(dialog).getByText("AI polish").closest("div")).toHaveTextContent(
-      formatUsd(aiPolishMicros)
-    );
-    // Formatted total appears in the price breakdown's "Estimated total" row.
-    expect(within(dialog).getByText("Estimated total").closest("div")).toHaveTextContent(
-      formatUsd(totalMicros)
-    );
-  });
-
-  it("toggling AI polish off removes its price line and reduces the estimated total", async () => {
-    stubFetch();
-    render(<DashboardPage />);
-    const dialog = await openConfirmPanel();
-
-    const seconds = Math.ceil(CURRENT_METADATA.durationMs / 1000);
-    const transcriptionMicros = chargeMicrosForSeconds(seconds);
-
-    const toggle = within(dialog).getByRole("button", { name: /add ai polish/i });
-    await userEvent.click(toggle);
-
-    expect(toggle).toHaveAttribute("aria-pressed", "false");
-    // The breakdown's "AI polish" line item disappears (the toggle's own label
-    // still says "Add AI polish" regardless of state, so scope to the breakdown).
-    const breakdown = within(dialog).getByText("Estimated total").closest("div")!.parentElement!;
-    expect(within(breakdown).queryByText("AI polish")).toBeNull();
-    // Total is now just the transcription price.
-    expect(within(dialog).getByText("Estimated total").closest("div")).toHaveTextContent(
-      formatUsd(transcriptionMicros)
-    );
-  });
-
-  it("cancel closes the panel and creates no project", async () => {
-    const fetchMock = stubFetch();
-    render(<DashboardPage />);
-    const dialog = await openConfirmPanel();
-
-    await userEvent.click(within(dialog).getByRole("button", { name: /^cancel$/i }));
-
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    const postCalls = fetchMock.mock.calls.filter(
-      ([url, init]) => url === "/api/projects" && (init as RequestInit | undefined)?.method === "POST"
-    );
-    expect(postCalls).toHaveLength(0);
-  });
-
-  it("Escape closes the panel and creates no project", async () => {
-    const fetchMock = stubFetch();
-    render(<DashboardPage />);
-    await openConfirmPanel();
-
-    await userEvent.keyboard("{Escape}");
-
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    const postCalls = fetchMock.mock.calls.filter(
-      ([url, init]) => url === "/api/projects" && (init as RequestInit | undefined)?.method === "POST"
-    );
-    expect(postCalls).toHaveLength(0);
-  });
-
-  it("confirming sends aiPolish: true by default and creates the project", async () => {
-    const fetchMock = stubFetch();
-    render(<DashboardPage />);
-    const dialog = await openConfirmPanel();
-
-    await userEvent.click(within(dialog).getByRole("button", { name: /start transcription/i }));
-
-    await waitFor(() => {
-      const postCall = fetchMock.mock.calls.find(
-        ([url, init]) => url === "/api/projects" && (init as RequestInit | undefined)?.method === "POST"
-      );
-      expect(postCall).toBeDefined();
-    });
-    const postCall = fetchMock.mock.calls.find(
-      ([url, init]) => url === "/api/projects" && (init as RequestInit | undefined)?.method === "POST"
-    )!;
-    const body = JSON.parse((postCall[1] as RequestInit).body as string);
-    expect(body).toMatchObject({
+    await waitFor(() => expect(postCallsFrom(fetchMock)).toHaveLength(1));
+    const body = JSON.parse((postCallsFrom(fetchMock)[0][1] as RequestInit).body as string);
+    // No aiPolish field is ever sent — the server decides it unconditionally.
+    expect(body).toEqual({
       fileName: CURRENT_METADATA.fileName,
       durationMs: CURRENT_METADATA.durationMs,
-      aiPolish: true,
+      fileSize: CURRENT_METADATA.fileSize,
+      fileType: CURRENT_METADATA.fileType,
     });
 
-    // The panel closes and the new project appears in the list.
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(await screen.findByText(CURRENT_METADATA.fileName)).toBeVisible();
   });
+});
 
-  it("confirming after toggling AI polish off sends aiPolish: false", async () => {
-    const fetchMock = stubFetch();
-    render(<DashboardPage />);
-    const dialog = await openConfirmPanel();
-
-    await userEvent.click(within(dialog).getByRole("button", { name: /add ai polish/i }));
-    await userEvent.click(within(dialog).getByRole("button", { name: /start transcription/i }));
-
-    await waitFor(() => {
-      const postCall = fetchMock.mock.calls.find(
-        ([url, init]) => url === "/api/projects" && (init as RequestInit | undefined)?.method === "POST"
-      );
-      expect(postCall).toBeDefined();
-    });
-    const postCall = fetchMock.mock.calls.find(
-      ([url, init]) => url === "/api/projects" && (init as RequestInit | undefined)?.method === "POST"
-    )!;
-    const body = JSON.parse((postCall[1] as RequestInit).body as string);
-    expect(body.aiPolish).toBe(false);
-  });
-
-  it("blocks confirmation and charges nothing when the pre-flight credit check fails", async () => {
-    // Balance well below the cost of a 2-minute video.
+describe("DashboardPage — inline insufficient-funds message (ADR 0004 child 1, AC-3)", () => {
+  it("shows an inline message and creates no project when the combined pre-flight check fails", async () => {
+    // Balance well below the combined transcription + AI polish cost of a 2-minute video.
     const fetchMock = stubFetch({ credits: { balanceMicros: 1, isMember: false } });
     render(<DashboardPage />);
-    // Let the credits fetch on mount resolve before opening the panel.
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/credits"));
 
-    const dialog = await openConfirmPanel();
-    await userEvent.click(within(dialog).getByRole("button", { name: /start transcription/i }));
+    await userEvent.click(await screen.findByRole("button", { name: "pick-file" }));
 
-    await waitFor(() => expect(toastMock.error).toHaveBeenCalled());
-    const postCalls = fetchMock.mock.calls.filter(
-      ([url, init]) => url === "/api/projects" && (init as RequestInit | undefined)?.method === "POST"
-    );
-    expect(postCalls).toHaveLength(0);
-    // The panel stays open so the user can see why (no dialog dismissal on block).
-    expect(screen.getByRole("dialog", { name: /start this video\?/i })).toBeVisible();
+    expect(await screen.findByText(/not enough funds/i)).toBeVisible();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(postCallsFrom(fetchMock)).toHaveLength(0);
   });
 
-  it("blocks confirmation when balance exactly equals the combined transcription + AI polish cost", async () => {
-    // Combined cost of a 2-minute video with AI polish on (default).
+  it("blocks when balance exactly equals the combined transcription + AI polish cost", async () => {
     const seconds = Math.ceil(CURRENT_METADATA.durationMs / 1000);
     const combined = chargeMicrosForSeconds(seconds) * 2;
     const fetchMock = stubFetch({ credits: { balanceMicros: combined, isMember: false } });
     render(<DashboardPage />);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/credits"));
 
-    const dialog = await openConfirmPanel();
-    await userEvent.click(within(dialog).getByRole("button", { name: /start transcription/i }));
+    await userEvent.click(await screen.findByRole("button", { name: "pick-file" }));
 
-    await waitFor(() => expect(toastMock.error).toHaveBeenCalled());
-    const postCalls = fetchMock.mock.calls.filter(
-      ([url, init]) => url === "/api/projects" && (init as RequestInit | undefined)?.method === "POST"
-    );
-    expect(postCalls).toHaveLength(0);
-    expect(screen.getByRole("dialog", { name: /start this video\?/i })).toBeVisible();
+    expect(await screen.findByText(/not enough funds/i)).toBeVisible();
+    expect(postCallsFrom(fetchMock)).toHaveLength(0);
+  });
+});
+
+describe("DashboardPage — dashboard label (ADR 0004 child 1, AC-5)", () => {
+  it("shows 'Ready for step 2' for a ready project with no saved edit list", async () => {
+    stubFetch({
+      projects: [
+        {
+          id: "p1",
+          fileName: "fresh.mp4",
+          durationMs: 30_000,
+          transcriptStatus: "ready",
+          hasEdl: false,
+          createdAt: "2026-07-01T00:00:00Z",
+          updatedAt: "2026-07-01T00:00:00Z",
+        },
+      ],
+    });
+    render(<DashboardPage />);
+    expect(await screen.findByText("Ready for step 2")).toBeVisible();
+  });
+
+  it("shows plain 'Ready' for a ready project that already has a saved edit list", async () => {
+    stubFetch({
+      projects: [
+        {
+          id: "p2",
+          fileName: "done.mp4",
+          durationMs: 30_000,
+          transcriptStatus: "ready",
+          hasEdl: true,
+          createdAt: "2026-07-01T00:00:00Z",
+          updatedAt: "2026-07-01T00:00:00Z",
+        },
+      ],
+    });
+    render(<DashboardPage />);
+    expect(await screen.findByText("Ready")).toBeVisible();
+    expect(screen.queryByText("Ready for step 2")).toBeNull();
   });
 });
 
@@ -315,6 +229,7 @@ describe("DashboardPage — existing project list (regression coverage)", () => 
           fileName: "existing.mp4",
           durationMs: 30_000,
           transcriptStatus: "ready",
+          hasEdl: true,
           createdAt: "2026-07-01T00:00:00Z",
           updatedAt: "2026-07-01T00:00:00Z",
         },

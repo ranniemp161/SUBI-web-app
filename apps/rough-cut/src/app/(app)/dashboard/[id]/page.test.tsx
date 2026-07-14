@@ -22,6 +22,7 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   togglePlayMock.mockClear();
+  pusherHandlers.clear();
 });
 
 const pushMock = vi.hoisted(() => vi.fn());
@@ -92,6 +93,29 @@ vi.mock("@/components/progress-ring", () => ({
 vi.mock("@/lib/env", () => ({
   WALLET_URL: "https://wallet.test",
   WALLET_DASHBOARD_URL: "https://wallet.test/dashboard",
+}));
+
+// The real @/lib/pusher constructs the server SDK at import time and opens a
+// websocket from getPusherClient(), neither of which can run under jsdom.
+// This fake records every bound handler per "channel:event" key so a test can
+// deliver a transcript_status event by hand.
+const pusherHandlers = vi.hoisted(
+  () => new Map<string, Array<(data: unknown) => void>>()
+);
+
+vi.mock("@/lib/pusher", () => ({
+  getPusherClient: () => ({
+    subscribe: (channelName: string) => ({
+      bind: (event: string, callback: (data: unknown) => void) => {
+        const key = `${channelName}:${event}`;
+        pusherHandlers.set(key, [...(pusherHandlers.get(key) ?? []), callback]);
+      },
+      unbind: (event: string) => {
+        pusherHandlers.delete(`${channelName}:${event}`);
+      },
+    }),
+    unsubscribe: () => {},
+  }),
 }));
 
 import EditorPage from "./page";
@@ -223,12 +247,15 @@ describe("EditorPage — exit confirm dialog (AC-8)", () => {
 
 // ---------------------------------------------------------------------------
 // Child 1 — auto-cut chain (AC-2, AC-3, AC-4)
+// ADR 0004 child 2 gates this chain on reselect (AC-8) — every test here must
+// pick a file first, or the chain never fires at all (see the dedicated
+// "reselect-gated processing" describe block below for that regression).
 // ---------------------------------------------------------------------------
 describe("EditorPage — auto-cut chain on open", () => {
   it("runs the mechanical cut but never the AI pass when polish was not requested (AC-2)", async () => {
     const fetchMock = stubFetchForProject({ ...READY_PROJECT, aiPolishRequested: false });
     render(<EditorPage />);
-    await screen.findByRole("button", { name: /^dashboard$/i });
+    await userEvent.click(await screen.findByRole("button", { name: "pick-file" }));
 
     // Give the auto-chain effect a tick to run; the AI endpoint is never called.
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/projects/proj-1"));
@@ -243,7 +270,7 @@ describe("EditorPage — auto-cut chain on open", () => {
   it("chains into the AI pass automatically when polish was requested and no run exists (AC-3)", async () => {
     const fetchMock = stubFetchForProject({ ...READY_PROJECT, aiPolishRequested: true });
     render(<EditorPage />);
-    await screen.findByRole("button", { name: /^dashboard$/i });
+    await userEvent.click(await screen.findByRole("button", { name: "pick-file" }));
 
     await waitFor(() => {
       const aiPost = fetchMock.mock.calls.find(
@@ -298,7 +325,7 @@ describe("EditorPage — auto-cut chain on open", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     render(<EditorPage />);
-    await screen.findByRole("button", { name: /^dashboard$/i });
+    await userEvent.click(await screen.findByRole("button", { name: "pick-file" }));
 
     await waitFor(() =>
       expect(toastMock.error).toHaveBeenCalledWith(
@@ -316,21 +343,17 @@ describe("EditorPage — auto-cut chain on open", () => {
     addSpy.mockRestore();
   });
 
-  // Regression: two overlapping "transcript is ready" detections (the 4s
-  // interval and a focus/visibilitychange handler can both fire checkStatus
-  // around the same moment) used to each bump reloadNonce and each re-fetch
-  // the project, and a second, redundant reload re-seeded `edl` from the
-  // server's still-null value (the debounced autosave hadn't landed yet),
-  // silently discarding the auto-chain's just-applied mechanical cut. Fixed by
-  // deduping the "ready" detection to fire reloadNonce at most once per
-  // transition. Uses manually-resolved promises (rather than real timing) to
-  // deterministically control exactly when each overlapping check resolves —
-  // the second is resolved only after the first has already driven a reload,
-  // matching the real race without depending on jsdom microtask ordering.
-  it("does not reload the project a second time when two overlapping status checks both detect ready", async () => {
+  // Regression: a duplicate "transcript is ready" signal must not drive a
+  // second reload. Under the old polling design, two overlapping status
+  // checks could both bump reloadNonce; the redundant reload re-seeded `edl`
+  // from the server's still-null value (the debounced autosave hadn't landed
+  // yet), silently discarding the auto-chain's just-applied mechanical cut.
+  // The Pusher migration kept the same hazard: the server fires the
+  // transcript_status event from more than one route, and a reconnect can
+  // replay it, so the subscription's `settled` guard must swallow every
+  // delivery after the first.
+  it("does not reload the project a second time when the transcript_status ready event is delivered twice", async () => {
     const projectCalls: string[] = [];
-    let statusCallCount = 0;
-    const statusResolvers: Array<(v: unknown) => void> = [];
 
     const fetchMock = vi.fn((url: string) => {
       if (typeof url === "string" && url === "/api/projects/proj-1") {
@@ -346,37 +369,247 @@ describe("EditorPage — auto-cut chain on open", () => {
           )
         );
       }
-      if (typeof url === "string" && url === "/api/projects/proj-1/status") {
-        statusCallCount++;
-        return new Promise((resolve) => statusResolvers.push(resolve));
-      }
       return Promise.resolve(jsonResponse({}));
     });
     vi.stubGlobal("fetch", fetchMock);
 
     render(<EditorPage />);
 
-    // Starts on the "Transcribing your video" screen (transcriptStatus: processing).
+    // Starts on the "Transcribing your video" screen (transcriptStatus: processing),
+    // which subscribes to the project's Pusher channel.
     await screen.findByText(/transcribing your video/i);
     expect(projectCalls).toHaveLength(1);
+    await waitFor(() =>
+      expect(pusherHandlers.get("proj-1:transcript_status")).toBeDefined()
+    );
 
-    // Two overlapping triggers for the same "ready" transition, both starting
-    // (and both fetching /status) before either resolves — the poll interval
-    // ticking right as the tab regains focus.
-    window.dispatchEvent(new Event("focus"));
-    window.dispatchEvent(new Event("focus"));
-    await waitFor(() => expect(statusCallCount).toBe(2));
+    // Deliver the ready event twice, back to back, before the reload settles —
+    // the double-fire/replay shape of the race.
+    const handlers = pusherHandlers.get("proj-1:transcript_status")!;
+    handlers.forEach((handler) => handler({ status: "ready" }));
+    handlers.forEach((handler) => handler({ status: "ready" }));
 
-    // Resolve the first: this is what drives the (single) reload.
-    statusResolvers[0](jsonResponse({ transcriptStatus: "ready" }));
+    // Exactly one reload lands and swaps in the ready editor.
     await screen.findByRole("button", { name: /^dashboard$/i });
     expect(projectCalls).toHaveLength(2);
 
-    // Resolve the second — arriving after the first already reloaded, the
-    // real shape of the race. It must not trigger a further reload.
-    statusResolvers[1](jsonResponse({ transcriptStatus: "ready" }));
+    // And nothing queued a further reload behind it.
     await new Promise((r) => setTimeout(r, 50));
     expect(projectCalls).toHaveLength(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ADR 0004 child 2 — reselect-gated processing (AC-7, AC-8, AC-9, AC-11, AC-12)
+// The auto-chain used to fire on transcript-readiness alone; it must now wait
+// for the user to reselect their source video, so cutting (and any AI charge)
+// never starts before the user has taken that action. AC-12 (added after the
+// first build shipped): the studio must show ONLY a full-page loading state
+// between reselect and the chain settling — no transcript panel, timeline, or
+// rail visible in the meantime.
+// ---------------------------------------------------------------------------
+describe("EditorPage — reselect-gated processing (ADR 0004 child 2)", () => {
+  it("does not fire the auto-chain before reselect, even though the transcript alone would be enough (AC-8, the regression this ADR must prevent)", async () => {
+    const fetchMock = stubFetchForProject({ ...READY_PROJECT, aiPolishRequested: true });
+    render(<EditorPage />);
+
+    // First visible state is the reselect prompt (AC-7).
+    await screen.findByRole("button", { name: "pick-file" });
+
+    // Give the auto-chain effect ample time to fire if it were going to.
+    await new Promise((r) => setTimeout(r, 50));
+    const aiPost = fetchMock.mock.calls.find(
+      ([url, init]) =>
+        typeof url === "string" && url.endsWith("/ai-cut") && (init as RequestInit)?.method === "POST"
+    );
+    expect(aiPost).toBeUndefined();
+  });
+
+  it("fires the auto-chain the moment reselect succeeds, under the new loader copy (AC-8, AC-9)", async () => {
+    // Hold the AI-cut response open (resolved manually below) so the overlay
+    // stays mounted long enough to observe its copy — with an
+    // instantly-resolving mock the whole chain (mechanical + AI) can complete
+    // before any assertion runs.
+    let resolveAiCut!: (v: unknown) => void;
+    const aiCutResponse = new Promise((resolve) => {
+      resolveAiCut = resolve;
+    });
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/projects/proj-1") {
+        return jsonResponse({ ...READY_PROJECT, aiPolishRequested: true });
+      }
+      if (url.endsWith("/ai-cut") && init?.method === "POST") {
+        return aiCutResponse;
+      }
+      return jsonResponse({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<EditorPage />);
+
+    await userEvent.click(await screen.findByRole("button", { name: "pick-file" }));
+
+    expect(await screen.findByText("A.I. is doing the rough cut in the background...")).toBeVisible();
+    const aiPost = fetchMock.mock.calls.find(
+      ([url, init]) =>
+        typeof url === "string" && url.endsWith("/ai-cut") && (init as RequestInit)?.method === "POST"
+    );
+    expect(aiPost).toBeDefined();
+
+    resolveAiCut(
+      jsonResponse({
+        id: "run-auto",
+        runNumber: 1,
+        ranges: [],
+        model: "gemini-2.5-flash",
+        createdAt: "now",
+      })
+    );
+  });
+
+  it("a legacy project (saved edit list) opens straight into the editor, no reselect gate applied (AC-11)", async () => {
+    const legacyProject = {
+      ...READY_PROJECT,
+      edl: {
+        segments: [{ start: 0, end: 5, status: "keep" as const, reason: null }],
+      },
+    };
+    const fetchMock = stubFetchForProject(legacyProject);
+    render(<EditorPage />);
+
+    // Still shows the reselect prompt (video isn't stored server-side), but no
+    // auto-chain gate applies to it — nothing auto-fires either way.
+    await screen.findByRole("button", { name: "pick-file" });
+    await new Promise((r) => setTimeout(r, 50));
+    const aiPost = fetchMock.mock.calls.find(
+      ([url, init]) =>
+        typeof url === "string" && url.endsWith("/ai-cut") && (init as RequestInit)?.method === "POST"
+    );
+    expect(aiPost).toBeUndefined();
+  });
+
+  it("shows only the full-page loading state (no editor chrome) while the gated chain runs, then swaps to the editor once it settles (AC-12)", async () => {
+    let resolveAiCut!: (v: unknown) => void;
+    const aiCutResponse = new Promise((resolve) => {
+      resolveAiCut = resolve;
+    });
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/projects/proj-1") {
+        return jsonResponse({ ...READY_PROJECT, aiPolishRequested: true });
+      }
+      if (url.endsWith("/ai-cut") && init?.method === "POST") {
+        return aiCutResponse;
+      }
+      return jsonResponse({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<EditorPage />);
+
+    await userEvent.click(await screen.findByRole("button", { name: "pick-file" }));
+
+    // Only the loading state is up — no editor chrome mounted yet.
+    await screen.findByText("A.I. is doing the rough cut in the background...");
+    expect(screen.queryByTestId("timeline-bar-stub")).toBeNull();
+    expect(screen.queryByTestId("transcript-panel-stub")).toBeNull();
+
+    resolveAiCut(
+      jsonResponse({
+        id: "run-auto",
+        runNumber: 1,
+        ranges: [],
+        model: "gemini-2.5-flash",
+        createdAt: "now",
+      })
+    );
+
+    // Once the chain settles, the loading state yields to the real editor.
+    await screen.findByTestId("timeline-bar-stub");
+    expect(screen.queryByText("A.I. is doing the rough cut in the background...")).toBeNull();
+    expect(screen.getByTestId("transcript-panel-stub")).toBeVisible();
+  });
+
+  it("shows a linear progress bar on the full-page loading state, and it's gone once the editor mounts (progress bar follow-up)", async () => {
+    let resolveAiCut!: (v: unknown) => void;
+    const aiCutResponse = new Promise((resolve) => {
+      resolveAiCut = resolve;
+    });
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/projects/proj-1") {
+        return jsonResponse({ ...READY_PROJECT, aiPolishRequested: true });
+      }
+      if (url.endsWith("/ai-cut") && init?.method === "POST") {
+        return aiCutResponse;
+      }
+      return jsonResponse({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<EditorPage />);
+
+    await userEvent.click(await screen.findByRole("button", { name: "pick-file" }));
+    await screen.findByText("A.I. is doing the rough cut in the background...");
+
+    const bar = screen.getByRole("progressbar", { name: "A.I. rough cut progress" });
+    expect(bar).toBeVisible();
+    expect(bar).toHaveAttribute("aria-valuemin", "0");
+    expect(bar).toHaveAttribute("aria-valuemax", "100");
+    // A percentage readout accompanies the bar (ADHD-friendly: visible forward motion, not just a spinner).
+    expect(screen.getByText(/^\d+%$/)).toBeVisible();
+
+    resolveAiCut(
+      jsonResponse({
+        id: "run-auto",
+        runNumber: 1,
+        ranges: [],
+        model: "gemini-2.5-flash",
+        createdAt: "now",
+      })
+    );
+
+    await screen.findByTestId("timeline-bar-stub");
+    expect(screen.queryByRole("progressbar", { name: "A.I. rough cut progress" })).toBeNull();
+  });
+
+  it("swaps to the editor with the mechanical result once the chain settles via an AI failure (AC-12, AC-10)", async () => {
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/projects/proj-1") {
+        return jsonResponse({ ...READY_PROJECT, aiPolishRequested: true });
+      }
+      if (url.endsWith("/ai-cut") && init?.method === "POST") {
+        return jsonResponse({ error: "insufficient credits" }, { ok: false, status: 402 });
+      }
+      return jsonResponse({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<EditorPage />);
+
+    await userEvent.click(await screen.findByRole("button", { name: "pick-file" }));
+
+    // Settles via the 402 branch — the loading state must still yield to the
+    // editor (showing the mechanical result), not stay stuck.
+    await screen.findByTestId("timeline-bar-stub");
+    expect(screen.queryByText("A.I. is doing the rough cut in the background...")).toBeNull();
+    await waitFor(() =>
+      expect(toastMock.error).toHaveBeenCalledWith(
+        "Not enough funds",
+        expect.objectContaining({ id: "ai-cut" })
+      )
+    );
+  });
+
+  it("never shows the full-page loading state for a legacy project (AC-11, AC-12)", async () => {
+    const legacyProject = {
+      ...READY_PROJECT,
+      edl: {
+        segments: [{ start: 0, end: 5, status: "keep" as const, reason: null }],
+      },
+    };
+    stubFetchForProject(legacyProject);
+    render(<EditorPage />);
+
+    await userEvent.click(await screen.findByRole("button", { name: "pick-file" }));
+
+    // Straight into the editor, no full-page loading state ever appears.
+    await screen.findByTestId("timeline-bar-stub");
+    expect(screen.queryByText("A.I. is doing the rough cut in the background...")).toBeNull();
   });
 });
 

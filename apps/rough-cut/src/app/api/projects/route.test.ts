@@ -75,6 +75,7 @@ vi.mock("@repo/db/schema", () => ({
     createdAt: "projects.createdAt",
     updatedAt: "projects.updatedAt",
     userId: "projects.userId",
+    edl: "projects.edl",
   },
   users: "users-table",
 }));
@@ -165,13 +166,13 @@ describe("POST /api/projects", () => {
     expect(res.status).toBe(400);
   });
 
-  it("creates the project with aiPolishRequested true when aiPolish: true is sent", async () => {
+  it("creates the project with aiPolishRequested always true (ADR 0004 child 1, AC-2)", async () => {
     state.clerkId = "clerk_1";
     state.authorizedUser = { id: "user-1" };
     state.insertedRows = [{ id: "proj-1", fileName: "clip.mp4", aiPolishRequested: true }];
 
     const res = await POST(
-      postRequest({ fileName: "clip.mp4", durationMs: 5000, aiPolish: true })
+      postRequest({ fileName: "clip.mp4", durationMs: 5000 })
     );
 
     expect(res.status).toBe(201);
@@ -185,14 +186,16 @@ describe("POST /api/projects", () => {
     expect(body).toEqual(state.insertedRows[0]);
   });
 
-  it("defaults aiPolishRequested to false when aiPolish is omitted", async () => {
+  it("rejects a request body that still sends an aiPolish field (strict schema)", async () => {
     state.clerkId = "clerk_1";
     state.authorizedUser = { id: "user-1" };
-    state.insertedRows = [{ id: "proj-2", fileName: "clip.mp4", aiPolishRequested: false }];
 
-    await POST(postRequest({ fileName: "clip.mp4" }));
+    const res = await POST(
+      postRequest({ fileName: "clip.mp4", aiPolish: false })
+    );
 
-    expect(state.insertValuesCalls[0][0]).toMatchObject({ aiPolishRequested: false });
+    expect(res.status).toBe(400);
+    expect(insertMock).not.toHaveBeenCalled();
   });
 
   it("returns 500 and reports the error when the insert throws", async () => {
@@ -238,5 +241,18 @@ describe("GET /api/projects", () => {
     const res = await GET();
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual(state.listedProjects);
+  });
+
+  it("includes a hasEdl boolean per row for the dashboard's 'Ready for step 2' label (ADR 0004 child 1, AC-5)", async () => {
+    state.clerkId = "clerk_1";
+    state.userRows = [{ id: "user-1" }];
+    state.listedProjects = [
+      { id: "p1", fileName: "a.mp4", transcriptStatus: "ready", hasEdl: false },
+      { id: "p2", fileName: "b.mp4", transcriptStatus: "ready", hasEdl: true },
+    ];
+    const res = await GET();
+    const body = await res.json();
+    expect(body[0].hasEdl).toBe(false);
+    expect(body[1].hasEdl).toBe(true);
   });
 });

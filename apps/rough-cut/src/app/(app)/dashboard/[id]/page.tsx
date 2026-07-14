@@ -77,6 +77,7 @@ import {
 } from "@/lib/edl";
 import { applyAiCuts, type AiCutRun } from "@/lib/ai-cuts";
 import { ConfirmDialog } from "@repo/ui";
+import { getPusherClient } from "@/lib/pusher";
 
 // A project holds at most this many stored AI Cut runs at once (ADR 0002-ai-cut-paid-rerun).
 const AI_CUT_RUN_LIMIT = 3;
@@ -150,6 +151,14 @@ export default function EditorPage() {
   const [autoCutBusy, setAutoCutBusy] = useState(false);
   const autoChainedRef = useRef(false);
   const freshOnLoadRef = useRef(false);
+  // ADR 0004 AC-12: from the moment the source video is reselected on a fresh
+  // project until the gated auto-chain settles, the studio shows ONLY a
+  // full-page loading state — no transcript panel, timeline, or rail mount
+  // yet. Set synchronously alongside `setSourceFile` (same render, no flash of
+  // editor chrome first) and cleared once the chain settles (success,
+  // failure, or "nothing to actually run") — see the firing effect and
+  // `runAutoChain`'s `finally` below.
+  const [chainPending, setChainPending] = useState(false);
   // The last completed cut pass — drives the transcript panel's summary card
   // (which auto-collapses a few seconds after each event).
   const [cutEvent, setCutEvent] = useState<{ kind: "rough" | "ai"; at: number } | null>(
@@ -275,64 +284,28 @@ export default function EditorPage() {
     fetchProject();
   }, [id, reloadNonce]);
 
-  // While transcription runs, poll for completion and swap in the editor the
+  // While transcription runs, listen for completion and swap in the editor the
   // moment it's ready — without this, the "Transcribing your video" screen is
   // a dead end the user has to leave and re-enter by hand.
   const transcriptStatus = project?.transcriptStatus;
   useEffect(() => {
     if (transcriptStatus !== "processing") return;
-    const abortController = new AbortController();
-    // The 4s interval and the visibilitychange/focus handlers below can both
-    // call checkStatus around the same moment (e.g. the tab regains focus
-    // right as the interval also ticks) — without this guard, two overlapping
-    // calls can both observe the terminal status and each bump reloadNonce,
-    // triggering a second, redundant reload of the project a moment after the
-    // first. That second reload reads server state that may still predate
-    // anything the client has since done locally (like the auto-cut chain's
-    // mechanical cut, saved only after a debounced autosave), so a "ready"
-    // detection must only ever act once per transition.
+    
     let settled = false;
+    const pusher = getPusherClient();
+    if (!pusher) return;
 
-    const checkStatus = async () => {
-      try {
-        const response = await fetch(`/api/projects/${id}/status`, {
-          signal: abortController.signal,
-        });
-        if (!response.ok) return;
-        if (!response.headers.get("content-type")?.includes("application/json")) {
-          return;
-        }
-        const updated = await response.json();
-        // Terminal either way (ready or failed): re-run the fetch effect so
-        // the screen reflects the real outcome. The refreshed status also
-        // shuts this poll down.
-        if (
-          !settled &&
-          (updated.transcriptStatus === "ready" || updated.transcriptStatus === "failed")
-        ) {
-          settled = true;
-          setReloadNonce((n) => n + 1);
-        }
-      } catch (error) {
-        if (error instanceof DOMException && error.name === "AbortError") return;
-        console.error("Failed to poll transcript status:", error);
+    const channel = pusher.subscribe(id);
+    channel.bind("transcript_status", (data: { status: "ready" | "failed" }) => {
+      if (!settled && (data.status === "ready" || data.status === "failed")) {
+        settled = true;
+        setReloadNonce((n) => n + 1);
       }
-    };
-
-    // Background tabs throttle timers heavily, so also re-check the moment
-    // the user comes back to the tab.
-    const interval = setInterval(checkStatus, 4000);
-    const handleReturnToTab = () => {
-      if (document.visibilityState === "visible") checkStatus();
-    };
-    document.addEventListener("visibilitychange", handleReturnToTab);
-    window.addEventListener("focus", handleReturnToTab);
+    });
 
     return () => {
-      clearInterval(interval);
-      abortController.abort();
-      document.removeEventListener("visibilitychange", handleReturnToTab);
-      window.removeEventListener("focus", handleReturnToTab);
+      channel.unbind("transcript_status");
+      pusher.unsubscribe(id);
     };
   }, [transcriptStatus, id]);
 
@@ -859,21 +832,37 @@ export default function EditorPage() {
       }
     } finally {
       setAutoCutBusy(false);
+      // The chain has settled (success or handled failure) — release the
+      // full-page loading state (ADR 0004 AC-12) so the real editor mounts.
+      setChainPending(false);
     }
   }, [durationSeconds, words, project, applyEdl, runAiCut]);
 
   // Fire the auto-chain exactly once, when a fresh ready project has finished
-  // loading (no usable saved EDL — freshOnLoadRef). autoChainedRef guards
-  // re-entry within one mounted studio; the effect re-runs as edl/project
-  // settle but only the first pass does the work. Legacy rows, saved-EDL
-  // projects, and projects with an existing run set freshOnLoadRef false and
-  // are provably inert here (AC-4, AC-10).
+  // loading (no usable saved EDL — freshOnLoadRef) AND the user has reselected
+  // their source video (ADR 0004 child 2). The mechanical cut only needs the
+  // transcript, not the video file, so without this clause the chain (and any
+  // AI charge) could start before the user has taken the action — reselecting
+  // — that they associate with resuming work on the project. autoChainedRef
+  // guards re-entry within one mounted studio; the effect re-runs as
+  // edl/project/sourceFile settle but only the first pass (the one where every
+  // clause is satisfied) does the work. Legacy rows, saved-EDL projects, and
+  // projects with an existing run set freshOnLoadRef false and are provably
+  // inert here (AC-4, AC-10, AC-11).
   useEffect(() => {
     if (autoChainedRef.current) return;
     if (!freshOnLoadRef.current) return;
     if (!project || project.transcriptStatus !== "ready") return;
-    if (edl !== null) return;
-    if (words.length === 0 || durationSeconds <= 0) return;
+    if (sourceFile === null) return;
+    // Past this point the user HAS reselected on a fresh project, so
+    // `chainPending` (AC-12) is up — if the chain turns out to have nothing
+    // to actually do (an edl already applied by some other path, or a
+    // degenerate transcript with no words/duration), release it here rather
+    // than leaving the full-page loading state stuck forever.
+    if (edl !== null || words.length === 0 || durationSeconds <= 0) {
+      setChainPending(false);
+      return;
+    }
     autoChainedRef.current = true;
     // Deferred to a microtask so the chain's first setState (setAutoCutBusy)
     // isn't a synchronous call within the effect body itself
@@ -883,7 +872,7 @@ export default function EditorPage() {
     // after unmount is a harmless no-op (React 18+ ignores a setState call
     // on an unmounted component).
     queueMicrotask(() => void runAutoChain());
-  }, [project, edl, words, durationSeconds, runAutoChain]);
+  }, [project, edl, words, durationSeconds, sourceFile, runAutoChain]);
 
   // Divergence check (ADR 0003 child 2): true when the user has drifted from
   // the active AI run's suggestions, i.e. re-applying the run would change the
@@ -1209,7 +1198,14 @@ export default function EditorPage() {
           </p>
           <div className="mt-6">
             <FilePicker
-              onFileSelected={(file) => setSourceFile(file)}
+              onFileSelected={(file) => {
+                setSourceFile(file);
+                // Fresh project: reselect is about to trigger the gated
+                // auto-chain (AC-8), so hold on the full-page loading state
+                // (AC-12) starting this same render — never flash the real
+                // editor chrome first.
+                if (freshOnLoadRef.current) setChainPending(true);
+              }}
               expectedDurationMs={project.durationMs ?? undefined}
               expectedFileSize={project.fileSize ?? undefined}
               expectedFileName={project.fileName ?? undefined}
@@ -1218,6 +1214,24 @@ export default function EditorPage() {
           </div>
         </div>
       </div>
+    );
+  }
+
+  // ADR 0004 AC-12: between a successful reselect and the gated auto-chain
+  // settling, show ONLY this full-page loading state — the real editor chrome
+  // (transcript panel, timeline, rail) must not mount until the chain is
+  // done, so the user never sees a partially-loaded editor mid-cut. The
+  // progress bar (engineer follow-up request) gives visible forward motion
+  // instead of an indefinite spinner, since this wait can run to a couple of
+  // minutes on a long transcript.
+  if (chainPending) {
+    return (
+      <StatusScreen
+        icon={<Loader2 className="h-7 w-7 motion-safe:animate-spin" />}
+        title="A.I. is doing the rough cut in the background..."
+        message="Finding false starts, stumbles & flubbed takes"
+        progress={<AutoChainProgressBar wordCount={words.length} />}
+      />
     );
   }
 
@@ -1574,12 +1588,13 @@ export default function EditorPage() {
 }
 
 /**
- * Centered progress overlay while the AI pass runs. Gemini gives no progress
- * signal — it's a single call — so the percent is a transcript-size-calibrated
- * estimate that climbs to 95% and completes when the response lands (this
- * overlay unmounts the moment aiBusy clears).
+ * Duration-calibrated completion estimate, shared by every "AI is working"
+ * loading visual in this file. Gemini gives no real progress signal — it's a
+ * single call — so this is a transcript-size-calibrated guess that climbs to
+ * 95% and lets the caller's own unmount (once the real work finishes) be
+ * what "completes" it, rather than ever claiming 100% before it's true.
  */
-function AiCutOverlay({ wordCount }: { wordCount: number }) {
+function useEstimatedProgress(wordCount: number): number {
   const [startedAt] = useState(() => Date.now());
   const [now, setNow] = useState(startedAt);
   useEffect(() => {
@@ -1589,17 +1604,59 @@ function AiCutOverlay({ wordCount }: { wordCount: number }) {
   // Gemini's runtime scales with transcript length (thinking enabled, capped
   // at 240s server-side) — roughly 40 words/s of review, floored and capped.
   const expectedSeconds = Math.min(180, Math.max(12, 8 + wordCount / 40));
-  const percent = Math.min(95, ((now - startedAt) / 1000 / expectedSeconds) * 100);
+  return Math.min(95, ((now - startedAt) / 1000 / expectedSeconds) * 100);
+}
+
+/**
+ * Centered progress overlay while the AI pass runs. This overlay unmounts
+ * the moment aiBusy clears.
+ */
+function AiCutOverlay({ wordCount }: { wordCount: number }) {
+  const percent = useEstimatedProgress(wordCount);
   return (
     <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-black/60 backdrop-blur-sm">
       <ProgressRing percent={percent} size={96} />
       <div className="text-center">
         <p className="text-sm font-semibold text-white">
-          AI is reviewing your transcript…
+          A.I. is doing the rough cut in the background...
         </p>
         <p className="mt-1 text-xs text-zinc-400">
           Finding false starts, stumbles & flubbed takes
         </p>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Linear progress bar for the ADR 0004 AC-12 full-page loading state (added
+ * as a follow-up: a visible, steadily-advancing percentage reads as less
+ * uncertain than a bare spinner on a wait that can run to a couple of
+ * minutes). Same estimate as `AiCutOverlay`, same visual pattern as the
+ * dashboard's per-project job-progress bar (`dashboard/page.tsx`), styled
+ * for `StatusScreen`'s token palette instead of that page's raw colors.
+ */
+function AutoChainProgressBar({ wordCount }: { wordCount: number }) {
+  const percent = useEstimatedProgress(wordCount);
+  const rounded = Math.round(percent);
+  return (
+    <div className="w-full max-w-xs">
+      <div className="mb-1.5 flex items-center justify-between text-[11px] font-medium text-foreground/50">
+        <span>Working…</span>
+        <span className="tabular-nums font-semibold text-blue-400">{rounded}%</span>
+      </div>
+      <div
+        role="progressbar"
+        aria-label="A.I. rough cut progress"
+        aria-valuenow={rounded}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        className="h-1.5 w-full overflow-hidden rounded-full bg-foreground/10"
+      >
+        <div
+          className="h-full rounded-full bg-blue-500 transition-all duration-300"
+          style={{ width: `${percent}%` }}
+        />
       </div>
     </div>
   );
@@ -1645,11 +1702,16 @@ function StatusScreen({
   title,
   message,
   tone,
+  progress,
 }: {
   icon: ReactNode;
   title: string;
   message: string;
   tone?: "error";
+  /** Optional progress visual (e.g. `AutoChainProgressBar`), rendered
+   * between the message and the exit link. Omitted screens (transcribing,
+   * failed, not found) are unaffected. */
+  progress?: ReactNode;
 }) {
   return (
     <div className="flex h-screen flex-col items-center justify-center gap-4 bg-background px-6 text-center">
@@ -1663,6 +1725,7 @@ function StatusScreen({
         <h1 className="text-lg font-bold text-foreground">{title}</h1>
         <p className="max-w-md text-sm text-foreground/50">{message}</p>
       </div>
+      {progress}
       <ExitToDashboardLink className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-foreground/10 px-3 py-1.5 text-sm text-foreground/70 hover:bg-foreground/10">
         <ArrowLeft className="h-4 w-4" /> Back to dashboard
       </ExitToDashboardLink>

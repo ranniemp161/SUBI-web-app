@@ -18,6 +18,7 @@ spends tokens and deep-links to Wallet to buy more.
 | `src/lib/ip-rate-limit.ts` | Per-IP limiter for the 3 routes in `proxy.ts`'s public list (no session to key on) |
 | `src/lib/deepgram.ts`, `src/lib/ai-rough-cut.ts`, `src/lib/ai-cuts.ts` | Transcription + AI cut-suggestion pipeline |
 | `src/lib/blob.ts` | Vercel Blob direct-upload + delete-after-transcription |
+| `src/lib/pusher.ts` | Server (`pusherServer`) and client (`getPusherClient()`) Pusher instances — both live in this one file, so any `"use client"` code importing the client helper also pulls in the server SDK; see Conventions below |
 | `src/lib/export/*`, `src/workers/export-worker.ts` | Client-side WebCodecs MP4 export (Chromium-only, see `LIMITATIONS.md`), plus browser-agnostic NLE interchange export (`fcpxml.ts`, `cmx3600.ts`) sharing `timebase.ts`/`filename.ts` frame-math and filename-sanitizing helpers, downloaded via `src/lib/download-text-file.ts` |
 | `src/lib/authz.ts` | Write-route authorization — the `users` row (provisioned by the Clerk webhook or its fallback) IS the authorization; there is no separate access-code verify route (`src/lib/access-codes.ts` no longer exists) |
 | `src/app/api/webhooks/clerk/route.ts` | Clerk user-sync webhook (svix-verified) |
@@ -40,6 +41,29 @@ npm -w @repo/rough-cut typecheck
   (browser -> Vercel Blob directly); that blob is deleted once transcription
   finishes. Reopening a project requires re-selecting the source file. The app validates
   reselected file duration (blocking on mismatch) and filename, size, or type (warning on mismatch).
+- **AI polish is mandatory, not a per-project choice** (ADR `0004`). `POST /api/projects`
+  hardcodes `aiPolishRequested: true` on every new project; `createProjectSchema` is a
+  `strictObject` with no `aiPolish` field, so a client that sends one gets a 400. There is
+  no upload confirm panel or price screen; a picked file goes straight into extraction,
+  upload, and transcription, with a client-side pre-flight (`blockedByCreditsForNewUpload`,
+  `dashboard/page.tsx`) pricing the combined transcription-plus-polish cost and showing an
+  inline, non-modal message on insufficient funds.
+- **Cutting and spending only start after the user reselects their source video**
+  (ADR `0004`). The studio's automatic chain (mechanical cut, then AI polish) used to fire
+  the moment a fresh project's transcript was ready; it now also requires `sourceFile !== null`
+  in its firing effect (`[id]/page.tsx`), so nothing cuts or charges before the user has
+  taken the reselect action. Between reselect and the chain settling, the page shows ONLY a
+  full-page loading state (no transcript panel/timeline/rail mounted yet) with a progress bar
+  — never the real editor chrome mid-cut.
+- **Transcript status reaches the client via Pusher, not polling.** The dashboard's
+  project list and the studio page both used to poll `/api/projects/[id]/status` on an
+  interval; that's gone. The server fires a `transcript_status` event (`{ status: "ready" | "failed" }`)
+  on a channel named for the project id from three places: `api/transcribe/callback/route.ts`
+  (the async/production path), and `api/transcribe/deepgram/route.ts` (the local-sync path and
+  its own early-failure branches). Any new failure path added to either route should also fire
+  (or deliberately skip) this event — a client subscribed via `getPusherClient()` has no
+  fallback re-check anymore, so a silently-skipped event leaves the project stuck showing
+  "Transcribing…" until a manual reload.
 - **Cross-app URLs**: always via `src/lib/env.ts`, never a raw
   `process.env.NEXT_PUBLIC_*` read elsewhere — Next.js inlines these at build
   time so they must be referenced by literal name in one place.
@@ -66,6 +90,10 @@ npm -w @repo/rough-cut typecheck
   synchronously, holding the request open; set `PUBLIC_APP_URL` to force the
   production callback path locally.
 - Deepgram enforces an upload size cap (2 GB by default, configurable via the `DEEPGRAM_MAX_UPLOAD_BYTES` environment variable) enforced at Blob token issuance (`maximumSizeInBytes`), not after upload.
+- `src/app/api/projects/[id]/status` still exists but nothing calls it client-side anymore
+  (superseded by the Pusher `transcript_status` event) — don't assume it's the live status
+  mechanism if you find it while reading the code.
 
 ## Related ADRs
 - `docs/adr/_root/0001-monorepo-wallet-architecture.md`
+- `docs/adr/rough-cut/0004-reselect-gated-pipeline/index.md` — mandatory AI polish, no upload confirm panel, and the reselect-gated auto-chain (supersedes `docs/adr/rough-cut/0003-studio-auto-cut-flow/index.md`'s upload and trigger design)

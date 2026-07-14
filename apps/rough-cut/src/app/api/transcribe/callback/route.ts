@@ -8,6 +8,7 @@ import { secondsFromDeepgramDuration, settleHoldQuietly } from "@/lib/credits";
 import { reportError } from "@/lib/observability";
 import { ipRateLimit } from "@/lib/ip-rate-limit";
 import { deleteBlobQuietly } from "@/lib/blob";
+import { pusherServer } from "@/lib/pusher";
 
 // Headroom for parsing large Deepgram payloads on long videos.
 export const maxDuration = 60;
@@ -120,6 +121,15 @@ export async function POST(request: Request) {
     // No AI pass here — AI Cut is strictly opt-in from the studio, where the
     // user sees the credit cost before it runs.
 
+    // Notify clients that transcription has finished
+    try {
+      await pusherServer.trigger(projectId, "transcript_status", { 
+        status: failed ? "failed" : "ready" 
+      });
+    } catch (pusherErr) {
+      console.error("Failed to trigger Pusher event", pusherErr);
+    }
+
     return NextResponse.json({ received: true });
   } catch (error) {
     reportError("Error processing transcribe callback", error);
@@ -137,6 +147,12 @@ export async function POST(request: Request) {
     await settleHoldQuietly(projectId, 0);
 
     if (blobUrl) await deleteBlobQuietly(blobUrl);
+
+    try {
+      await pusherServer.trigger(projectId, "transcript_status", { status: "failed" });
+    } catch (pusherErr) {
+      console.error("Failed to trigger Pusher event", pusherErr);
+    }
 
     return NextResponse.json(
       { error: "Failed to process callback." },
