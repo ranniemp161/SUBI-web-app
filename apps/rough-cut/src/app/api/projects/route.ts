@@ -2,7 +2,7 @@ import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import { db, withDbRetry } from "@repo/db";
 import { projects, users } from "@repo/db/schema";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, sql } from "drizzle-orm";
 import { getAuthorizedDbUser } from "@/lib/authz";
 import { createProjectSchema } from "@/lib/validation";
 import { rateLimit, readRateLimit } from "@/lib/rate-limit";
@@ -55,8 +55,10 @@ export async function POST(request: Request) {
       );
     }
 
-    const { fileName, durationMs, fileSize, fileType, aiPolish } = parsed.data;
+    const { fileName, durationMs, fileSize, fileType } = parsed.data;
 
+    // AI polish is mandatory for every new project (ADR 0004 child 1) —
+    // decided server-side; the client sends no `aiPolish` field.
     const [project] = await db
       .insert(projects)
       .values({
@@ -65,7 +67,7 @@ export async function POST(request: Request) {
         durationMs: durationMs ?? null,
         fileSize: fileSize ?? null,
         fileType: fileType ?? null,
-        aiPolishRequested: aiPolish,
+        aiPolishRequested: true,
       })
       .returning();
 
@@ -114,7 +116,9 @@ export async function GET() {
     }
 
     // List view only needs metadata — omit the transcript + EDL jsonb, which
-    // can be large and aren't rendered on the dashboard grid.
+    // can be large and aren't rendered on the dashboard grid. `hasEdl` is
+    // presence-only (ADR 0004 child 1): it drives the "Ready for step 2" vs
+    // "Ready" dashboard label without ever selecting the EDL jsonb itself.
     const userProjects = await withDbRetry(() =>
       db
         .select({
@@ -124,6 +128,7 @@ export async function GET() {
           transcriptStatus: projects.transcriptStatus,
           createdAt: projects.createdAt,
           updatedAt: projects.updatedAt,
+          hasEdl: sql<boolean>`${projects.edl} is not null`,
         })
         .from(projects)
         .where(eq(projects.userId, userRows[0].id))

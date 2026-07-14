@@ -1,7 +1,7 @@
 # 0003. Studio auto cut flow
 
 **Date**: 2026-07-11
-**Status**: Accepted
+**Status**: Superseded by [0004](../0004-reselect-gated-pipeline/index.md)
 
 ## Summary
 

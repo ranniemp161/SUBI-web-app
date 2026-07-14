@@ -53,16 +53,14 @@ const durationMsSchema = z
   .transform((v) => Math.round(v));
 
 // POST /api/projects. strictObject rejects unexpected top-level keys.
+// AI polish is mandatory for every new project (ADR 0004 child 1) — the
+// server hardcodes `aiPolishRequested: true` on insert, so there is no
+// `aiPolish` field here; a client that still sends one gets a 400.
 export const createProjectSchema = z.strictObject({
   fileName: z.string().min(1).max(500),
   durationMs: durationMsSchema.nullable().optional(),
   fileSize: z.number().min(0).max(100 * 1024 * 1024 * 1024).nullable().optional(),
   fileType: z.string().max(100).nullable().optional(),
-  // Whether the user opted into (and agreed to pay for) the AI polish pass at
-  // upload (ADR 0003 child 1). The dashboard's confirm panel always sends it;
-  // optional + default false keeps any older client that omits it inert under
-  // the auto-fire logic.
-  aiPolish: z.boolean().optional().default(false),
 });
 
 // PATCH /api/projects/:id — every field optional; only those present are

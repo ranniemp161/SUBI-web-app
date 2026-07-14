@@ -19,6 +19,7 @@ import {
 import { rateLimit } from "@/lib/rate-limit";
 import { reportError } from "@/lib/observability";
 import { deleteBlobQuietly, isOwnBlobUrl } from "@/lib/blob";
+import { pusherServer } from "@/lib/pusher";
 import {
   extractDeepgramError,
   normalizeDeepgram,
@@ -253,6 +254,12 @@ export async function POST(request: Request) {
       await settleHoldQuietly(projectId, 0);
       await deleteBlobQuietly(blobUrl);
 
+      try {
+        await pusherServer.trigger(projectId, "transcript_status", { status: "failed" });
+      } catch (pusherErr) {
+        console.error("Failed to trigger Pusher event for failed transcription", pusherErr);
+      }
+
       return NextResponse.json(
         { error: "Deepgram rejected the request.", detail: extractDeepgramError(detail) },
         { status: 502 }
@@ -289,6 +296,14 @@ export async function POST(request: Request) {
     );
     await deleteBlobQuietly(blobUrl);
 
+    if (useSync) {
+      try {
+        await pusherServer.trigger(projectId, "transcript_status", { status: "ready" });
+      } catch (pusherErr) {
+        console.error("Failed to trigger Pusher event for sync transcription", pusherErr);
+      }
+    }
+
     return NextResponse.json({ received: true });
   } catch (error) {
     reportError("Error starting Deepgram transcription", error);
@@ -303,6 +318,12 @@ export async function POST(request: Request) {
 
     await settleHoldQuietly(projectId, 0);
     await deleteBlobQuietly(blobUrl);
+
+    try {
+      await pusherServer.trigger(projectId, "transcript_status", { status: "failed" });
+    } catch (pusherErr) {
+      console.error("Failed to trigger Pusher event for failed transcription", pusherErr);
+    }
 
     return NextResponse.json(
       { error: "Failed to start transcription." },

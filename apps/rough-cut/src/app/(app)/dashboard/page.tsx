@@ -12,19 +12,26 @@ import { formatUsd, chargeMicrosForSeconds } from "@repo/ui";
 import { formatDuration, formatDate } from "@/lib/utils";
 import { extractAudioForTranscription } from "@/lib/audio-extract";
 import { uploadPathnameForProject } from "@/lib/blob";
+import { getPusherClient } from "@/lib/pusher";
 
 interface Project {
   id: string;
   fileName: string;
   durationMs: number | null;
   transcriptStatus: "idle" | "processing" | "ready" | "failed";
+  // Presence-only signal (no EDL content ever reaches the list view) — a
+  // "ready" project with no saved edit list yet still owes the studio's
+  // reselect-and-process step (ADR 0004 child 1).
+  hasEdl: boolean;
   createdAt: string;
   updatedAt: string;
 }
 
 /**
  * Visual treatment for each transcript status, used for the pill badge shown on
- * a project card. `idle` has no badge (null).
+ * a project card. `idle` has no badge (null). `ready`'s label depends on
+ * `hasEdl` (ADR 0004 child 1) so it's computed per-row instead of here — see
+ * `readyLabelFor`.
  */
 const STATUS_META: Record<
   Project["transcriptStatus"],
@@ -50,6 +57,17 @@ const STATUS_META: Record<
     chip: "bg-red-500/15 ring-1 ring-inset ring-red-400/25",
   },
 };
+
+/**
+ * A "ready" project with no saved edit list yet still owes the studio's
+ * reselect step, so its dashboard row says so instead of reading identically
+ * to a fully finished project (AC-5).
+ */
+function readyLabelFor(project: Project): string {
+  return project.transcriptStatus === "ready" && !project.hasEdl
+    ? "Ready for step 2"
+    : "Ready";
+}
 
 /** Gradient presets for a project card's poster, so the grid feels alive. */
 const POSTER_GRADIENTS = [
@@ -203,15 +221,10 @@ export default function DashboardPage() {
 
   const [isDraggingPage, setIsDraggingPage] = useState(false);
 
-  // A selected file waiting on the upload confirm panel (ADR 0003 child 1).
-  // The panel shows the combined price and the AI-polish toggle before any
-  // project row is created or any charge is reserved. `aiPolish` starts on:
-  // AI polish is the default, opt-out choice.
-  const [pendingUpload, setPendingUpload] = useState<{
-    file: File;
-    metadata: VideoMetadata;
-  } | null>(null);
-  const [pendingAiPolish, setPendingAiPolish] = useState(true);
+  // Inline, non-modal insufficient-funds message shown near the file picker
+  // when the combined transcription-plus-polish pre-flight blocks a new
+  // upload (ADR 0004 child 1) — replaces the removed confirm-panel disclosure.
+  const [insufficientFundsMessage, setInsufficientFundsMessage] = useState<string | null>(null);
 
   // Advance the estimated transcription percentages while any are in flight.
   const hasTranscribing = Object.values(activeUploads).some(
@@ -424,19 +437,17 @@ export default function DashboardPage() {
   }, [fetchCredits]);
 
   /**
-   * Pre-flight credit check (UX only — the server re-checks authoritatively
-   * and 402s). Returns true when the upload should be blocked.
+   * Pre-flight credit check for the *retry* flow only (UX only — the server
+   * re-checks authoritatively and 402s). No AI-polish cost: retrying just
+   * re-runs transcription against an existing project. Returns true when the
+   * upload should be blocked. Shows a toast — the retry flow keeps that
+   * treatment; only new uploads get the inline message (ADR 0004 child 1).
    */
   const blockedByCredits = useCallback(
-    (
-      durationMs: number | null | undefined,
-      { includeAiPolish = false }: { includeAiPolish?: boolean } = {}
-    ): boolean => {
+    (durationMs: number | null | undefined): boolean => {
       if (credits == null || durationMs == null || durationMs <= 0) return false;
       const seconds = Math.ceil(durationMs / 1000);
-      const transcriptionMicros = chargeMicrosForSeconds(seconds);
-      const aiPolishMicros = includeAiPolish ? chargeMicrosForSeconds(seconds) : 0;
-      const neededMicros = transcriptionMicros + aiPolishMicros;
+      const neededMicros = chargeMicrosForSeconds(seconds);
       // Strict `<`: a balance exactly equal to the combined cost is treated as
       // blocked to leave headroom for the server's exact-duration re-charge.
       if (neededMicros < credits.balanceMicros) return false;
@@ -451,74 +462,78 @@ export default function DashboardPage() {
     [credits]
   );
 
-  // File selection no longer creates the project immediately (ADR 0003 child
-  // 1): it holds the selection so the confirm panel can show the combined price
-  // and the AI-polish choice first. Nothing is charged until the user confirms.
-  const handleFileSelected = useCallback((file: File, metadata: VideoMetadata) => {
-    setPendingUpload({ file, metadata });
-    setPendingAiPolish(true);
-  }, []);
+  /**
+   * Pre-flight credit check for a *new* upload (UX only — the server
+   * re-checks authoritatively and 402s). AI polish is now mandatory for every
+   * new project, so this prices the combined transcription-plus-polish cost
+   * (AC-3). On a block, sets the inline message shown near the file picker
+   * instead of a toast — no modal remains in the upload flow. Returns true
+   * when the upload should be blocked.
+   */
+  const blockedByCreditsForNewUpload = useCallback(
+    (durationMs: number | null | undefined): boolean => {
+      setInsufficientFundsMessage(null);
+      if (credits == null || durationMs == null || durationMs <= 0) return false;
+      const seconds = Math.ceil(durationMs / 1000);
+      const neededMicros = chargeMicrosForSeconds(seconds) * 2;
+      // Strict `<`: a balance exactly equal to the combined cost is treated as
+      // blocked to leave headroom for the server's exact-duration re-charge.
+      if (neededMicros < credits.balanceMicros) return false;
+      setInsufficientFundsMessage(
+        `Not enough funds for this video — it needs about ${formatUsd(neededMicros)} of credit (transcription + AI polish) and you have ${formatUsd(credits.balanceMicros)}.`
+      );
+      return true;
+    },
+    [credits]
+  );
 
-  const cancelPendingUpload = useCallback(() => {
-    setPendingUpload(null);
-  }, []);
+  // File selection now goes straight into extraction, upload, and
+  // transcription with no intermediate confirm panel (ADR 0004 child 1, AC-1):
+  // no click required after selection, and AI polish is no longer a per-project
+  // choice — the server hardcodes it on for every new project.
+  const handleFileSelected = useCallback(
+    async (file: File, metadata: VideoMetadata) => {
+      // Note: no up-front size gate on the video itself — what's uploaded is
+      // the extracted audio track, which kickOffTranscription size-checks
+      // against the Deepgram cap after extraction.
+      if (blockedByCreditsForNewUpload(metadata.durationMs)) return;
+      setIsCreating(true);
 
-  // Confirm the held upload: create the project (carrying the AI-polish choice),
-  // then kick off transcription. This is the one place a charge is set in motion.
-  const confirmPendingUpload = useCallback(async () => {
-    if (!pendingUpload) return;
-    const { file, metadata } = pendingUpload;
-    // Note: no up-front size gate on the video itself — what's uploaded is
-    // the extracted audio track, which kickOffTranscription size-checks
-    // against the Deepgram cap after extraction.
-    if (blockedByCredits(metadata.durationMs, { includeAiPolish: pendingAiPolish })) return;
-    setIsCreating(true);
+      try {
+        const response = await fetch("/api/projects", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            fileName: metadata.fileName,
+            durationMs: metadata.durationMs,
+            fileSize: metadata.fileSize,
+            fileType: metadata.fileType,
+          }),
+        });
 
-    try {
-      const response = await fetch("/api/projects", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          fileName: metadata.fileName,
-          durationMs: metadata.durationMs,
-          fileSize: metadata.fileSize,
-          fileType: metadata.fileType,
-          aiPolish: pendingAiPolish,
-        }),
-      });
+        if (!response.ok) {
+          throw new Error("Failed to create project");
+        }
 
-      if (!response.ok) {
-        throw new Error("Failed to create project");
+        const project = await response.json();
+        // Add new project to the list immediately for instant feedback.
+        // Mark it "processing" right away (instead of waiting on a poll
+        // tick) so the progress bar shows from the start — startTranscription
+        // is about to set this same status server-side anyway.
+        setProjects((prev) => [
+          { ...project, transcriptStatus: "processing", hasEdl: false },
+          ...prev,
+        ]);
+
+        kickOffTranscription(project.id, file);
+      } catch (error) {
+        console.error("Failed to create project:", error);
+      } finally {
+        setIsCreating(false);
       }
-
-      const project = await response.json();
-      // Add new project to the list immediately for instant feedback.
-      // Mark it "processing" right away (instead of waiting on a poll
-      // tick) so the progress bar shows from the start — startTranscription
-      // is about to set this same status server-side anyway.
-      setProjects((prev) => [
-        { ...project, transcriptStatus: "processing" },
-        ...prev,
-      ]);
-      setPendingUpload(null);
-
-      kickOffTranscription(project.id, file);
-    } catch (error) {
-      console.error("Failed to create project:", error);
-    } finally {
-      setIsCreating(false);
-    }
-  }, [pendingUpload, pendingAiPolish, kickOffTranscription, blockedByCredits]);
-
-  // Escape closes the upload confirm panel (unless a create is already firing).
-  useEffect(() => {
-    if (!pendingUpload || isCreating) return;
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") setPendingUpload(null);
-    }
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [pendingUpload, isCreating]);
+    },
+    [blockedByCreditsForNewUpload, kickOffTranscription]
+  );
 
   /** Page-level drag-and-drop listener. */
   useEffect(() => {
@@ -652,91 +667,57 @@ export default function DashboardPage() {
     .sort()
     .join(",");
 
-  /** Poll any project still transcribing until it's ready or failed. */
+  /** Listen to Pusher for any project still transcribing until it's ready or failed. */
   useEffect(() => {
     if (!processingKey) return;
     const ids = processingKey.split(",");
-    const abortController = new AbortController();
+    
+    const pusher = getPusherClient();
+    if (!pusher) return;
 
-    const checkStatuses = async () => {
-      for (const id of ids) {
-        try {
-          const response = await fetch(`/api/projects/${id}/status`, {
-            signal: abortController.signal,
+    const channels = ids.map((id) => {
+      const channel = pusher.subscribe(id);
+      
+      channel.bind("transcript_status", (data: { status: "ready" | "failed" }) => {
+        if (data.status !== "ready" && data.status !== "failed") return;
+
+        setProjects((prev) =>
+          prev.map((p) =>
+            p.id === id ? { ...p, transcriptStatus: data.status } : p
+          )
+        );
+        
+        fetchCredits();
+        setActiveUploads((prev) => {
+          const copy = { ...prev };
+          delete copy[id];
+          return copy;
+        });
+        
+        const fileName = projectsRef.current.find((p) => p.id === id)?.fileName;
+        if (data.status === "ready") {
+          toast.success("Transcript ready", {
+            description: fileName
+              ? `"${fileName}" is ready to edit — open it to create your rough cut.`
+              : "Open the project to create your rough cut.",
           });
-          if (!response.ok) continue;
-
-          // A redirect (e.g. to the sign-in page during a session refresh)
-          // resolves with response.ok === true but an HTML body, not JSON —
-          // guard against parsing that as a transcript status update.
-          if (!response.headers.get("content-type")?.includes("application/json")) {
-            continue;
-          }
-
-          const updated = await response.json();
-          // Only ready/failed are terminal. "processing" means keep waiting,
-          // and "idle" means the server hasn't started the job yet (the card
-          // is optimistically "processing" through the extract/upload phases,
-          // before the Deepgram kickoff flips the server status) — flipping
-          // the card back on either would kill the progress UI mid-job.
-          if (updated.transcriptStatus !== "ready" && updated.transcriptStatus !== "failed") {
-            continue;
-          }
-
-          setProjects((prev) =>
-            prev.map((p) =>
-              p.id === id
-                ? { ...p, transcriptStatus: updated.transcriptStatus }
-                : p
-            )
-          );
-          // The finished job settled its credit hold (reconcile or refund) —
-          // pick up the corrected balance, clear the card's progress overlay,
-          // and tell the user the outcome.
-          fetchCredits();
-          setActiveUploads((prev) => {
-            const copy = { ...prev };
-            delete copy[id];
-            return copy;
+        } else {
+          toast.error("Transcription failed", {
+            description: fileName
+              ? `"${fileName}" couldn't be transcribed — retry it from its card.`
+              : "Retry it from the project card.",
           });
-          const fileName = projectsRef.current.find((p) => p.id === id)?.fileName;
-          if (updated.transcriptStatus === "ready") {
-            toast.success("Transcript ready", {
-              description: fileName
-                ? `"${fileName}" is ready to edit — open it to create your rough cut.`
-                : "Open the project to create your rough cut.",
-            });
-          } else {
-            toast.error("Transcription failed", {
-              description: fileName
-                ? `"${fileName}" couldn't be transcribed — retry it from its card.`
-                : "Retry it from the project card.",
-            });
-          }
-        } catch (error) {
-          if (error instanceof DOMException && error.name === "AbortError") continue;
-          console.error("Failed to poll transcript status:", error);
         }
-      }
-    };
-
-    // Check right away instead of sitting out a full interval (the job may
-    // already be done), then keep polling. Background tabs throttle timers to
-    // a minute or more, so also re-check the moment the tab is visible or
-    // focused again — that's the "came back to a stuck 95%" case.
-    checkStatuses();
-    const interval = setInterval(checkStatuses, 4000);
-    const handleReturnToTab = () => {
-      if (document.visibilityState === "visible") checkStatuses();
-    };
-    document.addEventListener("visibilitychange", handleReturnToTab);
-    window.addEventListener("focus", handleReturnToTab);
+      });
+      
+      return { id, channel };
+    });
 
     return () => {
-      clearInterval(interval);
-      abortController.abort();
-      document.removeEventListener("visibilitychange", handleReturnToTab);
-      window.removeEventListener("focus", handleReturnToTab);
+      channels.forEach(({ id, channel }) => {
+        channel.unbind("transcript_status");
+        pusher.unsubscribe(id);
+      });
     };
   }, [processingKey, fetchCredits]);
 
@@ -842,6 +823,27 @@ export default function DashboardPage() {
           onFileSelected={handleFileSelected}
           isLoading={isCreating}
         />
+        {/* Inline, non-modal insufficient-funds message (ADR 0004 child 1,
+            AC-3) — replaces the removed confirm panel's disclosure. Neither
+            POST /api/projects nor extraction ever runs while this shows. */}
+        {insufficientFundsMessage && (
+          <div
+            id="insufficient-funds-message"
+            className="mt-4 flex items-center gap-2.5 rounded-xl border border-red-500/20 bg-red-500/5 px-4 py-3.5 text-sm text-red-400 backdrop-blur-md"
+          >
+            <svg className="h-4 w-4 shrink-0 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+            <span className="flex-1">{insufficientFundsMessage}</span>
+            <button
+              type="button"
+              onClick={() => window.open(WALLET_DASHBOARD_URL, "_blank")}
+              className="shrink-0 rounded-lg bg-red-500/10 px-3 py-1.5 text-xs font-semibold text-red-300 hover:bg-red-500/20 transition-colors cursor-pointer"
+            >
+              Add funds
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Project List */}
@@ -963,7 +965,9 @@ export default function DashboardPage() {
                               : ""
                               }`}
                           />
-                          {status.label}
+                          {project.transcriptStatus === "ready"
+                            ? readyLabelFor(project)
+                            : status.label}
                         </span>
                       )}
 
@@ -1093,128 +1097,6 @@ export default function DashboardPage() {
           </div>
         </div>
       )}
-
-      {/* Upload confirm panel — shows the combined price and the AI-polish
-          choice before any project is created or any charge reserved (ADR 0003
-          child 1). AC-1. */}
-      {pendingUpload && (() => {
-        const seconds =
-          pendingUpload.metadata.durationMs && pendingUpload.metadata.durationMs > 0
-            ? Math.ceil(pendingUpload.metadata.durationMs / 1000)
-            : 60;
-        const transcriptionMicros = chargeMicrosForSeconds(seconds);
-        const aiPolishMicros = chargeMicrosForSeconds(seconds);
-        const totalMicros = transcriptionMicros + (pendingAiPolish ? aiPolishMicros : 0);
-        return (
-          <div
-            className="fixed inset-0 z-50 flex items-center justify-center p-4"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="upload-confirm-title"
-          >
-            <div
-              onClick={() => {
-                if (!isCreating) cancelPendingUpload();
-              }}
-              className="fixed inset-0 bg-black/75 backdrop-blur-md transition-opacity duration-300"
-            />
-            <div className="relative w-full max-w-md transform overflow-hidden rounded-2xl border border-white/10 bg-surface/95 p-6 shadow-2xl transition-all duration-300">
-              <h3 id="upload-confirm-title" className="text-lg font-bold text-white">
-                Start this video?
-              </h3>
-              <p className="mt-1.5 truncate text-sm text-zinc-400" title={pendingUpload.metadata.fileName}>
-                <span className="font-semibold text-zinc-200">{pendingUpload.metadata.fileName}</span>
-                {pendingUpload.metadata.durationMs != null && (
-                  <> · {formatDuration(pendingUpload.metadata.durationMs)}</>
-                )}
-              </p>
-
-              {/* AI polish toggle — defaulted on (opt-out). */}
-              <button
-                type="button"
-                onClick={() => setPendingAiPolish((v) => !v)}
-                aria-pressed={pendingAiPolish}
-                disabled={isCreating}
-                className={`mt-5 flex w-full items-start gap-3 rounded-xl border p-4 text-left transition-colors disabled:opacity-60 ${pendingAiPolish
-                  ? "border-blue-500/40 bg-blue-500/[0.08]"
-                  : "border-white/10 bg-white/[0.02] hover:bg-white/[0.04]"
-                  }`}
-              >
-                <span
-                  className={`mt-0.5 flex h-5 w-9 shrink-0 items-center rounded-full p-0.5 transition-colors ${pendingAiPolish ? "bg-blue-600" : "bg-white/15"
-                    }`}
-                >
-                  <span
-                    className={`h-4 w-4 rounded-full bg-white transition-transform ${pendingAiPolish ? "translate-x-4" : "translate-x-0"
-                      }`}
-                  />
-                </span>
-                <span className="min-w-0">
-                  <span className="block text-sm font-semibold text-white">
-                    Add AI polish ({formatUsd(aiPolishMicros)})
-                  </span>
-                  <span className="mt-0.5 block text-xs text-zinc-400">
-                    After the rough cut, AI removes false starts, stumbles &amp; flubbed
-                    takes automatically. You can turn this off and add it later.
-                  </span>
-                </span>
-              </button>
-
-              {/* Combined price breakdown. */}
-              <div className="mt-4 space-y-1.5 rounded-xl border border-white/10 bg-white/[0.02] p-4 text-sm">
-                <div className="flex items-center justify-between text-zinc-400">
-                  <span>Transcription</span>
-                  <span className="tabular-nums text-zinc-300">{formatUsd(transcriptionMicros)}</span>
-                </div>
-                {pendingAiPolish && (
-                  <div className="flex items-center justify-between text-zinc-400">
-                    <span>AI polish</span>
-                    <span className="tabular-nums text-zinc-300">{formatUsd(aiPolishMicros)}</span>
-                  </div>
-                )}
-                <div className="mt-1 flex items-center justify-between border-t border-white/10 pt-2 font-semibold text-white">
-                  <span>Estimated total</span>
-                  <span className="tabular-nums">{formatUsd(totalMicros)}</span>
-                </div>
-              </div>
-              <p className="mt-2 text-[11px] text-zinc-500">
-                Estimated from the video length; you&apos;re charged for the actual
-                transcribed duration.
-              </p>
-
-              <div className="mt-6 flex justify-end gap-3">
-                <button
-                  type="button"
-                  onClick={cancelPendingUpload}
-                  disabled={isCreating}
-                  className="rounded-lg border border-white/10 bg-white/[0.03] px-4 py-2 text-xs font-semibold text-zinc-300 transition-all duration-200 hover:bg-white/[0.06] hover:text-white disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={confirmPendingUpload}
-                  disabled={isCreating}
-                  autoFocus
-                  className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-xs font-semibold text-white shadow-md shadow-blue-600/25 transition-all duration-200 hover:bg-blue-500 active:scale-95 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
-                >
-                  {isCreating ? (
-                    <>
-                      <svg className="h-3 w-3 animate-spin" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                      </svg>
-                      Starting…
-                    </>
-                  ) : (
-                    "Start transcription"
-                  )}
-                </button>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
 
       {/* Delete confirmation — same modal treatment as the buy-credits panel. */}
       {confirmDeleteProject && (
