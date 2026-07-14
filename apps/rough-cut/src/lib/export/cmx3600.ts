@@ -14,7 +14,6 @@ const FALLBACK_REEL_NAME = "AX";
 
 /** Strips C0 control characters (newlines, tabs, etc.) that would break the fixed-line CMX 3600 format. */
 function stripControlChars(value: string): string {
-  // eslint-disable-next-line no-control-regex
   return value.replace(/[\x00-\x1f\x7f]/g, "");
 }
 

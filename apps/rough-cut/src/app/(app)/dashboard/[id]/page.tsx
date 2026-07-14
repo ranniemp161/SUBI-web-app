@@ -860,7 +860,9 @@ export default function EditorPage() {
     // degenerate transcript with no words/duration), release it here rather
     // than leaving the full-page loading state stuck forever.
     if (edl !== null || words.length === 0 || durationSeconds <= 0) {
-      setChainPending(false);
+      // Deferred for the same reason as the chain kickoff below: no setState
+      // synchronously within the effect body (react-hooks/set-state-in-effect).
+      queueMicrotask(() => setChainPending(false));
       return;
     }
     autoChainedRef.current = true;
