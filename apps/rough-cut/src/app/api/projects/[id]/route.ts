@@ -8,6 +8,7 @@ import { settleHold } from "@/lib/credits";
 import { patchProjectSchema } from "@/lib/validation";
 import { readRateLimit } from "@/lib/rate-limit";
 import { reportError } from "@/lib/observability";
+import * as jsonpatch from "fast-json-patch";
 
 /**
  * GET /api/projects/:id — Get a single project with full details.
@@ -97,12 +98,35 @@ export async function PATCH(
     }
 
     // Only apply the fields that were actually provided.
-    const { edl, transcript, durationMs, fileName, fileSize, fileType } = parsed.data;
+    const { edl, edlPatch, transcript, durationMs, fileName, fileSize, fileType } = parsed.data;
     const updateData: Record<string, unknown> = {
       updatedAt: new Date(),
     };
 
-    if (edl !== undefined) updateData.edl = edl;
+    if (edlPatch !== undefined && project.edl) {
+      try {
+        // We clone project.edl just in case, though applyPatch handles mutations safely
+        // when mutateDocument is false (which is the default).
+        // The zod schema validates each operation's shape loosely; the
+        // validate=true argument makes applyPatch enforce full JSON Patch
+        // semantics (required value/from per op) at runtime, so this
+        // narrowing cast is safe.
+        const newEdl = jsonpatch.applyPatch(
+          project.edl,
+          edlPatch as jsonpatch.Operation[],
+          true,
+          false
+        ).newDocument;
+        updateData.edl = newEdl;
+      } catch (patchErr) {
+        return NextResponse.json(
+          { error: "Invalid EDL patch." },
+          { status: 400 }
+        );
+      }
+    } else if (edl !== undefined) {
+      updateData.edl = edl;
+    }
     if (transcript !== undefined) updateData.transcript = transcript;
     if (durationMs !== undefined) updateData.durationMs = durationMs;
     if (fileName !== undefined) updateData.fileName = fileName;

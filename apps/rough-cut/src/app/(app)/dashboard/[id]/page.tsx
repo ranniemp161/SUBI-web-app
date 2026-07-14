@@ -78,6 +78,7 @@ import {
 import { applyAiCuts, type AiCutRun } from "@/lib/ai-cuts";
 import { ConfirmDialog } from "@repo/ui";
 import { getPusherClient } from "@/lib/pusher";
+import { compare } from "fast-json-patch";
 
 // A project holds at most this many stored AI Cut runs at once (ADR 0002-ai-cut-paid-rerun).
 const AI_CUT_RUN_LIMIT = 3;
@@ -319,6 +320,15 @@ export default function EditorPage() {
     return () => URL.revokeObjectURL(sourceUrl);
   }, [sourceUrl]);
 
+  const lastSavedEdlRef = useRef<EDL | null>(null);
+  useEffect(() => {
+    // Only adopt the server's EDL once on load. After that, lastSavedEdlRef
+    // is advanced by successful saves.
+    if (project?.edl && !lastSavedEdlRef.current) {
+      lastSavedEdlRef.current = project.edl;
+    }
+  }, [project?.edl]);
+
   // Debounced auto-save of EDL changes to Postgres. Only runs after a real
   // user edit — the initial auto-built EDL stays unsaved until then.
   useEffect(() => {
@@ -327,15 +337,34 @@ export default function EditorPage() {
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     saveTimeoutRef.current = setTimeout(() => {
       setSavedAt("saving");
+      
+      const targetEdl = { ...edl, sensitivity };
+      const body: Record<string, unknown> = {};
+      
+      if (lastSavedEdlRef.current) {
+        // We have a baseline to diff against. Send a patch.
+        const patch = compare(lastSavedEdlRef.current, targetEdl);
+        // Only send a request if there is an actual difference.
+        if (patch.length === 0) {
+          setSavedAt("saved");
+          return;
+        }
+        body.edlPatch = patch;
+      } else {
+        // First save for a fresh project (no prior EDL) — send the whole thing.
+        body.edl = targetEdl;
+      }
+
       fetch(`/api/projects/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        // Stamp the current sensitivity onto the saved EDL so a reload restores
-        // it. Kept out of the EDL transforms (which drop top-level fields) —
-        // merged in only at the save boundary.
-        body: JSON.stringify({ edl: { ...edl, sensitivity } }),
+        body: JSON.stringify(body),
       })
-        .then(() => setSavedAt("saved"))
+        .then(async (res) => {
+          if (!res.ok) throw new Error("Failed to save");
+          lastSavedEdlRef.current = targetEdl;
+          setSavedAt("saved");
+        })
         .catch((error) => {
           // Leave the status on "Saving…" (it genuinely hasn't saved); the next
           // edit re-triggers this effect and retries. The toast is the signal.
