@@ -63,10 +63,19 @@ export const createProjectSchema = z.strictObject({
   fileType: z.string().max(100).nullable().optional(),
 });
 
+// JSON Patch schema for efficient EDL updates
+const jsonPatchOperationSchema = z.object({
+  op: z.enum(["add", "remove", "replace", "move", "copy", "test"]),
+  path: z.string(),
+  value: z.any().optional(),
+  from: z.string().optional(),
+});
+
 // PATCH /api/projects/:id — every field optional; only those present are
 // applied. strictObject rejects unexpected top-level keys.
 export const patchProjectSchema = z.strictObject({
   edl: edlSchema.optional(),
+  edlPatch: z.array(jsonPatchOperationSchema).max(10_000).optional(),
   transcript: transcriptSchema.optional(),
   durationMs: durationMsSchema.nullable().optional(),
   fileName: z.string().min(1).max(500).optional(),
