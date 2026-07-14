@@ -30,6 +30,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
+import { ExportModal } from "@/components/export-modal";
 import { Toaster, toast } from "sonner";
 import FilePicker from "@/components/file-picker";
 import ProgressRing from "@/components/progress-ring";
@@ -1823,126 +1824,6 @@ function EditorSkeleton() {
   );
 }
 
-/** Shared styling for the two select-style controls in the export cluster (AC-8). */
-const dropdownTriggerClass =
-  "flex items-center gap-1.5 rounded-lg border border-foreground/10 bg-transparent px-2 py-1.5 text-sm text-foreground/70 transition-colors hover:bg-foreground/10 disabled:cursor-not-allowed disabled:opacity-50";
-const dropdownOptionClass =
-  "flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm transition-colors hover:bg-foreground/10";
-
-/**
- * A design-token-styled listbox replacing the browser's native `<select>`
- * chrome (AC-8), built on Radix Select rather than hand-rolled dismiss/focus
- * logic (the pattern packages/ui/src/confirm-dialog.tsx already established:
- * prefer Radix over reimplementing focus trapping, ESC handling, and overlay
- * dismissal). Radix supplies arrow-key navigation between options and
- * restores focus to the trigger on close for free.
- */
-function StyledSelect<T extends string>({
-  id,
-  label,
-  value,
-  options,
-  onChange,
-  disabled,
-  title,
-}: {
-  id: string;
-  label: string;
-  value: T;
-  options: { value: T; label: string }[];
-  onChange: (value: T) => void;
-  disabled?: boolean;
-  title?: string;
-}) {
-  return (
-    <Select.Root value={value} onValueChange={(v) => onChange(v as T)} disabled={disabled}>
-      <Select.Trigger id={id} title={title} aria-label={label} className={dropdownTriggerClass}>
-        <Select.Value />
-        <Select.Icon>
-          <ChevronDown className="h-3.5 w-3.5" />
-        </Select.Icon>
-      </Select.Trigger>
-      <Select.Portal>
-        <Select.Content
-          position="popper"
-          sideOffset={4}
-          align="end"
-          className="z-20 min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-lg border border-foreground/10 bg-background py-1 shadow-lg"
-        >
-          <Select.Viewport>
-            {options.map((opt) => (
-              <Select.Item
-                key={opt.value}
-                value={opt.value}
-                className={`${dropdownOptionClass} cursor-pointer select-none outline-none data-[highlighted]:bg-foreground/10 data-[state=checked]:text-blue-300 data-[state=unchecked]:text-foreground/70`}
-              >
-                <Select.ItemText>{opt.label}</Select.ItemText>
-                <Select.ItemIndicator className="ml-auto">
-                  <Check className="h-3.5 w-3.5" />
-                </Select.ItemIndicator>
-              </Select.Item>
-            ))}
-          </Select.Viewport>
-        </Select.Content>
-      </Select.Portal>
-    </Select.Root>
-  );
-}
-
-/**
- * The export cluster's format menu (AC-16): one styled trigger, matching the
- * resolution dropdown, opening two action entries (FCPXML, CMX 3600 EDL).
- * Each entry immediately generates and downloads its format, then closes —
- * there's no persisted selection, just two actions behind one control. Built
- * on Radix DropdownMenu for the same reason as StyledSelect above: this is a
- * menu of actions, not a value picker, so DropdownMenu (not Select) is the
- * semantic fit.
- */
-function ExportFormatMenu({
-  onExportFcpxml,
-  onExportCmx3600,
-  disabled,
-  title,
-}: {
-  onExportFcpxml?: () => void;
-  onExportCmx3600?: () => void;
-  disabled?: boolean;
-  title?: string;
-}) {
-  return (
-    <DropdownMenu.Root>
-      <DropdownMenu.Trigger
-        disabled={disabled}
-        title={title ?? "Export cut list for DaVinci Resolve or Premiere Pro"}
-        className={dropdownTriggerClass}
-      >
-        <Film className="h-4 w-4" />
-        For DaVinci / Premiere
-        <ChevronDown className="h-3.5 w-3.5" />
-      </DropdownMenu.Trigger>
-      <DropdownMenu.Portal>
-        <DropdownMenu.Content
-          align="end"
-          sideOffset={4}
-          className="z-20 min-w-[12rem] overflow-hidden rounded-lg border border-foreground/10 bg-background py-1 shadow-lg"
-        >
-          <DropdownMenu.Item
-            onSelect={() => onExportFcpxml?.()}
-            className={`${dropdownOptionClass} cursor-pointer select-none outline-none data-[highlighted]:bg-foreground/10`}
-          >
-            FCPXML (.fcpxml)
-          </DropdownMenu.Item>
-          <DropdownMenu.Item
-            onSelect={() => onExportCmx3600?.()}
-            className={`${dropdownOptionClass} cursor-pointer select-none outline-none data-[highlighted]:bg-foreground/10`}
-          >
-            CMX 3600 EDL (.edl)
-          </DropdownMenu.Item>
-        </DropdownMenu.Content>
-      </DropdownMenu.Portal>
-    </DropdownMenu.Root>
-  );
-}
 
 function TopBar({
   fileName,
@@ -1981,6 +1862,7 @@ function TopBar({
   // Non-empty when both format export options should be disabled (no kept EDL yet); doubles as the tooltip.
   exportFormatBlockedReason?: string;
 }) {
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const iconBtn =
     "flex h-8 w-8 items-center justify-center rounded-md text-foreground/60 hover:bg-foreground/10 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40";
   const busy = exportState !== "idle";
@@ -2026,25 +1908,6 @@ function TopBar({
             <Redo2 className="h-4 w-4" />
           </button>
         </div>
-        <StyledSelect
-          id="export-quality"
-          label="Export resolution"
-          value={exportMaxHeight === null ? "source" : String(exportMaxHeight)}
-          onChange={(v) => onExportMaxHeightChange?.(v === "source" ? null : Number(v))}
-          disabled={busy}
-          title="Export resolution — downscales larger sources, never upscales"
-          options={[
-            { value: "source", label: "Source" },
-            { value: "1080", label: "1080p" },
-            { value: "720", label: "720p" },
-          ]}
-        />
-        <ExportFormatMenu
-          onExportFcpxml={onExportFcpxml}
-          onExportCmx3600={onExportCmx3600}
-          disabled={exportFormatDisabled}
-          title={exportFormatBlockedReason}
-        />
         {showCancel && (
           <button
             type="button"
@@ -2059,9 +1922,9 @@ function TopBar({
         )}
         <button
           type="button"
-          onClick={onExport}
-          disabled={exportDisabled}
-          title={exportBlockedReason ?? "Export to MP4"}
+          onClick={() => setIsExportModalOpen(true)}
+          disabled={exportDisabled && exportFormatDisabled}
+          title={exportDisabled && exportFormatDisabled ? "Export is currently unavailable" : "Export options"}
           className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-blue-600/60 disabled:text-white/70 disabled:hover:bg-blue-600/60"
         >
           {busy ? (
@@ -2072,6 +1935,27 @@ function TopBar({
           {busy ? "Exporting…" : "Export"}
         </button>
       </div>
+
+      <ExportModal
+        isOpen={isExportModalOpen}
+        onClose={() => setIsExportModalOpen(false)}
+        onExportMp4={(maxHeight) => {
+          onExportMaxHeightChange?.(maxHeight);
+          onExport?.();
+          setIsExportModalOpen(false);
+        }}
+        onExportFcpxml={() => {
+          onExportFcpxml?.();
+          setIsExportModalOpen(false);
+        }}
+        onExportCmx3600={() => {
+          onExportCmx3600?.();
+          setIsExportModalOpen(false);
+        }}
+        exportBlockedReason={exportBlockedReason}
+        exportFormatBlockedReason={exportFormatBlockedReason}
+        busy={busy}
+      />
     </div>
   );
 }
