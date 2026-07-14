@@ -49,6 +49,11 @@ vi.mock("@/lib/rate-limit", () => ({
     remaining: state.rateAllowed ? 9 : 0,
     limit: 10,
   })),
+  aiCutRateLimit: vi.fn(async () => ({
+    allowed: state.rateAllowed,
+    remaining: state.rateAllowed ? 9 : 0,
+    limit: 10,
+  })),
 }));
 
 vi.mock("@/lib/ai-rough-cut", () => ({
@@ -74,7 +79,7 @@ vi.mock("@/lib/credits", () => ({
 }));
 
 import { POST } from "./route";
-import { rateLimit } from "@/lib/rate-limit";
+import { aiCutRateLimit } from "@/lib/rate-limit";
 import { runAiRoughCut } from "@/lib/ai-rough-cut";
 import { chargeAiCut, refundAiCut } from "@/lib/credits";
 import { countAiCutRuns, createAiCutRun } from "@/lib/projects";
@@ -127,7 +132,7 @@ describe("POST /api/projects/:id/ai-cut — gates", () => {
   it("returns 401 when unauthenticated (never touches the rate limiter)", async () => {
     const res = await POST(request(), { params });
     expect(res.status).toBe(401);
-    expect(rateLimit).not.toHaveBeenCalled();
+    expect(aiCutRateLimit).not.toHaveBeenCalled();
   });
 
   it("returns 429 once the per-user limit is exceeded, before any Gemini call", async () => {
@@ -135,7 +140,7 @@ describe("POST /api/projects/:id/ai-cut — gates", () => {
     state.rateAllowed = false;
     const res = await POST(request(), { params });
     expect(res.status).toBe(429);
-    expect(rateLimit).toHaveBeenCalledWith("ai-cut:clerk_1", 10, 3600);
+    expect(aiCutRateLimit).toHaveBeenCalledWith("clerk_1");
     expect(runAiRoughCut).not.toHaveBeenCalled();
   });
 

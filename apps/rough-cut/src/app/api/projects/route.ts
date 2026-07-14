@@ -2,10 +2,10 @@ import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import { db, withDbRetry } from "@repo/db";
 import { projects, users } from "@repo/db/schema";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, sql } from "drizzle-orm";
 import { getAuthorizedDbUser } from "@/lib/authz";
 import { createProjectSchema } from "@/lib/validation";
-import { rateLimit } from "@/lib/rate-limit";
+import { rateLimit, readRateLimit } from "@/lib/rate-limit";
 import { reportError } from "@/lib/observability";
 
 // Guards against a runaway client spraying project rows.
@@ -57,6 +57,8 @@ export async function POST(request: Request) {
 
     const { fileName, durationMs, fileSize, fileType } = parsed.data;
 
+    // AI polish is mandatory for every new project (ADR 0004 child 1) —
+    // decided server-side; the client sends no `aiPolish` field.
     const [project] = await db
       .insert(projects)
       .values({
@@ -65,6 +67,7 @@ export async function POST(request: Request) {
         durationMs: durationMs ?? null,
         fileSize: fileSize ?? null,
         fileType: fileType ?? null,
+        aiPolishRequested: true,
       })
       .returning();
 
@@ -91,6 +94,14 @@ export async function GET() {
   }
 
   try {
+    const limit = await readRateLimit(clerkId);
+    if (!limit.allowed) {
+      return NextResponse.json(
+        { error: "Too many requests. Please wait a bit and try again." },
+        { status: 429 }
+      );
+    }
+
     const userRows = await withDbRetry(() =>
       db
         .select()
@@ -105,7 +116,9 @@ export async function GET() {
     }
 
     // List view only needs metadata — omit the transcript + EDL jsonb, which
-    // can be large and aren't rendered on the dashboard grid.
+    // can be large and aren't rendered on the dashboard grid. `hasEdl` is
+    // presence-only (ADR 0004 child 1): it drives the "Ready for step 2" vs
+    // "Ready" dashboard label without ever selecting the EDL jsonb itself.
     const userProjects = await withDbRetry(() =>
       db
         .select({
@@ -115,13 +128,18 @@ export async function GET() {
           transcriptStatus: projects.transcriptStatus,
           createdAt: projects.createdAt,
           updatedAt: projects.updatedAt,
+          hasEdl: sql<boolean>`${projects.edl} is not null`,
         })
         .from(projects)
         .where(eq(projects.userId, userRows[0].id))
         .orderBy(desc(projects.createdAt))
     );
 
-    return NextResponse.json(userProjects);
+    // Explicit no-store: per-user project list must never be served stale or
+    // shared across users by an intermediary.
+    return NextResponse.json(userProjects, {
+      headers: { "Cache-Control": "no-store" },
+    });
   } catch (error) {
     reportError("Error listing projects", error);
     return NextResponse.json(

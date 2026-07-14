@@ -53,6 +53,9 @@ const durationMsSchema = z
   .transform((v) => Math.round(v));
 
 // POST /api/projects. strictObject rejects unexpected top-level keys.
+// AI polish is mandatory for every new project (ADR 0004 child 1) — the
+// server hardcodes `aiPolishRequested: true` on insert, so there is no
+// `aiPolish` field here; a client that still sends one gets a 400.
 export const createProjectSchema = z.strictObject({
   fileName: z.string().min(1).max(500),
   durationMs: durationMsSchema.nullable().optional(),

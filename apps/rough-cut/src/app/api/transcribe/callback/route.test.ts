@@ -68,8 +68,11 @@ vi.mock("@/lib/credits", () => ({
   secondsFromDeepgramDuration: vi.fn((d: number | null | undefined) =>
     d && d > 0 ? Math.max(1, Math.ceil(d)) : null
   ),
-  settleHold: vi.fn(async (projectId: string, actual: number | null) => {
-    if (state.settleError) throw new Error("db down");
+  // settleHoldQuietly's real contract is to swallow errors (report, never
+  // throw), so the mock replicates that instead of letting settleError
+  // propagate out to the route.
+  settleHoldQuietly: vi.fn(async (projectId: string, actual: number | null) => {
+    if (state.settleError) return;
     state.settled.push({ projectId, actual });
   }),
 }));

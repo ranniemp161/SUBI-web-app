@@ -42,7 +42,7 @@ vi.mock("@/lib/credits", () => ({
     state.reserveCalls.push({ userId, projectId, cost });
     return state.reserveResults.shift() ?? { status: "reserved", balance: 1000 };
   }),
-  settleHold: vi.fn(async (projectId: string, actual: number | null) => {
+  settleHoldQuietly: vi.fn(async (projectId: string, actual: number | null) => {
     state.settled.push({ projectId, actual });
   }),
   reclaimStaleHold: vi.fn(async (projectId: string, staleAfterMs: number) => {
@@ -85,7 +85,7 @@ vi.mock("@repo/db", () => ({
 
 import { POST } from "./route";
 import { rateLimit } from "@/lib/rate-limit";
-import { reserveCredits, settleHold, ensureMonthlyGrant } from "@/lib/credits";
+import { reserveCredits, settleHoldQuietly, ensureMonthlyGrant } from "@/lib/credits";
 import { del } from "@vercel/blob";
 
 const OWN_BLOB_URL = "https://abc123.public.blob.vercel-storage.com/projects/x/audio.m4a";
@@ -222,7 +222,7 @@ describe("POST /api/transcribe/deepgram — credit gating", () => {
     const res = await POST(req({ blobUrl: OWN_BLOB_URL }));
     expect(res.status).toBe(409);
     expect(state.reserveCalls).toHaveLength(1);
-    expect(settleHold).not.toHaveBeenCalled();
+    expect(settleHoldQuietly).not.toHaveBeenCalled();
   });
 
   it("self-heals a genuinely stale hold (crashed job) with a reclaim and one retry", async () => {
@@ -345,7 +345,7 @@ describe("POST /api/transcribe/deepgram — callback mode (public host)", () => 
     const res = await POST(req({ blobUrl: OWN_BLOB_URL }));
 
     expect(res.status).toBe(200);
-    expect(settleHold).not.toHaveBeenCalled();
+    expect(settleHoldQuietly).not.toHaveBeenCalled();
     expect(del).not.toHaveBeenCalled();
 
     vi.unstubAllGlobals();

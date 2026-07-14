@@ -26,7 +26,7 @@ describe("RootLayout", () => {
     );
     
     expect(screen.getByTestId("child")).toBeDefined();
-    expect(screen.getByText("SUBI Wallet")).toBeDefined();
+    expect(screen.getByText("Founder's Frame Wallet")).toBeDefined();
     
     const backLink = screen.getByRole("link", { name: /back to rough cut/i });
     expect(backLink.getAttribute("href")).toBe("http://localhost:3000");

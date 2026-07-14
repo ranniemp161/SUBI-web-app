@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { getKeepRanges, totalKeptSeconds, createTimeRemapper } from "./plan";
+import { getKeepRanges, totalKeptSeconds, createTimeRemapper, hasExportableRanges } from "./plan";
 import type { EDL } from "@/lib/edl";
 
 describe("getKeepRanges", () => {
@@ -89,5 +89,32 @@ describe("createTimeRemapper", () => {
     const remap = createTimeRemapper([]);
     expect(remap(0)).toBeNull();
     expect(remap(100)).toBeNull();
+  });
+});
+
+describe("hasExportableRanges", () => {
+  it("is true when at least one kept range is at or above one frame", () => {
+    const edl: EDL = { segments: [{ start: 0, end: 5, status: "keep", reason: null }] };
+    expect(hasExportableRanges(edl)).toBe(true);
+  });
+
+  it("is false when nothing is kept", () => {
+    const edl: EDL = { segments: [{ start: 0, end: 5, status: "cut", reason: "manual" }] };
+    expect(hasExportableRanges(edl)).toBe(false);
+  });
+
+  it("is false when several sub-frame kept segments sum to a positive total but every individual range is still under one frame", () => {
+    // Regression: keptDuration(edl) would report > 0 here (5 segments * 0.02s
+    // = 0.1s total), but every one is below MIN_CLIP_SECONDS (1/30s ~= 0.033s)
+    // and the exporters drop each one — this must report false, not true.
+    const edl: EDL = {
+      segments: Array.from({ length: 5 }, (_, i) => ({
+        start: i * 0.02,
+        end: i * 0.02 + 0.02,
+        status: "keep" as const,
+        reason: null,
+      })),
+    };
+    expect(hasExportableRanges(edl)).toBe(false);
   });
 });

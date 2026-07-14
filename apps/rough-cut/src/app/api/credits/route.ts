@@ -5,6 +5,7 @@ import { db, withDbRetry } from "@repo/db";
 import { users } from "@repo/db/schema";
 import { getAuthorizedDbUser } from "@/lib/authz";
 import { ensureMonthlyGrant, memberGrantMicros } from "@/lib/credits";
+import { readRateLimit } from "@/lib/rate-limit";
 import { reportError } from "@/lib/observability";
 
 /**
@@ -21,6 +22,14 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const limit = await readRateLimit(clerkId);
+  if (!limit.allowed) {
+    return NextResponse.json(
+      { error: "Too many requests. Please wait a bit and try again." },
+      { status: 429 }
+    );
+  }
+
   try {
     const user = await getAuthorizedDbUser(clerkId);
     if (!user) {
@@ -34,10 +43,15 @@ export async function GET() {
       db.select().from(users).where(eq(users.id, user.id)).limit(1)
     );
 
-    return NextResponse.json({
-      balanceMicros: fresh?.balanceMicros ?? user.balanceMicros,
-      isMember: fresh?.isMember ?? user.isMember,
-    });
+    // Explicit no-store: per-user balance must never be served stale (or,
+    // worse, cross-user) by any cache/proxy in front of the app.
+    return NextResponse.json(
+      {
+        balanceMicros: fresh?.balanceMicros ?? user.balanceMicros,
+        isMember: fresh?.isMember ?? user.isMember,
+      },
+      { headers: { "Cache-Control": "no-store" } }
+    );
   } catch (error) {
     reportError("Error fetching credit balance", error);
     return NextResponse.json(

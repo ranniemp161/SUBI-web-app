@@ -37,14 +37,20 @@ interface TranscriptPanelProps {
   onOpenRetakeReview: () => void;
   /** Last completed cut pass — each new event re-shows the summary card. */
   cutEvent: { kind: "rough" | "ai"; at: number } | null;
-  /** Kick off the paid AI pass (the card's "Enhance with AI Cut" upsell). */
-  onEnhanceAi: () => void;
+  /** Kick off the one paid manual AI pass (ADR 0003 child 2's "Polish with AI"
+   *  button — shown only when no run exists yet). */
+  onPolishWithAi: () => void;
   aiBusy: boolean;
   /** Human-readable AI Cut price, e.g. "12:34 of credits". */
   aiCostLabel: string;
-  /** Whether stored AI cuts are already applied to this project — the card
-   *  must not upsell a pass whose results the user already has. */
-  hasAiCuts: boolean;
+  /** No successful AI run has ever been stored for this project — the manual
+   *  "Polish with AI" button shows only in this state (AC-6). */
+  noAiRunYet: boolean;
+  /** The user has drifted from the AI's suggestions — the free "Restore AI
+   *  suggestions" action shows only when this is true (AC-7). */
+  hasDiverged: boolean;
+  /** Re-apply the stored run's suggestions client-side (free, no charge). */
+  onRestoreAiSuggestions: () => void;
   /** When the currently active AI cut run was generated. */
   lastAiCutTime?: string | null;
 }
@@ -169,10 +175,12 @@ export default function TranscriptPanel({
   onRestoreSegment,
   onOpenRetakeReview,
   cutEvent,
-  onEnhanceAi,
+  onPolishWithAi,
   aiBusy,
   aiCostLabel,
-  hasAiCuts,
+  noAiRunYet,
+  hasDiverged,
+  onRestoreAiSuggestions,
   lastAiCutTime,
 }: TranscriptPanelProps) {
   const [now, setNow] = useState<number | null>(() => (lastAiCutTime ? Date.now() : null));
@@ -225,7 +233,11 @@ export default function TranscriptPanel({
     const timer = setTimeout(() => setDismissedAt(cutEvent.at), 10_000);
     return () => clearTimeout(timer);
   }, [cutEvent, aiBusy]);
-  const showCard = cutEvent !== null && cutEvent.at !== dismissedAt;
+  // Re-open (or stay open) whenever the user is diverged from the AI's
+  // suggestions, so the "Restore AI suggestions" button remains reachable even
+  // after the auto-collapse timer has fired.
+  const showCard =
+    cutEvent !== null && (cutEvent.at !== dismissedAt || hasDiverged);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const activeWordRef = useRef<HTMLSpanElement>(null);
@@ -673,10 +685,12 @@ export default function TranscriptPanel({
             </button>
           </div>
           <div className="mt-3 flex items-center gap-2">
-            {cutEvent.kind === "rough" && !hasAiCuts && (
+            {/* One paid AI attempt per project (ADR 0003 child 2): the manual
+                "Polish with AI" button shows only until a run exists. */}
+            {noAiRunYet && (
               <button
                 type="button"
-                onClick={onEnhanceAi}
+                onClick={onPolishWithAi}
                 disabled={aiBusy}
                 title={`AI pass — remove false starts, stumbles & flubbed takes (uses ${aiCostLabel})`}
                 className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-60"
@@ -686,7 +700,20 @@ export default function TranscriptPanel({
                 ) : (
                   <Wand2 className="h-3.5 w-3.5" />
                 )}
-                {aiBusy ? "AI is working…" : "Enhance with AI Cut"}
+                {aiBusy ? "AI is working…" : "Polish with AI"}
+              </button>
+            )}
+            {/* Free client-side restore (AC-7): only when a run exists and the
+                user has drifted from its suggestions. */}
+            {hasDiverged && (
+              <button
+                type="button"
+                onClick={onRestoreAiSuggestions}
+                title="Re-apply the AI's suggestions — free, no charge"
+                className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-blue-500"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                Restore AI suggestions
               </button>
             )}
             {retakeCount > 0 && (
@@ -700,30 +727,28 @@ export default function TranscriptPanel({
               </button>
             )}
           </div>
-          {cutEvent.kind === "rough" &&
-            (hasAiCuts ? (
-              <p className="mt-1.5 text-center text-[10px] text-foreground/35">
-                Your AI cuts are already included
-                {lastAiCutTime && now && (
-                  <span title={new Date(lastAiCutTime).toLocaleString()}>
-                    {" "}
-                    (last run{" "}
-                    {new Intl.RelativeTimeFormat("en", { numeric: "auto" }).format(
-                      -Math.round((now - new Date(lastAiCutTime).getTime()) / 60000) < -60
-                        ? -Math.round((now - new Date(lastAiCutTime).getTime()) / 3600000)
-                        : -Math.round((now - new Date(lastAiCutTime).getTime()) / 60000),
-                      -Math.round((now - new Date(lastAiCutTime).getTime()) / 60000) < -60 ? "hour" : "minute"
-                    )}
-                    )
-                  </span>
-                )}{" "}
-                — re-run anytime from the AI Cut tool (uses {aiCostLabel})
-              </p>
-            ) : (
-              <p className="mt-1.5 text-center text-[10px] text-foreground/35">
-                Uses {aiCostLabel} · you&apos;ll keep full undo
-              </p>
-            ))}
+          {noAiRunYet ? (
+            <p className="mt-1.5 text-center text-[10px] text-foreground/35">
+              Uses {aiCostLabel} · you&apos;ll keep full undo
+            </p>
+          ) : !hasDiverged ? (
+            <p className="mt-1.5 text-center text-[10px] text-foreground/35">
+              Your AI cuts are applied
+              {lastAiCutTime && now && (
+                <span title={new Date(lastAiCutTime).toLocaleString()}>
+                  {" "}
+                  (last run{" "}
+                  {new Intl.RelativeTimeFormat("en", { numeric: "auto" }).format(
+                    -Math.round((now - new Date(lastAiCutTime).getTime()) / 60000) < -60
+                      ? -Math.round((now - new Date(lastAiCutTime).getTime()) / 3600000)
+                      : -Math.round((now - new Date(lastAiCutTime).getTime()) / 60000),
+                    -Math.round((now - new Date(lastAiCutTime).getTime()) / 60000) < -60 ? "hour" : "minute"
+                  )}
+                  )
+                </span>
+              )}
+            </p>
+          ) : null}
         </div>
       )}
 

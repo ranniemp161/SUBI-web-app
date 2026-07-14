@@ -10,7 +10,6 @@ import {
   recordAutoRechargeFailure,
   AUTORECHARGE_MAX_PER_DAY,
 } from "@/lib/autorecharge";
-import { notifyAutoRecharge } from "@/lib/notifications";
 import { reportError } from "@/lib/observability";
 
 // One run may touch many users; give it room.
@@ -29,13 +28,7 @@ function isDecline(error: unknown): boolean {
 }
 
 async function noteFailure(userId: string) {
-  const r = await recordAutoRechargeFailure(userId);
-  await notifyAutoRecharge(
-    userId,
-    r.disabled
-      ? { kind: "disabled", failures: r.failures }
-      : { kind: "declined", failures: r.failures }
-  );
+  await recordAutoRechargeFailure(userId);
 }
 
 /**
@@ -51,9 +44,10 @@ async function noteFailure(userId: string) {
  * confirm:true resolves synchronously, so every decline (including
  * `authentication_required`, which never emits a `payment_failed` webhook) is
  * caught in this try/catch. The webhook's `payment_intent.*` handlers are
- * idempotent backstops (see the webhook route). This is a placement refinement
- * of the ADR's task 5; the behaviour (notify, then auto-disable after N declines)
- * is unchanged.
+ * idempotent backstops (see the webhook route). Failures are recorded on the
+ * user row (`recordAutoRechargeFailure`) and surfaced by the Wallet dashboard;
+ * the sweep itself does not send notifications or auto-disable on a decline
+ * threshold.
  */
 export async function GET(request: Request) {
   const authHeader = request.headers.get("Authorization");
@@ -103,10 +97,6 @@ export async function GET(request: Request) {
 
           if (pi.status === "succeeded") {
             await depositAutoRecharge(c.id, c.amountMicros, pi.id);
-            await notifyAutoRecharge(c.id, {
-              kind: "recharged",
-              amountMicros: c.amountMicros,
-            });
             charged++;
           } else {
             // requires_action / processing etc. — can't complete off-session.

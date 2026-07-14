@@ -9,6 +9,9 @@ Features that span the whole ecosystem (shared `packages/db`, the wallet billing
 | # | Feature | Phase | Status |
 |---|---------|-------|--------|
 | 1 | USD-denominated Wallet | Slice 1 | done |
+| 2 | Demo-only free credits gate | Slice 1 | existing |
+| 3 | Auto-recharge notification channel | Deferred | planned |
+| 4 | AI Cut differentiated retail rate | Deferred | planned |
 
 ## Slice 1
 
@@ -22,6 +25,23 @@ Redenominate the balance from `tokens` to plain US dollars, add opt-in auto-rech
 - [x] Verify it: `/verify usd-wallet`
 - [x] Test it: `/test usd-wallet` (tests green on dev)
 
+### 2. Demo-only free credits gate · existing
+Shipped off-plan (drift, no ADR): `is_member` now defaults to `false` and the automatic monthly credit grant is restricted to a single `MEMBER_ALLOWLIST_EMAIL`, so everyone else pays via Stripe instead of getting free credits by default (commits fd01b3d, 0f57c7c).
+**Done when:** membership defaults to non-member, the monthly grant only fires for the allowlisted demo email, and existing rows are backfilled to the new default.
+code in `apps/rough-cut/src/lib/users.ts`, `packages/db/src/schema.ts`, `packages/db/drizzle/0009_dizzy_human_fly.sql`
+
+## Deferred
+
+### 3. Auto-recharge notification channel
+Notify a user by email (or another channel) when auto-recharge declines or gets auto-disabled, closing the seam left open in ADR 0002's auto-recharge slice. Walked through `/architect` on 2026-07-11: picking a real provider (Resend) felt like unnecessary scope for a demo/pre-client-signoff stage, so this is on hold. In-app visibility (the wallet dashboard already reflects a declined/disabled auto-recharge state) is judged sufficient for now.
+**Done when:** the client gives a go-ahead on outbound billing emails; then a user whose auto-recharge declines or gets disabled after repeated failures is notified through a real channel, not just a silent state change.
+- [ ] `/architect auto-recharge notification channel` (on hold, no ADR yet — re-run when the client greenlights outbound email)
+
+### 4. AI Cut differentiated retail rate
+AI Cut is priced equal to transcription today to keep pricing simple, but its real compute cost is roughly 7x higher (see `[[project_credits_pricing_decision]]`); revisit once `cost_micros` data shows the true margin gap.
+**Done when:** a pricing decision is made (keep equal, or split the rate) backed by real usage data, and any rate change is applied.
+- [ ] `/architect ai cut differentiated retail rate`
+
 ## Open questions
 
-- **Member monthly grant** (from ADR 0002): Skool members get ~60 free min/month today; its money-era form (monthly dollar grant vs separate free-minutes vs dropped) is deferred to a client conversation. Slice 1 must not depend on it.
+- **Member monthly grant** (from ADR 0002): the full money-era form (monthly dollar grant vs separate free-minutes vs dropped) is still deferred to a client conversation. Feature 2 above is an interim, demo-only stopgap (allowlist one email, everyone else pays), not the final answer — Slice 1 still does not depend on it.

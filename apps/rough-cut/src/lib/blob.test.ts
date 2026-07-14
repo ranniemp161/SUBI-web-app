@@ -1,5 +1,11 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 
+// blob.ts only needs these for deleteBlobQuietly, but importing them for real
+// drags the whole @sentry/nextjs graph through every vi.resetModules() fresh
+// import below — slow enough under full-suite load to blow the test timeout.
+vi.mock("@vercel/blob", () => ({ del: vi.fn() }));
+vi.mock("@/lib/observability", () => ({ reportError: vi.fn() }));
+
 const ORIGINAL_TOKEN = process.env.BLOB_READ_WRITE_TOKEN;
 
 async function freshIsOwnBlobUrl() {

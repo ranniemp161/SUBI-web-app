@@ -15,7 +15,7 @@ Centralized billing/credits portal for the SUBI app ecosystem (per ADRs `0001` a
 | `src/app/api/billing/checkout/route.ts` | Creates the Stripe Checkout session |
 | `src/app/api/webhooks/stripe/route.ts` | Stripe webhook — writes the credit-ledger grant on successful payment (idempotent via `stripeEventId`) |
 | `src/lib/env.ts` | Validated cross-app URL (`ROUGH_CUT_URL`) — same pattern as rough-cut's `env.ts`; only place allowed to read `NEXT_PUBLIC_ROUGH_CUT_URL` |
-| `src/lib/credits.ts`, `src/lib/access-codes.ts`, `src/lib/authz.ts` | Same shared-domain logic as rough-cut's equivalents, both apps read/write the same `@repo/db` ledger |
+| `src/lib/credits.ts`, `src/lib/authz.ts` | Same shared-domain logic as rough-cut's equivalents, both apps read/write the same `@repo/db` ledger |
 | `src/app/api/cron/cleanup/route.ts` | Scheduled cleanup job |
 | `src/proxy.ts` | Clerk auth middleware, same pattern as rough-cut |
 
@@ -28,6 +28,7 @@ Tests run via the root `npm run test` (turbo); no wallet-scoped test script is d
 ## Conventions
 - Stripe is the sole billing authority for the whole ecosystem — no other app processes payments directly (see ADR `0001`).
 - Bundle prices/amounts are never hardcoded in code; they come from the Stripe dashboard via the `STRIPE_PRICE_IDS` allowlist plus each Price's `metadata.credit_micros`.
+- **Bundle changes take up to ~5 minutes to appear, by design.** `GET /api/billing/bundles` is CDN-cached (`s-maxage=300` + `stale-while-revalidate`) and `stripe.ts` keeps a per-instance in-memory cache; neither has a purge hook. After changing `STRIPE_PRICE_IDS` or a Price's `metadata.credit_micros`, the displayed bundles can be stale for up to ~5 minutes (redeploy to bust both layers immediately). This only affects the *listing*: checkout re-validates the priceId against the allowlist and fetches the live Price from Stripe at purchase time, so a stale card can never charge a stale amount.
 - Shares `@repo/db`, Clerk config, Sentry, and Upstash rate-limiting conventions with `apps/rough-cut` — see `apps/rough-cut/AGENTS.md` for the patterns (env validation, IP vs per-user rate limiting, Sentry env-gating) which apply identically here.
 
 ## Related ADRs

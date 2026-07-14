@@ -1,7 +1,9 @@
 # 0002. AI Cut paid re run (versioned suggestion runs)
 
 **Date**: 2026-07-09
-**Status**: Accepted
+**Status**: Accepted — superseded in part by [0003](../0003-studio-auto-cut-flow/index.md) (2026-07-11)
+
+> Paid re runs and the run list UI (switch, rename, delete) decided here are superseded: the product now allows at most one AI attempt per project, automatic or manual, never both. The `ai_cut_runs` data model, the atomic claim machinery (`claimAiCutSlot`/`releaseAiCutClaim`), and the idempotency design decided here are retained and reused, unmodified, by 0003.
 
 ## Summary
 

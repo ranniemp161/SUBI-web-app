@@ -34,13 +34,17 @@ export async function GET() {
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
     }
-    return NextResponse.json({
-      enabled: user.autorechargeEnabled,
-      thresholdMicros: user.autorechargeThresholdMicros,
-      amountMicros: user.autorechargeAmountMicros,
-      hasCard: Boolean(user.defaultPaymentMethodId),
-      failures: user.autorechargeFailures,
-    });
+    // Explicit no-store: per-user billing settings must never be cached.
+    return NextResponse.json(
+      {
+        enabled: user.autorechargeEnabled,
+        thresholdMicros: user.autorechargeThresholdMicros,
+        amountMicros: user.autorechargeAmountMicros,
+        hasCard: Boolean(user.defaultPaymentMethodId),
+        failures: user.autorechargeFailures,
+      },
+      { headers: { "Cache-Control": "no-store" } }
+    );
   } catch (error) {
     reportError("Failed to read auto-recharge settings", error);
     return NextResponse.json(

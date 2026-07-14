@@ -18,6 +18,8 @@ import {
   Plus,
   ArrowLeftToLine,
   ArrowRightToLine,
+  RotateCcw,
+  Hand,
 } from "lucide-react";
 import {
   totalDuration,
@@ -130,6 +132,24 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
   const [filmstrip, setFilmstrip] = useState<Filmstrip | null>(null);
   const [snapEnabled, setSnapEnabled] = useState(true);
   const [view, setView] = useState({ scrollLeft: 0, width: 0 });
+  // Hand-tool pan: hold Space, or toggle the Hand button, to drag the
+  // timeline horizontally instead of scrubbing/selecting/trimming. Mirrored
+  // into refs so the pointer handlers (registered once) always read the
+  // latest value.
+  const [isSpaceHeld, setIsSpaceHeld] = useState(false);
+  const [handToolActive, setHandToolActive] = useState(false);
+  const [isPanning, setIsPanning] = useState(false);
+  const isSpaceHeldRef = useRef(false);
+  const handToolActiveRef = useRef(false);
+  handToolActiveRef.current = handToolActive;
+  const isPanningRef = useRef(false);
+  const panStartRef = useRef({ clientX: 0, scrollLeft: 0 });
+  // Either source arms the pan tool; used for both the pointer-handler guard
+  // and the cursor styling.
+  const panArmed = isSpaceHeld || handToolActive;
+  // A cut clip the user has selected but not yet confirmed restoring — a click
+  // no longer restores instantly, it surfaces a Restore button first.
+  const [selectedCutStart, setSelectedCutStart] = useState<number | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -277,6 +297,87 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
     return () => scroller.removeEventListener("wheel", onWheel);
   }, []);
 
+  // Hold Space anywhere on the page to arm the hand tool (Descript-style pan).
+  // Ignored while typing in a form field so Space still types a space there.
+  // Escape dismisses the cut-restore confirmation; a window blur (alt-tab,
+  // devtools focus, etc.) releases a held Space so pan can't get stuck armed
+  // with no keyup to clear it.
+  useEffect(() => {
+    function isTypingTarget(target: EventTarget | null) {
+      if (!(target instanceof HTMLElement)) return false;
+      return (
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.isContentEditable
+      );
+    }
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.code === "Escape") {
+        setSelectedCutStart(null);
+        return;
+      }
+      if (e.code !== "Space" || e.repeat || isTypingTarget(e.target)) return;
+      isSpaceHeldRef.current = true;
+      setIsSpaceHeld(true);
+      e.preventDefault();
+    }
+    function releaseSpace() {
+      isSpaceHeldRef.current = false;
+      setIsSpaceHeld(false);
+      isPanningRef.current = false;
+      setIsPanning(false);
+    }
+    function onKeyUp(e: KeyboardEvent) {
+      if (e.code !== "Space") return;
+      releaseSpace();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", releaseSpace);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", releaseSpace);
+    };
+  }, []);
+
+  // Pan drag — attached with capture so it wins over scrub/click/trim handlers
+  // further down the tree while the hand tool is armed.
+  const handlePanPointerDown = useCallback((e: React.PointerEvent) => {
+    if (!isSpaceHeldRef.current && !handToolActiveRef.current) return;
+    e.stopPropagation();
+    e.preventDefault();
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    isPanningRef.current = true;
+    setIsPanning(true);
+    panStartRef.current = {
+      clientX: e.clientX,
+      scrollLeft: scrollRef.current?.scrollLeft ?? 0,
+    };
+  }, []);
+  const handlePanPointerMove = useCallback((e: React.PointerEvent) => {
+    if (!isPanningRef.current) return;
+    e.stopPropagation();
+    const scroller = scrollRef.current;
+    if (!scroller) return;
+    scroller.scrollLeft = panStartRef.current.scrollLeft - (e.clientX - panStartRef.current.clientX);
+  }, []);
+  const handlePanPointerUp = useCallback((e: React.PointerEvent) => {
+    if (!isPanningRef.current) return;
+    e.stopPropagation();
+    isPanningRef.current = false;
+    setIsPanning(false);
+    (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+  }, []);
+  // A cancelled pointer (e.g. a touch/pen interrupted mid-drag) never fires
+  // pointerup — without this, isPanningRef stays stuck true.
+  const handlePanPointerCancel = useCallback((e: React.PointerEvent) => {
+    if (!isPanningRef.current) return;
+    e.stopPropagation();
+    isPanningRef.current = false;
+    setIsPanning(false);
+  }, []);
+
   // Keep the cursor's time anchored after a wheel-zoom resizes the content.
   useLayoutEffect(() => {
     const pending = pendingZoomRef.current;
@@ -348,9 +449,10 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
     }
   }, [filmstrip, pxPerSec, view]);
 
-  // Keep the playhead in view during playback.
+  // Keep the playhead in view during playback. The Hand tool suspends
+  // auto-follow so the user's manual pan isn't fought by the recenter.
   useEffect(() => {
-    if (!isPlaying) return;
+    if (!isPlaying || handToolActive) return;
     const scroller = scrollRef.current;
     if (!scroller) return;
     const x = currentTime * pxPerSec;
@@ -359,7 +461,7 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
     if (x < left + 40 || x > right - 40) {
       scroller.scrollLeft = x - scroller.clientWidth / 2;
     }
-  }, [currentTime, isPlaying, pxPerSec]);
+  }, [currentTime, isPlaying, pxPerSec, handToolActive]);
 
   const timeFromClientX = useCallback(
     (clientX: number) => {
@@ -405,6 +507,7 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
       scrubbingRef.current = true;
       // Scrubbing empty timeline / ruler clears any clip selection.
       onSelectSegment(null);
+      setSelectedCutStart(null);
       onSeek(timeFromClientX(e.clientX));
     },
     [onSelectSegment, onSeek, timeFromClientX]
@@ -421,19 +524,31 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
     scrubbingRef.current = false;
   }, []);
 
-  // --- Clip click (select + seek keep / restore cut) ---
+  // --- Clip click (select + seek keep / select cut for confirm-restore) ---
   const handleSegmentClick = useCallback(
     (e: React.MouseEvent, segment: EDLSegment) => {
       e.stopPropagation();
       if (segment.status === "cut") {
-        onRestoreSegment(segment);
+        // Selecting a cut only surfaces the Restore button — it doesn't
+        // restore it, so a stray click can't undo a cut by accident.
         onSelectSegment(null);
+        setSelectedCutStart(segment.start);
       } else {
+        setSelectedCutStart(null);
         onSelectSegment(segment);
         onSeek(timeFromClientX(e.clientX));
       }
     },
-    [onRestoreSegment, onSelectSegment, onSeek, timeFromClientX]
+    [onSelectSegment, onSeek, timeFromClientX]
+  );
+
+  const handleConfirmRestore = useCallback(
+    (e: React.MouseEvent, segment: EDLSegment) => {
+      e.stopPropagation();
+      onRestoreSegment(segment);
+      setSelectedCutStart(null);
+    },
+    [onRestoreSegment]
   );
 
   // --- Boundary trim drag ---
@@ -550,6 +665,19 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
           >
             <Magnet className="h-3.5 w-3.5" /> Snap
           </button>
+          <button
+            type="button"
+            onClick={() => setHandToolActive((h) => !h)}
+            aria-pressed={handToolActive}
+            title="Hand tool — drag to pan without holding Space"
+            className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors ${
+              handToolActive
+                ? "bg-blue-500/20 text-blue-300"
+                : "text-foreground/50 hover:bg-foreground/10 hover:text-foreground/80"
+            }`}
+          >
+            <Hand className="h-3.5 w-3.5" /> Hand
+          </button>
         </div>
 
         <div className="flex items-center gap-3">
@@ -602,13 +730,24 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
         </div>
 
         {/* Scrollable tracks */}
-        <div ref={scrollRef} className="timeline-scroll flex-1 overflow-x-auto overflow-y-hidden">
+        <div
+          ref={scrollRef}
+          onPointerDownCapture={handlePanPointerDown}
+          onPointerMoveCapture={handlePanPointerMove}
+          onPointerUpCapture={handlePanPointerUp}
+          onPointerCancelCapture={handlePanPointerCancel}
+          className={`timeline-scroll flex-1 overflow-x-auto overflow-y-hidden ${
+            isPanning ? "cursor-grabbing" : panArmed ? "cursor-grab" : ""
+          }`}
+        >
           <div
             ref={contentRef}
             onPointerMove={handleHoverMove}
             onPointerLeave={handleHoverLeave}
             style={{ width: widthPx, height: TOTAL_H }}
-            className="relative select-none"
+            className={`relative select-none ${
+              isPanning ? "[&_*]:cursor-grabbing!" : panArmed ? "[&_*]:cursor-grab!" : ""
+            }`}
           >
             {/* Ruler (scrub strip) */}
             <div
@@ -653,21 +792,40 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
                   !isCut &&
                   selectedStart !== null &&
                   segment.start === selectedStart;
+                const isSelectedCut = isCut && segment.start === selectedCutStart;
                 const cutTooltip =
                   segment.reason === "retake"
-                    ? "Retake — kept the later take. Click to restore."
+                    ? "Retake — kept the later take. Click to select, then Restore."
                     : segment.reason === "ai"
-                      ? "AI cut — speech mistake removed. Click to restore."
+                      ? "AI cut — speech mistake removed. Click to select, then Restore."
                       : segment.reason === "repetition"
-                        ? "Repeated words — kept the last delivery. Click to restore."
+                        ? "Repeated words — kept the last delivery. Click to select, then Restore."
                         : segment.reason === "silence"
-                          ? "Silence — auto-trimmed. Click to restore."
-                          : "Cut — click to restore.";
+                          ? "Silence — auto-trimmed. Click to select, then Restore."
+                          : "Cut — click to select, then Restore.";
                 return (
                   <div
                     key={index}
                     onClick={(e) => handleSegmentClick(e, segment)}
                     onPointerDown={(e) => e.stopPropagation()}
+                    // Cut clips are keyboard-selectable so the Restore button
+                    // can be reached without a mouse. Enter/Space activate the
+                    // same selection path as a click.
+                    {...(isCut
+                      ? {
+                          tabIndex: 0,
+                          role: "button",
+                          "aria-label": cutTooltip,
+                          onKeyDown: (e: React.KeyboardEvent<HTMLDivElement>) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              onSelectSegment(null);
+                              setSelectedCutStart(segment.start);
+                            }
+                          },
+                        }
+                      : {})}
                     title={isCut ? cutTooltip : "Keep — click to select, Delete to remove"}
                     style={{
                       left: segment.start * pxPerSec,
@@ -698,7 +856,7 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
                               // them reading as "kept" against the darkened cuts.
                               "border-blue-400/50 bg-blue-500/15 hover:bg-blue-400/20"
                             : "border-blue-400/40 bg-gradient-to-b from-blue-500/85 to-blue-600/85 hover:from-blue-500 hover:to-blue-600"
-                    } ${isSelected ? "ring-2 ring-inset ring-white/90" : ""}`}
+                    } ${isSelected || isSelectedCut ? "ring-2 ring-inset ring-white/90" : ""}`}
                   >
                     {!isCut && index === firstKeepIndex && (
                       <span
@@ -722,6 +880,18 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
                         className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded bg-black/50 text-white/90 hover:bg-red-600"
                       >
                         <Trash2 className="h-3 w-3" />
+                      </button>
+                    )}
+                    {isSelectedCut && (
+                      <button
+                        type="button"
+                        onClick={(e) => handleConfirmRestore(e, segment)}
+                        onPointerDown={(e) => e.stopPropagation()}
+                        title="Restore this cut"
+                        aria-label="Restore cut"
+                        className="absolute right-1 top-1 flex h-5 items-center gap-1 rounded bg-emerald-600/90 px-1.5 text-[10px] font-medium text-white/95 hover:bg-emerald-500"
+                      >
+                        <RotateCcw className="h-3 w-3" /> Restore
                       </button>
                     )}
                   </div>

@@ -42,8 +42,12 @@ export const users = pgTable(
      * and rolls back the whole (single-statement) credit mutation.
      */
     balanceMicros: integer("balance_micros").notNull().default(0),
-    /** Skool community member — receives the monthly credit grant. */
-    isMember: boolean("is_member").notNull().default(true),
+    /**
+     * Member — receives the monthly credit grant. Defaults to false: only the
+     * allowlisted demo email (MEMBER_ALLOWLIST_EMAIL, set in provisionUser)
+     * is granted membership; everyone else pays via Stripe.
+     */
+    isMember: boolean("is_member").notNull().default(false),
     /**
      * Auto-recharge (ADR 0002/0002): buy more automatically off-session when
      * the balance drops below a user-set line. We store only Stripe ids, never
@@ -96,6 +100,17 @@ export const projects = pgTable("projects", {
    */
   holdMicros: integer("hold_micros"),
   edl: jsonb("edl"),
+  /**
+   * Whether the user asked (and agreed to pay) for the AI polish pass at upload
+   * time (ADR 0003 child 1). Set from the upload confirm panel's toggle when the
+   * row is created; the single thing that decides whether the studio's automatic
+   * AI attempt fires on open. Flips to false, atomically, the instant any AI Cut
+   * claim succeeds for this project (automatic or manual — see claimAiCutSlot),
+   * so exactly one automatic attempt can ever fire. Defaults false so every row
+   * that predates this column (and every project uploaded with the toggle off)
+   * is inert under the auto-fire logic.
+   */
+  aiPolishRequested: boolean("ai_polish_requested").notNull().default(false),
   /**
    * Which stored `ai_cut_runs` row is currently applied to the timeline. Null
    * when the project has no runs yet, or its last run was deleted (see ADR

@@ -51,7 +51,7 @@ export default function RootLayout({
           >
             <div className="max-w-5xl mx-auto px-8 h-16 flex items-center justify-between">
               <span className="font-bold text-xl tracking-tight">
-                SUBI Wallet
+                Founder&apos;s Frame Wallet
               </span>
               <div className="flex items-center gap-4">
                 <a

@@ -13,6 +13,7 @@
   "dependencies": {
     "@clerk/nextjs": "^7.5.13",
     "@repo/db": "*",
+    "@repo/server-shared": "*",
     "@repo/ui": "*",
     "@sentry/nextjs": "^10.63.0",
     "@stripe/react-stripe-js": "^6.7.0",

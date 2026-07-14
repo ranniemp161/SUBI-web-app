@@ -3,8 +3,7 @@
  * validate what comes back into the stored `AiCuts` shape.
  *
  * Server-only because it reads GEMINI_API_KEY; the pure application logic the
- * editor also needs lives in `ai-cuts.ts`. Called from the transcribe callback
- * (auto pass on every fresh transcript, soft-fail) and from the on-demand
+ * editor also needs lives in `ai-cuts.ts`. Called from the on-demand
  * `POST /api/projects/[id]/ai-cut` route.
  *
  * Plain fetch to the Gemini REST API rather than an SDK: it's one endpoint,
@@ -26,10 +25,10 @@ const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${AI
 const MAX_PROMPT_WORDS = 50_000;
 
 /**
- * Bail out rather than hold the transcribe callback (or the studio) hostage.
- * Sized against reality: with the max thinking budget (below), a ~3k-word
- * transcript answers in ~87s, so 240s covers transcripts a few times longer
- * while still fitting inside the routes' maxDuration = 300 (Vercel's cap).
+ * Bail out rather than hold the studio hostage. Sized against reality: with
+ * the max thinking budget (below), a ~3k-word transcript answers in ~87s, so
+ * 240s covers transcripts a few times longer while still fitting inside the
+ * route's maxDuration = 300 (Vercel's cap).
  */
 const REQUEST_TIMEOUT_MS = 240_000;
 

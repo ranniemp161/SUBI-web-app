@@ -6,6 +6,7 @@ import { eq } from "drizzle-orm";
 import { getOwnedProject, listAiCutRuns } from "@/lib/projects";
 import { settleHold } from "@/lib/credits";
 import { patchProjectSchema } from "@/lib/validation";
+import { readRateLimit } from "@/lib/rate-limit";
 import { reportError } from "@/lib/observability";
 
 /**
@@ -21,6 +22,14 @@ export async function GET(
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const limit = await readRateLimit(clerkId);
+  if (!limit.allowed) {
+    return NextResponse.json(
+      { error: "Too many requests. Please wait a bit and try again." },
+      { status: 429 }
+    );
+  }
+
   try {
     const { id } = await params;
     const project = await getOwnedProject(id, clerkId);
@@ -34,7 +43,12 @@ export async function GET(
 
     const aiCutRuns = await listAiCutRuns(id);
 
-    return NextResponse.json({ ...project, aiCutRuns });
+    // Explicit no-store: per-user project detail (transcript, EDL) must
+    // never be served stale or shared across users by an intermediary.
+    return NextResponse.json(
+      { ...project, aiCutRuns },
+      { headers: { "Cache-Control": "no-store" } }
+    );
   } catch (error) {
     reportError("Error fetching project", error);
     return NextResponse.json(

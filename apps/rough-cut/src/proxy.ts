@@ -8,7 +8,6 @@ const isPublicRoute = createRouteMatcher([
   "/",
   "/sign-in(.*)",
   "/sign-up(.*)",
-  "/api/auth/verify-code",
   "/api/webhooks/clerk",
   "/api/transcribe/callback",
   // Cron sweep is called by Vercel with no Clerk session; it self-gates on
@@ -19,6 +18,17 @@ const isPublicRoute = createRouteMatcher([
 import { NextResponse } from "next/server";
 
 export default clerkMiddleware(async (auth, request) => {
+  // Signed-in users skip the marketing page. This lives here (not in the
+  // page via auth()) so the landing page stays fully static and CDN-served;
+  // middleware runs before the cache, so the redirect still always fires.
+  if (request.nextUrl.pathname === "/") {
+    const { userId } = await auth();
+    if (userId) {
+      return NextResponse.redirect(new URL("/dashboard", request.url));
+    }
+    return;
+  }
+
   if (!isPublicRoute(request)) {
     const session = await auth();
     if (!session.userId) {

@@ -5,6 +5,15 @@ const state = vi.hoisted(() => ({
   dbUser: null as { id: string; balanceMicros: number; isMember: boolean } | null,
   freshRows: [] as Record<string, unknown>[],
   grantCalls: [] as Array<{ userId: string; micros: number }>,
+  readAllowed: true,
+}));
+
+vi.mock("@/lib/rate-limit", () => ({
+  readRateLimit: vi.fn(async () => ({
+    allowed: state.readAllowed,
+    remaining: state.readAllowed ? 599 : 0,
+    limit: 600,
+  })),
 }));
 
 vi.mock("@clerk/nextjs/server", () => ({
@@ -51,6 +60,7 @@ beforeEach(() => {
   state.dbUser = null;
   state.freshRows = [];
   state.grantCalls = [];
+  state.readAllowed = true;
   vi.clearAllMocks();
 });
 
@@ -58,6 +68,13 @@ describe("GET /api/credits", () => {
   it("401 when unauthenticated", async () => {
     const res = await GET();
     expect(res.status).toBe(401);
+  });
+
+  it("429 when the shared read limit is exhausted", async () => {
+    state.clerkId = "clerk_1";
+    state.readAllowed = false;
+    const res = await GET();
+    expect(res.status).toBe(429);
   });
 
   it("403 without an authorized users row", async () => {
@@ -78,6 +95,8 @@ describe("GET /api/credits", () => {
     expect(res.status).toBe(200);
     expect(state.grantCalls).toEqual([{ userId: "db-user-1", micros: 19_000_000 }]);
     expect(body).toEqual({ balanceMicros: 19_000_000, isMember: true });
+    // Per-user balance must never be cached by any proxy in front of the app.
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
   });
 
   it("falls back to the pre-grant row if the re-read comes back empty", async () => {

@@ -8,6 +8,8 @@ export {
   formatUsd,
 } from "./money";
 
+export { ConfirmDialog, type ConfirmDialogProps } from "./confirm-dialog";
+
 /**
  * Merge conditional class names and de-conflict Tailwind utilities.
  *

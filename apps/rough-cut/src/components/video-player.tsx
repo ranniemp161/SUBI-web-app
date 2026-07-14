@@ -105,7 +105,11 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
         if (!video) return;
         const skipTo = nextPlaybackTime(edlRef.current, video.currentTime);
         if (skipTo !== null) {
-          video.currentTime = skipTo;
+          // Add 0.01s (10ms) to ensure we land strictly inside the keep segment.
+          // Browser media engines can round a precise float down slightly, causing
+          // the next frame to still evaluate as inside the cut segment, creating
+          // an infinite seek loop where the video appears to "stop on its own".
+          video.currentTime = skipTo + 0.01;
         }
         if (video.currentTime !== lastReported) {
           lastReported = video.currentTime;

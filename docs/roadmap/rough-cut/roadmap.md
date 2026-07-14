@@ -25,6 +25,8 @@ The core product: browser-based video transcription and AI-assisted rough cuttin
 | 4 | Surface AI Cut last-run timestamp | Slice 4 | done |
 | 5 | Tune cut logic against utterance boundaries | Slice 4 | done |
 | 6 | Named/labeled AI Cut runs | Slice 5 | done |
+| 7 | Studio auto-cut flow | Slice 6 | in-progress |
+| 8 | Export to DaVinci Resolve / Premiere Pro (FCPXML) | Slice 7 | done |
 
 ## Existing (pre-workflow, enrolled 2026-07-08)
 
@@ -133,11 +135,44 @@ A user can label a stored AI Cut run (e.g. "longer intro kept") to tell runs apa
 - [x] Verify it: `/verify nameable ai cut runs`
 - [x] Test it: `/test nameable ai cut runs`
 
+## Slice 6
+
+### 7. Studio auto-cut flow · in-progress
+Client-requested UX redesign, evolved twice. ADR 0003 first shipped: the studio auto-runs the free mechanical rough cut, then the AI polish pass (consented and priced at upload via a default-on toggle), behind one loader, the moment a fresh project opens with a ready transcript; the always-on paid AI button, paid re-runs, and the run-list UI were removed in favor of a free "Restore AI suggestions," and the exit toast became a real blocking confirm dialog. ADR 0004 now supersedes 0003's upload and trigger design: the upload confirm modal is removed entirely (AI polish becomes mandatory, no toggle, no price screen), and the auto-chain is gated on the user reselecting their source video (not transcript-readiness alone) under a loader reading "A.I. is doing the rough cut in the background...". ADR: [0004](../../adr/rough-cut/0004-reselect-gated-pipeline/index.md) (supersedes [0003](../../adr/rough-cut/0003-studio-auto-cut-flow/index.md))
+**Done when:** selecting a file goes straight into processing with no confirm panel (insufficient funds caught inline, no modal), a ready project with no saved edit list shows "Ready for step 2" on the dashboard, opening its studio shows the reselect prompt first, and the mechanical-then-AI-polish chain fires only after a verified reselect (never on transcript-readiness alone) under the new loader copy, landing the user in the finished editor; AI failure or insufficient funds still lands safely on the mechanical result with the existing manual "Polish with AI" retry button.
+- [x] Design it (ADR): [0004](../../adr/rough-cut/0004-reselect-gated-pipeline/index.md)
+- [x] Build it: `/develop reselect gated pipeline`
+  - [x] Upload flow simplification: remove the confirm modal and AI-polish toggle, mandatory `aiPolishRequested`, inline combined-cost pre-flight, "Ready for step 2" dashboard label (child 1, AC-1..5)
+  - [x] Reselect-gated processing: gate the auto-chain on a verified reselect, relabel the loader, preserve all existing failure/legacy behavior, show a full-page loading state with a progress bar until the chain settles (child 2, AC-6..12)
+  code in `apps/rough-cut/src/lib/validation.ts`, `apps/rough-cut/src/app/api/projects/route.ts`, `apps/rough-cut/src/app/(app)/dashboard/page.tsx`, `apps/rough-cut/src/app/(app)/dashboard/[id]/page.tsx`
+- [ ] Verify it: `/verify reselect gated pipeline`
+- [ ] Test it: `/test reselect gated pipeline`
+
+Prior build (ADR 0003, still live where not superseded above): code in `packages/db/src/schema.ts`, `packages/db/drizzle/0010_watery_vision.sql`, `packages/ui/src/confirm-dialog.tsx`, `apps/rough-cut/src/lib/validation.ts`, `apps/rough-cut/src/lib/projects.ts`, `apps/rough-cut/src/app/api/projects/route.ts`, `apps/rough-cut/src/app/(app)/dashboard/page.tsx`, `apps/rough-cut/src/app/(app)/dashboard/[id]/page.tsx`, `apps/rough-cut/src/components/transcript-panel.tsx`
+
+## Slice 7
+
+### 8. Export to DaVinci Resolve / Premiere Pro (FCPXML + CMX 3600 EDL) · done
+Alongside the existing browser MP4 export, let a user export their cut list as an FCPXML file, or a CMX 3600 EDL, so they can finish the video (color grade, mix audio) in a professional NLE instead of only ever getting a flattened MP4. Spec: [0001](../../specs/rough-cut/0001-nle-export-fcpxml/index.md)
+**Done when:** a project with a saved, non-empty EDL can export a valid FCPXML file and/or a valid CMX 3600 EDL file, each containing only the kept segments in order, referencing the source clip by its original filename, at a fixed 30fps timebase; both are reachable from one shared, styled menu control in the export cluster (alongside the resolution dropdown).
+code in `apps/rough-cut/src/lib/export/fcpxml.ts`, `apps/rough-cut/src/lib/export/cmx3600.ts`, `apps/rough-cut/src/lib/export/timebase.ts`, `apps/rough-cut/src/lib/export/filename.ts`, `apps/rough-cut/src/lib/download-text-file.ts`, `apps/rough-cut/src/app/(app)/dashboard/[id]/page.tsx`
+- [x] Design it (spec): [0001](../../specs/rough-cut/0001-nle-export-fcpxml/index.md)
+- [x] Build it: `/develop export to davinci premiere fcpxml`
+  - [x] FCPXML generator + entry point + gating + restyled controls (spec tasks 1 to 4)
+  - [x] Extract shared frame math + filename sanitizing helpers (spec task 5)
+  - [x] CMX 3600 EDL generator (spec tasks 6 to 7)
+  - [x] Format picker menu (FCPXML vs CMX 3600 EDL) wired into the top bar (spec task 8)
+  - [x] Test coverage for the new format, plus a cross format consistency check (spec task 9)
+- [x] Verify it: `/check verify export to davinci premiere fcpxml` (automated pass 2026-07-12 + engineer manual sign-off 2026-07-12 on the UI-only items, see verify.md)
+- [x] Test it: `/test export to davinci premiere fcpxml`
+
 ## Deferred
 
-Surfaced as follow-ups while building Slice 2 and Slice 3, not yet scheduled into a slice. Each has its own decision status; none are urgent.
+Surfaced as follow-ups while building earlier slices, not yet scheduled into a slice. Each has its own decision status; none are urgent.
 
-*(None currently)*
+### Prune the dead AI-run machinery `from ADR 0003`
+Once the studio auto-cut flow has been live long enough to confirm no multi-run use case resurfaces: remove the dead run-list routes (`PATCH .../ai-cut/active`, `DELETE .../ai-cut/runs/[runId]`, rename), and revisit `AI_CUT_RUN_LIMIT` (possibly collapse `ai_cut_runs` toward one row per project).
+**Done when:** the dead routes are removed and the run cap is right-sized, with no user-facing change.
 
 
 

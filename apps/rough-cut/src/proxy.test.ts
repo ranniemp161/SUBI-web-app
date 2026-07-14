@@ -44,6 +44,28 @@ describe('proxy middleware', () => {
     expect(Array.isArray(config.matcher)).toBe(true);
   });
 
+  it('redirects signed-in users from the landing page to /dashboard', async () => {
+    const auth = vi.fn().mockResolvedValue({ userId: 'user_123' });
+    const request = { nextUrl: { pathname: '/' }, url: 'http://localhost:3000/' };
+
+    const response = await getMiddlewareHandler()(auth, request);
+
+    expect(response).toBeInstanceOf(NextResponse);
+    expect((response as NextResponse).status).toBe(307);
+    expect((response as NextResponse).headers.get('location')).toBe(
+      'http://localhost:3000/dashboard'
+    );
+  });
+
+  it('serves the landing page to anonymous visitors without redirecting', async () => {
+    const auth = vi.fn().mockResolvedValue({});
+    const request = { nextUrl: { pathname: '/' }, url: 'http://localhost:3000/' };
+
+    const response = await getMiddlewareHandler()(auth, request);
+
+    expect(response).toBeUndefined();
+  });
+
   it('allows public routes without authentication', async () => {
     const auth = vi.fn().mockResolvedValue({});
     const request = { nextUrl: { pathname: '/sign-in' } };

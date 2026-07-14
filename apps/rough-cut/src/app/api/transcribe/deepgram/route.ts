@@ -1,7 +1,6 @@
 import { randomBytes } from "crypto";
 import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
-import { del } from "@vercel/blob";
 import { db } from "@repo/db";
 import { projects } from "@repo/db/schema";
 import { eq } from "drizzle-orm";
@@ -14,12 +13,13 @@ import {
   reclaimStaleHold,
   reserveCredits,
   secondsFromDeepgramDuration,
-  settleHold,
+  settleHoldQuietly,
   STALE_HOLD_MS,
 } from "@/lib/credits";
 import { rateLimit } from "@/lib/rate-limit";
 import { reportError } from "@/lib/observability";
-import { isOwnBlobUrl } from "@/lib/blob";
+import { deleteBlobQuietly, isOwnBlobUrl } from "@/lib/blob";
+import { pusherServer } from "@/lib/pusher";
 import {
   extractDeepgramError,
   normalizeDeepgram,
@@ -30,6 +30,14 @@ import {
 // single user can kick it off.
 const TRANSCRIBE_LIMIT = 30;
 const TRANSCRIBE_WINDOW_SECONDS = 3600;
+
+// Callback mode (production): Deepgram only needs to acknowledge the job
+// here, so a hung request past this means something is actually wrong.
+const ACCEPT_TIMEOUT_MS = 30_000;
+// Sync mode (localhost only): this request blocks until Deepgram finishes
+// the full transcription, which can run minutes for longer recordings —
+// sized the same way as Gemini's REQUEST_TIMEOUT_MS in ai-rough-cut.ts.
+const SYNC_TRANSCRIBE_TIMEOUT_MS = 240_000;
 
 /**
  * POST /api/transcribe/deepgram?projectId=<id>
@@ -65,24 +73,6 @@ function isLocalHostname(hostname: string): boolean {
     hostname === "[::1]" ||
     hostname.endsWith(".local")
   );
-}
-
-/** Best-effort blob cleanup — a failed delete shouldn't mask the real result. */
-async function deleteBlobQuietly(blobUrl: string) {
-  try {
-    await del(blobUrl);
-  } catch (error) {
-    reportError("Failed to delete transcription blob", error);
-  }
-}
-
-/** Best-effort settle — a credits hiccup must never mask the transcript result. */
-async function settleHoldQuietly(projectId: string, actualSeconds: number | null) {
-  try {
-    await settleHold(projectId, actualSeconds);
-  } catch (error) {
-    reportError("Failed to settle credit hold", error, { projectId });
-  }
 }
 
 export async function POST(request: Request) {
@@ -204,10 +194,22 @@ export async function POST(request: Request) {
   // verified as ours. Sync mode reads the transcript here, so no token/callback.
   const callbackToken = useSync ? null : randomBytes(32).toString("hex");
   if (!useSync && callbackToken) {
-    params.set(
-      "callback",
-      `${callbackBase}/api/transcribe/callback?projectId=${projectId}&token=${callbackToken}&blobUrl=${encodeURIComponent(blobUrl)}`
-    );
+    const callbackUrl = new URL(`${callbackBase}/api/transcribe/callback`);
+    callbackUrl.searchParams.set("projectId", projectId);
+    callbackUrl.searchParams.set("token", callbackToken);
+    callbackUrl.searchParams.set("blobUrl", blobUrl);
+    // Vercel Deployment Protection (Vercel Authentication) blocks unauthenticated
+    // requests to every route, including this callback — Deepgram's server has no
+    // Vercel session, so without this bypass its callback never reaches us and the
+    // project sits stuck on "processing" forever. Only set when Deployment
+    // Protection's "Protection Bypass for Automation" secret is configured.
+    if (process.env.VERCEL_AUTOMATION_BYPASS_SECRET) {
+      callbackUrl.searchParams.set(
+        "x-vercel-protection-bypass",
+        process.env.VERCEL_AUTOMATION_BYPASS_SECRET
+      );
+    }
+    params.set("callback", callbackUrl.toString());
   }
 
   await db
@@ -229,6 +231,9 @@ export async function POST(request: Request) {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ url: blobUrl }),
+      signal: AbortSignal.timeout(
+        useSync ? SYNC_TRANSCRIBE_TIMEOUT_MS : ACCEPT_TIMEOUT_MS
+      ),
     });
 
     if (!dgResponse.ok) {
@@ -248,6 +253,12 @@ export async function POST(request: Request) {
       // callback will ever arrive — safe to clean up now either way.
       await settleHoldQuietly(projectId, 0);
       await deleteBlobQuietly(blobUrl);
+
+      try {
+        await pusherServer.trigger(projectId, "transcript_status", { status: "failed" });
+      } catch (pusherErr) {
+        console.error("Failed to trigger Pusher event for failed transcription", pusherErr);
+      }
 
       return NextResponse.json(
         { error: "Deepgram rejected the request.", detail: extractDeepgramError(detail) },
@@ -285,6 +296,14 @@ export async function POST(request: Request) {
     );
     await deleteBlobQuietly(blobUrl);
 
+    if (useSync) {
+      try {
+        await pusherServer.trigger(projectId, "transcript_status", { status: "ready" });
+      } catch (pusherErr) {
+        console.error("Failed to trigger Pusher event for sync transcription", pusherErr);
+      }
+    }
+
     return NextResponse.json({ received: true });
   } catch (error) {
     reportError("Error starting Deepgram transcription", error);
@@ -299,6 +318,12 @@ export async function POST(request: Request) {
 
     await settleHoldQuietly(projectId, 0);
     await deleteBlobQuietly(blobUrl);
+
+    try {
+      await pusherServer.trigger(projectId, "transcript_status", { status: "failed" });
+    } catch (pusherErr) {
+      console.error("Failed to trigger Pusher event for failed transcription", pusherErr);
+    }
 
     return NextResponse.json(
       { error: "Failed to start transcription." },

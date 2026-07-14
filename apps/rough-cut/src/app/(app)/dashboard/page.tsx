@@ -12,19 +12,26 @@ import { formatUsd, chargeMicrosForSeconds } from "@repo/ui";
 import { formatDuration, formatDate } from "@/lib/utils";
 import { extractAudioForTranscription } from "@/lib/audio-extract";
 import { uploadPathnameForProject } from "@/lib/blob";
+import { getPusherClient } from "@/lib/pusher";
 
 interface Project {
   id: string;
   fileName: string;
   durationMs: number | null;
   transcriptStatus: "idle" | "processing" | "ready" | "failed";
+  // Presence-only signal (no EDL content ever reaches the list view) — a
+  // "ready" project with no saved edit list yet still owes the studio's
+  // reselect-and-process step (ADR 0004 child 1).
+  hasEdl: boolean;
   createdAt: string;
   updatedAt: string;
 }
 
 /**
  * Visual treatment for each transcript status, used for the pill badge shown on
- * a project card. `idle` has no badge (null).
+ * a project card. `idle` has no badge (null). `ready`'s label depends on
+ * `hasEdl` (ADR 0004 child 1) so it's computed per-row instead of here — see
+ * `readyLabelFor`.
  */
 const STATUS_META: Record<
   Project["transcriptStatus"],
@@ -50,6 +57,17 @@ const STATUS_META: Record<
     chip: "bg-red-500/15 ring-1 ring-inset ring-red-400/25",
   },
 };
+
+/**
+ * A "ready" project with no saved edit list yet still owes the studio's
+ * reselect step, so its dashboard row says so instead of reading identically
+ * to a fully finished project (AC-5).
+ */
+function readyLabelFor(project: Project): string {
+  return project.transcriptStatus === "ready" && !project.hasEdl
+    ? "Ready for step 2"
+    : "Ready";
+}
 
 /** Gradient presets for a project card's poster, so the grid feels alive. */
 const POSTER_GRADIENTS = [
@@ -151,7 +169,7 @@ async function startDeepgramTranscription(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ blobUrl: blob.url }),
       keepalive: true,
-    }).catch(() => {});
+    }).catch(() => { });
     throw error;
   }
 }
@@ -202,6 +220,11 @@ export default function DashboardPage() {
   const [nowTick, setNowTick] = useState(() => Date.now());
 
   const [isDraggingPage, setIsDraggingPage] = useState(false);
+
+  // Inline, non-modal insufficient-funds message shown near the file picker
+  // when the combined transcription-plus-polish pre-flight blocks a new
+  // upload (ADR 0004 child 1) — replaces the removed confirm-panel disclosure.
+  const [insufficientFundsMessage, setInsufficientFundsMessage] = useState<string | null>(null);
 
   // Advance the estimated transcription percentages while any are in flight.
   const hasTranscribing = Object.values(activeUploads).some(
@@ -414,14 +437,20 @@ export default function DashboardPage() {
   }, [fetchCredits]);
 
   /**
-   * Pre-flight credit check (UX only — the server re-checks authoritatively
-   * and 402s). Returns true when the upload should be blocked.
+   * Pre-flight credit check for the *retry* flow only (UX only — the server
+   * re-checks authoritatively and 402s). No AI-polish cost: retrying just
+   * re-runs transcription against an existing project. Returns true when the
+   * upload should be blocked. Shows a toast — the retry flow keeps that
+   * treatment; only new uploads get the inline message (ADR 0004 child 1).
    */
   const blockedByCredits = useCallback(
     (durationMs: number | null | undefined): boolean => {
       if (credits == null || durationMs == null || durationMs <= 0) return false;
-      const neededMicros = chargeMicrosForSeconds(Math.ceil(durationMs / 1000));
-      if (neededMicros <= credits.balanceMicros) return false;
+      const seconds = Math.ceil(durationMs / 1000);
+      const neededMicros = chargeMicrosForSeconds(seconds);
+      // Strict `<`: a balance exactly equal to the combined cost is treated as
+      // blocked to leave headroom for the server's exact-duration re-charge.
+      if (neededMicros < credits.balanceMicros) return false;
       toast.error("Not enough funds for this video", {
         description: `It needs about ${formatUsd(neededMicros)} of credit — you have ${formatUsd(
           credits.balanceMicros
@@ -433,12 +462,41 @@ export default function DashboardPage() {
     [credits]
   );
 
+  /**
+   * Pre-flight credit check for a *new* upload (UX only — the server
+   * re-checks authoritatively and 402s). AI polish is now mandatory for every
+   * new project, so this prices the combined transcription-plus-polish cost
+   * (AC-3). On a block, sets the inline message shown near the file picker
+   * instead of a toast — no modal remains in the upload flow. Returns true
+   * when the upload should be blocked.
+   */
+  const blockedByCreditsForNewUpload = useCallback(
+    (durationMs: number | null | undefined): boolean => {
+      setInsufficientFundsMessage(null);
+      if (credits == null || durationMs == null || durationMs <= 0) return false;
+      const seconds = Math.ceil(durationMs / 1000);
+      const neededMicros = chargeMicrosForSeconds(seconds) * 2;
+      // Strict `<`: a balance exactly equal to the combined cost is treated as
+      // blocked to leave headroom for the server's exact-duration re-charge.
+      if (neededMicros < credits.balanceMicros) return false;
+      setInsufficientFundsMessage(
+        `Not enough funds for this video — it needs about ${formatUsd(neededMicros)} of credit (transcription + AI polish) and you have ${formatUsd(credits.balanceMicros)}.`
+      );
+      return true;
+    },
+    [credits]
+  );
+
+  // File selection now goes straight into extraction, upload, and
+  // transcription with no intermediate confirm panel (ADR 0004 child 1, AC-1):
+  // no click required after selection, and AI polish is no longer a per-project
+  // choice — the server hardcodes it on for every new project.
   const handleFileSelected = useCallback(
     async (file: File, metadata: VideoMetadata) => {
       // Note: no up-front size gate on the video itself — what's uploaded is
       // the extracted audio track, which kickOffTranscription size-checks
       // against the Deepgram cap after extraction.
-      if (blockedByCredits(metadata.durationMs)) return;
+      if (blockedByCreditsForNewUpload(metadata.durationMs)) return;
       setIsCreating(true);
 
       try {
@@ -463,7 +521,7 @@ export default function DashboardPage() {
         // tick) so the progress bar shows from the start — startTranscription
         // is about to set this same status server-side anyway.
         setProjects((prev) => [
-          { ...project, transcriptStatus: "processing" },
+          { ...project, transcriptStatus: "processing", hasEdl: false },
           ...prev,
         ]);
 
@@ -474,7 +532,7 @@ export default function DashboardPage() {
         setIsCreating(false);
       }
     },
-    [kickOffTranscription, blockedByCredits]
+    [blockedByCreditsForNewUpload, kickOffTranscription]
   );
 
   /** Page-level drag-and-drop listener. */
@@ -609,91 +667,57 @@ export default function DashboardPage() {
     .sort()
     .join(",");
 
-  /** Poll any project still transcribing until it's ready or failed. */
+  /** Listen to Pusher for any project still transcribing until it's ready or failed. */
   useEffect(() => {
     if (!processingKey) return;
     const ids = processingKey.split(",");
-    const abortController = new AbortController();
+    
+    const pusher = getPusherClient();
+    if (!pusher) return;
 
-    const checkStatuses = async () => {
-      for (const id of ids) {
-        try {
-          const response = await fetch(`/api/projects/${id}/status`, {
-            signal: abortController.signal,
+    const channels = ids.map((id) => {
+      const channel = pusher.subscribe(id);
+      
+      channel.bind("transcript_status", (data: { status: "ready" | "failed" }) => {
+        if (data.status !== "ready" && data.status !== "failed") return;
+
+        setProjects((prev) =>
+          prev.map((p) =>
+            p.id === id ? { ...p, transcriptStatus: data.status } : p
+          )
+        );
+        
+        fetchCredits();
+        setActiveUploads((prev) => {
+          const copy = { ...prev };
+          delete copy[id];
+          return copy;
+        });
+        
+        const fileName = projectsRef.current.find((p) => p.id === id)?.fileName;
+        if (data.status === "ready") {
+          toast.success("Transcript ready", {
+            description: fileName
+              ? `"${fileName}" is ready to edit — open it to create your rough cut.`
+              : "Open the project to create your rough cut.",
           });
-          if (!response.ok) continue;
-
-          // A redirect (e.g. to the sign-in page during a session refresh)
-          // resolves with response.ok === true but an HTML body, not JSON —
-          // guard against parsing that as a transcript status update.
-          if (!response.headers.get("content-type")?.includes("application/json")) {
-            continue;
-          }
-
-          const updated = await response.json();
-          // Only ready/failed are terminal. "processing" means keep waiting,
-          // and "idle" means the server hasn't started the job yet (the card
-          // is optimistically "processing" through the extract/upload phases,
-          // before the Deepgram kickoff flips the server status) — flipping
-          // the card back on either would kill the progress UI mid-job.
-          if (updated.transcriptStatus !== "ready" && updated.transcriptStatus !== "failed") {
-            continue;
-          }
-
-          setProjects((prev) =>
-            prev.map((p) =>
-              p.id === id
-                ? { ...p, transcriptStatus: updated.transcriptStatus }
-                : p
-            )
-          );
-          // The finished job settled its credit hold (reconcile or refund) —
-          // pick up the corrected balance, clear the card's progress overlay,
-          // and tell the user the outcome.
-          fetchCredits();
-          setActiveUploads((prev) => {
-            const copy = { ...prev };
-            delete copy[id];
-            return copy;
+        } else {
+          toast.error("Transcription failed", {
+            description: fileName
+              ? `"${fileName}" couldn't be transcribed — retry it from its card.`
+              : "Retry it from the project card.",
           });
-          const fileName = projectsRef.current.find((p) => p.id === id)?.fileName;
-          if (updated.transcriptStatus === "ready") {
-            toast.success("Transcript ready", {
-              description: fileName
-                ? `"${fileName}" is ready to edit — open it to create your rough cut.`
-                : "Open the project to create your rough cut.",
-            });
-          } else {
-            toast.error("Transcription failed", {
-              description: fileName
-                ? `"${fileName}" couldn't be transcribed — retry it from its card.`
-                : "Retry it from the project card.",
-            });
-          }
-        } catch (error) {
-          if (error instanceof DOMException && error.name === "AbortError") continue;
-          console.error("Failed to poll transcript status:", error);
         }
-      }
-    };
-
-    // Check right away instead of sitting out a full interval (the job may
-    // already be done), then keep polling. Background tabs throttle timers to
-    // a minute or more, so also re-check the moment the tab is visible or
-    // focused again — that's the "came back to a stuck 95%" case.
-    checkStatuses();
-    const interval = setInterval(checkStatuses, 4000);
-    const handleReturnToTab = () => {
-      if (document.visibilityState === "visible") checkStatuses();
-    };
-    document.addEventListener("visibilitychange", handleReturnToTab);
-    window.addEventListener("focus", handleReturnToTab);
+      });
+      
+      return { id, channel };
+    });
 
     return () => {
-      clearInterval(interval);
-      abortController.abort();
-      document.removeEventListener("visibilitychange", handleReturnToTab);
-      window.removeEventListener("focus", handleReturnToTab);
+      channels.forEach(({ id, channel }) => {
+        channel.unbind("transcript_status");
+        pusher.unsubscribe(id);
+      });
     };
   }, [processingKey, fetchCredits]);
 
@@ -763,10 +787,10 @@ export default function DashboardPage() {
       <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold tracking-tight text-foreground sm:text-4xl">
-            Your Projects
+            Step 1: Audio Extraction and Transcription
           </h1>
           <p className="mt-2 text-foreground/50">
-            Turn raw footage into a rough cut — start by adding a video below.
+            Upload your video and we&apos;ll extract the audio and transcribe it before you can proceed to step 2.⬇️
           </p>
         </div>
         <div className="flex flex-col items-end gap-2">
@@ -776,12 +800,12 @@ export default function DashboardPage() {
               <span className="inline-flex items-center gap-1.5 rounded-full bg-foreground/[0.04] px-3 py-1.5 font-medium text-foreground/60 ring-1 ring-inset ring-foreground/10">
                 {projects.length} {projects.length === 1 ? "project" : "projects"}
               </span>
-            {readyCount > 0 && (
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-3 py-1.5 font-medium text-emerald-200 ring-1 ring-inset ring-emerald-400/20">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-                {readyCount} ready
-              </span>
-            )}
+              {readyCount > 0 && (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-3 py-1.5 font-medium text-emerald-200 ring-1 ring-inset ring-emerald-400/20">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                  {readyCount} ready
+                </span>
+              )}
               {processingCount > 0 && (
                 <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-500/10 px-3 py-1.5 font-medium text-blue-200 ring-1 ring-inset ring-blue-400/20">
                   <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-blue-400" />
@@ -799,6 +823,27 @@ export default function DashboardPage() {
           onFileSelected={handleFileSelected}
           isLoading={isCreating}
         />
+        {/* Inline, non-modal insufficient-funds message (ADR 0004 child 1,
+            AC-3) — replaces the removed confirm panel's disclosure. Neither
+            POST /api/projects nor extraction ever runs while this shows. */}
+        {insufficientFundsMessage && (
+          <div
+            id="insufficient-funds-message"
+            className="mt-4 flex items-center gap-2.5 rounded-xl border border-red-500/20 bg-red-500/5 px-4 py-3.5 text-sm text-red-400 backdrop-blur-md"
+          >
+            <svg className="h-4 w-4 shrink-0 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+            <span className="flex-1">{insufficientFundsMessage}</span>
+            <button
+              type="button"
+              onClick={() => window.open(WALLET_DASHBOARD_URL, "_blank")}
+              className="shrink-0 rounded-lg bg-red-500/10 px-3 py-1.5 text-xs font-semibold text-red-300 hover:bg-red-500/20 transition-colors cursor-pointer"
+            >
+              Add funds
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Project List */}
@@ -861,10 +906,10 @@ export default function DashboardPage() {
                   ? null
                   : activeUpload.step === "transcribing"
                     ? estimateTranscribePercent(
-                        activeUpload.startedAt,
-                        project.durationMs,
-                        nowTick
-                      )
+                      activeUpload.startedAt,
+                      project.durationMs,
+                      nowTick
+                    )
                     : activeUpload.percent;
               const jobLabel =
                 activeUpload?.step === "extracting"
@@ -915,13 +960,14 @@ export default function DashboardPage() {
                           className={`absolute left-3 top-3 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold backdrop-blur-md ${status.chip} ${status.text}`}
                         >
                           <span
-                            className={`h-1.5 w-1.5 rounded-full ${status.dot} ${
-                              project.transcriptStatus === "processing"
-                                ? "animate-pulse"
-                                : ""
-                            }`}
+                            className={`h-1.5 w-1.5 rounded-full ${status.dot} ${project.transcriptStatus === "processing"
+                              ? "animate-pulse"
+                              : ""
+                              }`}
                           />
-                          {status.label}
+                          {project.transcriptStatus === "ready"
+                            ? readyLabelFor(project)
+                            : status.label}
                         </span>
                       )}
 
@@ -969,30 +1015,30 @@ export default function DashboardPage() {
                       server-side, so this re-prompts for the file. */}
                   {(project.transcriptStatus === "failed" ||
                     project.transcriptStatus === "idle") && (
-                    <div className="px-4 pb-4">
-                      <button
-                        onClick={(e) => handleRetryClick(e, project)}
-                        className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-white/[0.03] hover:bg-blue-500/10 border border-white/5 hover:border-blue-500/20 px-3 py-2 text-xs font-semibold text-zinc-300 hover:text-white transition-all duration-200 cursor-pointer"
-                      >
-                        <svg
-                          className="h-3.5 w-3.5 text-zinc-400 group-hover:text-blue-400 transition-colors"
-                          fill="none"
-                          stroke="currentColor"
-                          viewBox="0 0 24 24"
+                      <div className="px-4 pb-4">
+                        <button
+                          onClick={(e) => handleRetryClick(e, project)}
+                          className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-white/[0.03] hover:bg-blue-500/10 border border-white/5 hover:border-blue-500/20 px-3 py-2 text-xs font-semibold text-zinc-300 hover:text-white transition-all duration-200 cursor-pointer"
                         >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2}
-                            d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                          />
-                        </svg>
-                        {project.transcriptStatus === "failed"
-                          ? "Retry transcription"
-                          : "Start transcription"}
-                      </button>
-                    </div>
-                  )}
+                          <svg
+                            className="h-3.5 w-3.5 text-zinc-400 group-hover:text-blue-400 transition-colors"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                            />
+                          </svg>
+                          {project.transcriptStatus === "failed"
+                            ? "Retry transcription"
+                            : "Start transcription"}
+                        </button>
+                      </div>
+                    )}
 
                   {/* Delete — opens the confirmation modal; nothing is
                       deleted until the user confirms there. */}
