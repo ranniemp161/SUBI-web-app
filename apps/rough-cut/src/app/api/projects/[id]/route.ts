@@ -8,7 +8,7 @@ import { settleHold } from "@/lib/credits";
 import { patchProjectSchema } from "@/lib/validation";
 import { readRateLimit } from "@/lib/rate-limit";
 import { reportError } from "@/lib/observability";
-import * as jsonpatch from "fast-json-patch";
+import { applyPatch } from "rfc6902";
 
 /**
  * GET /api/projects/:id — Get a single project with full details.
@@ -105,18 +105,14 @@ export async function PATCH(
 
     if (edlPatch !== undefined && project.edl) {
       try {
-        // We clone project.edl just in case, though applyPatch handles mutations safely
-        // when mutateDocument is false (which is the default).
-        // The zod schema validates each operation's shape loosely; the
-        // validate=true argument makes applyPatch enforce full JSON Patch
-        // semantics (required value/from per op) at runtime, so this
-        // narrowing cast is safe.
-        const newEdl = jsonpatch.applyPatch(
-          project.edl,
-          edlPatch as jsonpatch.Operation[],
-          true,
-          false
-        ).newDocument;
+        const newEdl = JSON.parse(JSON.stringify(project.edl));
+        const errors = applyPatch(newEdl, edlPatch);
+        if (errors.some(e => e !== null)) {
+          return NextResponse.json(
+            { error: "Invalid EDL patch." },
+            { status: 400 }
+          );
+        }
         updateData.edl = newEdl;
       } catch (patchErr) {
         return NextResponse.json(
@@ -139,7 +135,7 @@ export async function PATCH(
       .where(eq(projects.id, id))
       .returning();
 
-    return NextResponse.json(updated);
+    return NextResponse.json({ success: true, updatedAt: updated.updatedAt });
   } catch (error) {
     reportError("Error updating project", error);
     return NextResponse.json(

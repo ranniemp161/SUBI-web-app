@@ -78,7 +78,7 @@ import {
 import { applyAiCuts, type AiCutRun } from "@/lib/ai-cuts";
 import { ConfirmDialog } from "@repo/ui";
 import { getPusherClient } from "@/lib/pusher";
-import { compare } from "fast-json-patch";
+import { createPatch } from "rfc6902";
 
 // A project holds at most this many stored AI Cut runs at once (ADR 0002-ai-cut-paid-rerun).
 const AI_CUT_RUN_LIMIT = 3;
@@ -343,7 +343,7 @@ export default function EditorPage() {
       
       if (lastSavedEdlRef.current) {
         // We have a baseline to diff against. Send a patch.
-        const patch = compare(lastSavedEdlRef.current, targetEdl);
+        const patch = createPatch(lastSavedEdlRef.current, targetEdl);
         // Only send a request if there is an actual difference.
         if (patch.length === 0) {
           setSavedAt("saved");

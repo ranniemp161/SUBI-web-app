@@ -63,13 +63,18 @@ export const createProjectSchema = z.strictObject({
   fileType: z.string().max(100).nullable().optional(),
 });
 
-// JSON Patch schema for efficient EDL updates
-const jsonPatchOperationSchema = z.object({
-  op: z.enum(["add", "remove", "replace", "move", "copy", "test"]),
-  path: z.string(),
-  value: z.any().optional(),
-  from: z.string().optional(),
-});
+// JSON Patch schema for efficient EDL updates. Discriminated on `op` so the
+// inferred type lines up field-for-field with rfc6902's `Operation` union
+// (each op has different required fields — e.g. "move"/"copy" need `from`,
+// not `value`) instead of collapsing to one loose shape `applyPatch` rejects.
+const jsonPatchOperationSchema = z.discriminatedUnion("op", [
+  z.object({ op: z.literal("add"), path: z.string(), value: z.any() }),
+  z.object({ op: z.literal("remove"), path: z.string() }),
+  z.object({ op: z.literal("replace"), path: z.string(), value: z.any() }),
+  z.object({ op: z.literal("move"), path: z.string(), from: z.string() }),
+  z.object({ op: z.literal("copy"), path: z.string(), from: z.string() }),
+  z.object({ op: z.literal("test"), path: z.string(), value: z.any() }),
+]);
 
 // PATCH /api/projects/:id — every field optional; only those present are
 // applied. strictObject rejects unexpected top-level keys.
