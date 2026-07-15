@@ -671,13 +671,13 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!processingKey) return;
     const ids = processingKey.split(",");
-    
+
     const pusher = getPusherClient();
     if (!pusher) return;
 
     const channels = ids.map((id) => {
       const channel = pusher.subscribe(id);
-      
+
       channel.bind("transcript_status", (data: { status: "ready" | "failed" }) => {
         if (data.status !== "ready" && data.status !== "failed") return;
 
@@ -686,14 +686,14 @@ export default function DashboardPage() {
             p.id === id ? { ...p, transcriptStatus: data.status } : p
           )
         );
-        
+
         fetchCredits();
         setActiveUploads((prev) => {
           const copy = { ...prev };
           delete copy[id];
           return copy;
         });
-        
+
         const fileName = projectsRef.current.find((p) => p.id === id)?.fileName;
         if (data.status === "ready") {
           toast.success("Transcript ready", {
@@ -709,7 +709,7 @@ export default function DashboardPage() {
           });
         }
       });
-      
+
       return { id, channel };
     });
 
@@ -787,7 +787,7 @@ export default function DashboardPage() {
       <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold tracking-tight text-foreground sm:text-4xl">
-            Step 1: Audio Extraction and Transcription
+            Step 1: Upload your video
           </h1>
           <p className="mt-2 text-foreground/50">
             Upload your video and we&apos;ll extract the audio and transcribe it before you can proceed to step 2.⬇️

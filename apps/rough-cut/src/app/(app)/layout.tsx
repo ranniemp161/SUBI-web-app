@@ -3,6 +3,7 @@
 import { UserButton } from "@clerk/nextjs";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { FeedbackButton } from "@/components/feedback-button";
 
 /**
  * Layout for authenticated app pages (dashboard, editor, etc.).
@@ -64,6 +65,7 @@ export default function AppLayout({
         </div>
       </nav>
       <main className="flex-1">{children}</main>
+      <FeedbackButton variant="floating" />
     </div>
   );
 }
