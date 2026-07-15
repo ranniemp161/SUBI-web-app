@@ -139,20 +139,23 @@ describe("POST /api/webhooks/stripe — request guards", () => {
     expect(rateLimit).not.toHaveBeenCalled();
   });
 
-  it("429 once the per-IP limit is exceeded, before the signature is verified", async () => {
+  it("429 once the per-IP limit is exceeded (checked after the signature passes)", async () => {
     state.rateAllowed = false;
     const res = await POST(req({ ip: "198.51.100.30" }));
     expect(res.status).toBe(429);
     expect(rateLimit).toHaveBeenCalledWith("webhook-stripe:198.51.100.30", 120, 60);
   });
 
-  it("400 on an invalid signature", async () => {
+  it("400 on an invalid signature, without consuming a rate-limit slot", async () => {
     state.constructImpl = () => {
       throw new Error("bad signature");
     };
     const res = await POST(req());
     expect(res.status).toBe(400);
     expect(depositPurchase).not.toHaveBeenCalled();
+    // Signature is verified BEFORE the limiter so unsigned junk can't burn
+    // the Upstash command quota (fail-open caps depend on it staying alive).
+    expect(rateLimit).not.toHaveBeenCalled();
   });
 });
 

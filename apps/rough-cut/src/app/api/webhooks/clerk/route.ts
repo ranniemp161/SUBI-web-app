@@ -39,16 +39,13 @@ export async function POST(request: Request) {
     );
   }
 
-  const limit = await ipRateLimit(request, "webhook-clerk", WEBHOOK_LIMIT, WEBHOOK_WINDOW_SECONDS);
-  if (!limit.allowed) {
-    return NextResponse.json(
-      { error: "Too many webhook requests." },
-      { status: 429 }
-    );
-  }
-
   const body = await request.text();
 
+  // Signature BEFORE the rate limit: svix verification is pure CPU, while the
+  // limiter costs a Redis command. Checked in this order, unsigned junk can't
+  // burn the Upstash quota — whose exhaustion would flip every fail-open
+  // abuse cap in both apps to "allow" (see the 2026-07-15 DDoS review). The
+  // limiter then only ever counts Clerk-signed traffic.
   let event: { type: string; data: Record<string, unknown> };
 
   try {
@@ -62,6 +59,14 @@ export async function POST(request: Request) {
     return NextResponse.json(
       { error: "Invalid webhook signature." },
       { status: 400 }
+    );
+  }
+
+  const limit = await ipRateLimit(request, "webhook-clerk", WEBHOOK_LIMIT, WEBHOOK_WINDOW_SECONDS);
+  if (!limit.allowed) {
+    return NextResponse.json(
+      { error: "Too many webhook requests." },
+      { status: 429 }
     );
   }
 
