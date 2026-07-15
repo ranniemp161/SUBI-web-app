@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { X, Video, FileVideo2, FileText, Download, Loader2 } from "lucide-react";
+import { X, Video, FileVideo2, FileText, Download, Loader2, Info } from "lucide-react";
 import { cn } from "@repo/ui";
 
 export type ExportFormat = "mp4" | "fcpxml" | "cmx3600";
@@ -157,6 +157,12 @@ export function ExportModal({
                   {res === "source" ? "Source" : `${res}p`}
                 </button>
               ))}
+            </div>
+            <div className="mt-4 flex gap-3 rounded-lg border border-amber-500/20 bg-amber-500/10 p-3 text-sm text-amber-600/90 dark:text-amber-400/90">
+              <Info className="mt-0.5 h-4 w-4 shrink-0" />
+              <p>
+                <strong>Heavy File Warning:</strong> For videos over 1 hour or in 4K resolution, we highly recommend exporting to <strong>.fcpxml</strong> or <strong>.edl</strong>. MP4 exports process entirely on your device and can take a very long time for heavy files, consuming significant battery and CPU.
+              </p>
             </div>
             <p className="text-xs text-foreground/50 mt-2">
               Downscales larger sources, never upscales.
