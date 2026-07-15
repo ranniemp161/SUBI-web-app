@@ -78,6 +78,7 @@ import {
 } from "@/lib/edl";
 import { applyAiCuts, type AiCutRun } from "@/lib/ai-cuts";
 import { ConfirmDialog } from "@repo/ui";
+import { FeedbackButton } from "@/components/feedback-button";
 import { getPusherClient } from "@/lib/pusher";
 import { createPatch } from "rfc6902";
 
@@ -1912,6 +1913,7 @@ function TopBar({
       </div>
 
       <div className="flex items-center gap-2">
+        <FeedbackButton variant="icon" />
         <div className="flex items-center rounded-lg border border-foreground/10">
           <button type="button" onClick={onUndo} disabled={disabled} aria-label="Undo" className={iconBtn}>
             <Undo2 className="h-4 w-4" />

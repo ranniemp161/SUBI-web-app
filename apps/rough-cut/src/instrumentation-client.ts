@@ -10,11 +10,11 @@ if (process.env.NEXT_PUBLIC_SENTRY_DSN) {
     integrations: [
       Sentry.feedbackIntegration({
         colorScheme: "system",
-        buttonLabel: "Report a bug / Suggest",
+        autoInject: false,
         submitButtonLabel: "Send",
-        formTitle: "Report a bug or share a suggestion",
+        formTitle: "Request a feature or share feedback",
         messagePlaceholder:
-          "What went wrong, or what would make Ruff Cut better? Steps to reproduce help a lot.",
+          "What feature would make Ruff Cut better for you? The more detail the better.",
         showBranding: false,
       }),
     ],

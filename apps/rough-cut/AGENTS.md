@@ -20,6 +20,7 @@ spends tokens and deep-links to Wallet to buy more.
 | `src/lib/blob.ts` | Vercel Blob direct-upload + delete-after-transcription |
 | `src/lib/pusher.ts` | Server (`pusherServer`) and client (`getPusherClient()`) Pusher instances — both live in this one file, so any `"use client"` code importing the client helper also pulls in the server SDK; see Conventions below |
 | `src/lib/export/*`, `src/workers/export-worker.ts` | Client-side WebCodecs MP4 export (Chromium-only, see `LIMITATIONS.md`), plus browser-agnostic NLE interchange export (`fcpxml.ts`, `cmx3600.ts`) sharing `timebase.ts`/`filename.ts` frame-math and filename-sanitizing helpers, downloaded via `src/lib/download-text-file.ts` |
+| `src/components/export-modal.tsx` | The single Export dialog (MP4, FCPXML, CMX 3600 EDL, plus MP4 resolution) that the export cluster in `dashboard/[id]/page.tsx` now opens; replaced the old inline `StyledSelect`/`ExportFormatMenu` dropdown pair |
 | `src/lib/authz.ts` | Write-route authorization — the `users` row (provisioned by the Clerk webhook or its fallback) IS the authorization; there is no separate access-code verify route (`src/lib/access-codes.ts` no longer exists) |
 | `src/app/api/webhooks/clerk/route.ts` | Clerk user-sync webhook (svix-verified) |
 | `LIMITATIONS.md` (repo root) | Deliberate constraints — export browser support, no server-side video storage, rate-limit tuning, Sentry env-gating |
@@ -75,10 +76,19 @@ npm -w @repo/rough-cut typecheck
   gate) and `claimAiCutSlot` (lib/projects.ts, `ai_cut_claim_at` timestamp claim). On any
   failure after the hold, call the corresponding release function to unlock.
 - **Observability**: Sentry (`@sentry/nextjs`) is wired but env-gated —
-  no-op until `SENTRY_DSN`/`NEXT_PUBLIC_SENTRY_DSN` are set.
+  no-op until `SENTRY_DSN`/`NEXT_PUBLIC_SENTRY_DSN` are set. When set, `instrumentation-client.ts`
+  also turns on Sentry's feedback widget (`Sentry.feedbackIntegration`), a floating
+  "Request a Feature" button letting a signed-in user send free-text feedback straight to Sentry.
+- **AI Cut runs on the Edge runtime and streams its response.** `api/projects/[id]/ai-cut/route.ts`
+  sets `export const runtime = "edge"` and returns a `ReadableStream` that emits a space-character
+  heartbeat every 5 seconds while Gemini thinks, so Vercel's proxy (10s limit on Hobby) doesn't
+  kill the connection before the up-to-300s `maxDuration` completes. Because the HTTP 200 is sent
+  before the real result is known, a failure that happens after the stream opens (transcript too
+  long, Gemini error) is reported as `{ error }` inside the 200 JSON body, not an HTTP error status —
+  callers must check the parsed body for an `error` field even on a 200.
 - Tests are colocated `*.test.ts(x)` next to source, run with Vitest.
 - **ESLint & Mocking**: When mocking components with `forwardRef` in tests, avoid anonymous arrow functions. Use named function expressions (e.g. `forwardRef(function VideoPlayerStub() {})`) to satisfy `react/display-name`. Do not declare unused arguments in callback parameters (e.g. `props`, `ref`, `url`, `init`) to satisfy `@typescript-eslint/no-unused-vars`.
-- **Dropdowns/menus**: build on Radix (`@radix-ui/react-select` for a value picker, `@radix-ui/react-dropdown-menu` for an action menu), never hand-roll outside-click/Escape/focus logic — the same precedent `packages/ui/src/confirm-dialog.tsx` set for dialogs. See the export cluster's `StyledSelect`/`ExportFormatMenu` in `src/app/(app)/dashboard/[id]/page.tsx` for the pattern.
+- **Dropdowns/menus**: build on Radix (`@radix-ui/react-select` for a value picker, `@radix-ui/react-dropdown-menu` for an action menu), never hand-roll outside-click/Escape/focus logic — the same precedent `packages/ui/src/confirm-dialog.tsx` set for dialogs. The export cluster's old `StyledSelect`/`ExportFormatMenu` Radix pair was consolidated into `src/components/export-modal.tsx` (a plain custom dialog, not Radix); still use Radix for any new standalone dropdown or menu control.
 
 ## Agent skills
 - Declined: Radix UI tooling (`radix-ui-design-system` skill, `radix-mcp-server` MCP) — Radix's own docs plus the local `confirm-dialog.tsx`/`StyledSelect` precedent are enough for now.
@@ -93,6 +103,13 @@ npm -w @repo/rough-cut typecheck
 - `src/app/api/projects/[id]/status` still exists but nothing calls it client-side anymore
   (superseded by the Pusher `transcript_status` event) — don't assume it's the live status
   mechanism if you find it while reading the code.
+- The EDL autosave patch (client `createPatch` in `dashboard/[id]/page.tsx`, server `applyPatch` in
+  `api/projects/[id]/route.ts`) now runs on `rfc6902`, not `fast-json-patch` — the two libraries'
+  `Operation` types don't line up field-for-field, which is why `validation.ts`'s
+  `jsonPatchOperationSchema` is a `discriminatedUnion` on `op` rather than one loose shape.
+  `fast-json-patch` is still an unremoved dependency in `package.json` but nothing imports it anymore.
+- `PATCH /api/projects/:id` returns `{ success: true, updatedAt }`, not the full updated project —
+  don't add code that expects the response body to contain project fields.
 
 ## Related ADRs
 - `docs/adr/_root/0001-monorepo-wallet-architecture.md`
