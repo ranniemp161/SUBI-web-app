@@ -2,29 +2,60 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { Megaphone } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 
 type Props = { variant: "floating" | "icon" };
 
+type FeedbackIntegration = NonNullable<
+  ReturnType<NonNullable<typeof Sentry.getFeedback>>
+>;
+
+// getFeedback is only exported from the browser build of the SDK (the server
+// build @sentry/nextjs resolves to under Node/test module resolution has no
+// feedback API at all), so it's not guaranteed to be a function even client
+// side if the SDK hasn't finished loading yet.
+function getFeedbackSnapshot(): FeedbackIntegration | null {
+  return Sentry.getFeedback?.() ?? null;
+}
+
+// The server build has no feedback API at all, so the server never has an
+// integration to report — this must match the client's FIRST render exactly,
+// or React throws a hydration mismatch.
+function getServerSnapshot(): FeedbackIntegration | null {
+  return null;
+}
+
+// Sentry's feedback integration is registered during Sentry.init()
+// (instrumentation-client.ts), which runs before this subscription is set
+// up, so one re-check right after mount is enough to pick it up.
+function subscribeToFeedback(onStoreChange: () => void): () => void {
+  onStoreChange();
+  return () => {};
+}
+
 export function FeedbackButton({ variant }: Props) {
   const ref = useRef<HTMLButtonElement>(null);
-  const [ready, setReady] = useState(false);
+  // useSyncExternalStore (not state-in-an-effect) both keeps the first
+  // client render identical to the server's — avoiding a hydration mismatch
+  // — and reads Sentry's feedback integration the React-sanctioned way for
+  // an external value that becomes available after mount.
+  const feedback = useSyncExternalStore(
+    subscribeToFeedback,
+    getFeedbackSnapshot,
+    getServerSnapshot
+  );
 
   useEffect(() => {
-    // getFeedback is only exported from the browser build of the SDK (the
-    // server build @sentry/nextjs resolves to under Node/test module
-    // resolution has no feedback API at all), so it's not guaranteed to be
-    // a function even client-side if the SDK hasn't finished loading yet.
-    const feedback = Sentry.getFeedback?.();
+    // Runs after the commit that rendered the button (feedback became
+    // truthy), so ref.current is populated by the time attachTo needs it.
     if (!feedback || !ref.current) return;
     const unsubscribe = feedback.attachTo(ref.current);
-    setReady(true);
     return () => {
       if (typeof unsubscribe === "function") unsubscribe();
     };
-  }, []);
+  }, [feedback]);
 
-  if (!ready && !Sentry.getFeedback?.()) return null;
+  if (!feedback) return null;
 
   if (variant === "icon") {
     return (

@@ -83,22 +83,25 @@ describe("POST /api/webhooks/clerk — request guards", () => {
     expect(ipRateLimit).not.toHaveBeenCalled();
   });
 
-  it("429 once the per-IP limit is exceeded, before the signature is ever verified", async () => {
+  it("429 once the per-IP limit is exceeded (checked after the signature passes)", async () => {
     state.rateAllowed = false;
     state.verifyImpl = vi.fn(() => ({ type: "user.created", data: {} }));
     const res = await POST(req({}, { ip: "198.51.100.20" }));
     expect(res.status).toBe(429);
     // Note: the test mock now intercepts ipRateLimit, which takes the Request object directly
     expect(ipRateLimit).toHaveBeenCalledWith(expect.any(Request), "webhook-clerk", 120, 60);
-    expect(state.verifyImpl).not.toHaveBeenCalled();
+    expect(state.verifyImpl).toHaveBeenCalled();
   });
 
-  it("400 on an invalid signature", async () => {
+  it("400 on an invalid signature, without consuming a rate-limit slot", async () => {
     state.verifyImpl = () => {
       throw new Error("bad signature");
     };
     const res = await POST(req({}));
     expect(res.status).toBe(400);
+    // Signature is verified BEFORE the limiter so unsigned junk can't burn
+    // the Upstash command quota (fail-open caps depend on it staying alive).
+    expect(ipRateLimit).not.toHaveBeenCalled();
   });
 });
 
