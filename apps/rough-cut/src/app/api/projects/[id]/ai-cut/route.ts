@@ -16,7 +16,9 @@ import type { Transcript } from "@/lib/edl";
 
 // Gemini legitimately takes minutes on a long transcript with thinking enabled
 // (capped at 240s in ai-rough-cut.ts) — don't let the platform cut it off first.
+// Using Edge runtime bypasses the 10-second Hobby serverless limit for I/O waits.
 export const maxDuration = 300;
+export const runtime = "edge";
 
 /** Best-effort refund — a credits hiccup must never mask the real Gemini error. */
 async function refundAiCutQuietly(
