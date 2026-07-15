@@ -800,6 +800,18 @@ export default function EditorPage() {
         });
         return;
       }
+
+      // If the Vercel Proxy heartbeat stream started successfully (200 OK) but Gemini failed 
+      // mid-stream, the error is shipped inside the JSON payload.
+      const lateError = (data as { error?: string } | null)?.error;
+      if (lateError) {
+        toast.error("AI cut failed", {
+          id: "ai-cut",
+          description: lateError,
+        });
+        return;
+      }
+
       const run = data as AiCutRun;
       setProject((prev) =>
         prev
