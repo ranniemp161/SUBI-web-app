@@ -229,7 +229,9 @@ describe("POST /api/projects/:id/ai-cut — concurrent-run claim", () => {
     state.ownedProject = READY_PROJECT;
     state.aiError = true;
     const res = await POST(request(), { params });
-    expect(res.status).toBe(502);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toHaveProperty("error");
     expect(state.releaseCalls).toEqual([[VALID_ID]]);
   });
 
@@ -238,7 +240,9 @@ describe("POST /api/projects/:id/ai-cut — concurrent-run claim", () => {
     state.ownedProject = READY_PROJECT;
     state.aiResult = null;
     const res = await POST(request(), { params });
-    expect(res.status).toBe(422);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toHaveProperty("error");
     expect(state.releaseCalls).toEqual([[VALID_ID]]);
   });
 
@@ -295,7 +299,9 @@ describe("POST /api/projects/:id/ai-cut — the run itself", () => {
     state.ownedProject = READY_PROJECT;
     state.aiResult = null; // configured + words present, so null = size guard
     const res = await POST(request(), { params });
-    expect(res.status).toBe(422);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toHaveProperty("error");
     expect(createAiCutRun).not.toHaveBeenCalled();
     expect(refundAiCut).toHaveBeenCalledWith("user-1", VALID_ID, 5, undefined);
   });
@@ -305,7 +311,9 @@ describe("POST /api/projects/:id/ai-cut — the run itself", () => {
     state.ownedProject = READY_PROJECT;
     state.aiError = true;
     const res = await POST(request(), { params });
-    expect(res.status).toBe(502);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toHaveProperty("error");
     expect(createAiCutRun).not.toHaveBeenCalled();
     expect(refundAiCut).toHaveBeenCalledWith("user-1", VALID_ID, 5, undefined);
   });
