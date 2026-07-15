@@ -19,7 +19,7 @@ import {
 import { rateLimit } from "@/lib/rate-limit";
 import { reportError } from "@/lib/observability";
 import { deleteBlobQuietly, isOwnBlobUrl } from "@/lib/blob";
-import { pusherServer } from "@/lib/pusher";
+import { pusherServer, projectChannel } from "@/lib/pusher";
 import {
   extractDeepgramError,
   normalizeDeepgram,
@@ -255,7 +255,7 @@ export async function POST(request: Request) {
       await deleteBlobQuietly(blobUrl);
 
       try {
-        await pusherServer.trigger(projectId, "transcript_status", { status: "failed" });
+        await pusherServer.trigger(projectChannel(projectId), "transcript_status", { status: "failed" });
       } catch (pusherErr) {
         console.error("Failed to trigger Pusher event for failed transcription", pusherErr);
       }
@@ -298,7 +298,7 @@ export async function POST(request: Request) {
 
     if (useSync) {
       try {
-        await pusherServer.trigger(projectId, "transcript_status", { status: "ready" });
+        await pusherServer.trigger(projectChannel(projectId), "transcript_status", { status: "ready" });
       } catch (pusherErr) {
         console.error("Failed to trigger Pusher event for sync transcription", pusherErr);
       }
@@ -320,7 +320,7 @@ export async function POST(request: Request) {
     await deleteBlobQuietly(blobUrl);
 
     try {
-      await pusherServer.trigger(projectId, "transcript_status", { status: "failed" });
+      await pusherServer.trigger(projectChannel(projectId), "transcript_status", { status: "failed" });
     } catch (pusherErr) {
       console.error("Failed to trigger Pusher event for failed transcription", pusherErr);
     }

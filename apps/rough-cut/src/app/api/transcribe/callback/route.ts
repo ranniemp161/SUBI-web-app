@@ -8,7 +8,7 @@ import { secondsFromDeepgramDuration, settleHoldQuietly } from "@/lib/credits";
 import { reportError } from "@/lib/observability";
 import { ipRateLimit } from "@/lib/ip-rate-limit";
 import { deleteBlobQuietly } from "@/lib/blob";
-import { pusherServer } from "@/lib/pusher";
+import { pusherServer, projectChannel } from "@/lib/pusher";
 
 // Headroom for parsing large Deepgram payloads on long videos.
 export const maxDuration = 60;
@@ -123,8 +123,8 @@ export async function POST(request: Request) {
 
     // Notify clients that transcription has finished
     try {
-      await pusherServer.trigger(projectId, "transcript_status", { 
-        status: failed ? "failed" : "ready" 
+      await pusherServer.trigger(projectChannel(projectId), "transcript_status", {
+        status: failed ? "failed" : "ready"
       });
     } catch (pusherErr) {
       console.error("Failed to trigger Pusher event", pusherErr);
@@ -149,7 +149,7 @@ export async function POST(request: Request) {
     if (blobUrl) await deleteBlobQuietly(blobUrl);
 
     try {
-      await pusherServer.trigger(projectId, "transcript_status", { status: "failed" });
+      await pusherServer.trigger(projectChannel(projectId), "transcript_status", { status: "failed" });
     } catch (pusherErr) {
       console.error("Failed to trigger Pusher event", pusherErr);
     }

@@ -104,6 +104,7 @@ const pusherHandlers = vi.hoisted(
 );
 
 vi.mock("@/lib/pusher", () => ({
+  projectChannel: (projectId: string) => `private-${projectId}`,
   getPusherClient: () => ({
     subscribe: (channelName: string) => ({
       bind: (event: string, callback: (data: unknown) => void) => {
@@ -380,12 +381,12 @@ describe("EditorPage — auto-cut chain on open", () => {
     await screen.findByText(/transcribing your video/i);
     expect(projectCalls).toHaveLength(1);
     await waitFor(() =>
-      expect(pusherHandlers.get("proj-1:transcript_status")).toBeDefined()
+      expect(pusherHandlers.get("private-proj-1:transcript_status")).toBeDefined()
     );
 
     // Deliver the ready event twice, back to back, before the reload settles —
     // the double-fire/replay shape of the race.
-    const handlers = pusherHandlers.get("proj-1:transcript_status")!;
+    const handlers = pusherHandlers.get("private-proj-1:transcript_status")!;
     handlers.forEach((handler) => handler({ status: "ready" }));
     handlers.forEach((handler) => handler({ status: "ready" }));
 

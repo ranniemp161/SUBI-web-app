@@ -79,7 +79,7 @@ import {
 import { applyAiCuts, type AiCutRun } from "@/lib/ai-cuts";
 import { ConfirmDialog } from "@repo/ui";
 import { FeedbackButton } from "@/components/feedback-button";
-import { getPusherClient } from "@/lib/pusher";
+import { getPusherClient, projectChannel } from "@/lib/pusher";
 import { createPatch } from "rfc6902";
 
 // A project holds at most this many stored AI Cut runs at once (ADR 0002-ai-cut-paid-rerun).
@@ -298,7 +298,7 @@ export default function EditorPage() {
     const pusher = getPusherClient();
     if (!pusher) return;
 
-    const channel = pusher.subscribe(id);
+    const channel = pusher.subscribe(projectChannel(id));
     channel.bind("transcript_status", (data: { status: "ready" | "failed" }) => {
       if (!settled && (data.status === "ready" || data.status === "failed")) {
         settled = true;
@@ -308,7 +308,7 @@ export default function EditorPage() {
 
     return () => {
       channel.unbind("transcript_status");
-      pusher.unsubscribe(id);
+      pusher.unsubscribe(projectChannel(id));
     };
   }, [transcriptStatus, id]);
 
