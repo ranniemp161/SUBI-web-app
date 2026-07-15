@@ -17,8 +17,10 @@ spends tokens and deep-links to Wallet to buy more.
 | `src/lib/rate-limit.ts` | App-specific buckets (`readRateLimit`, `aiCutRateLimit`) wrapping `@repo/server-shared`'s fixed-window limiter, Upstash Redis (Vercel KV) backed — **not** Postgres (`rate_limits` table was dropped, see `packages/db` migration `0001`) |
 | `src/lib/ip-rate-limit.ts` | Per-IP limiter for the 3 routes in `proxy.ts`'s public list (no session to key on) |
 | `src/lib/deepgram.ts`, `src/lib/ai-rough-cut.ts`, `src/lib/ai-cuts.ts` | Transcription + AI cut-suggestion pipeline |
-| `src/lib/blob.ts` | Vercel Blob direct-upload + delete-after-transcription |
-| `src/lib/pusher.ts` | Server (`pusherServer`) and client (`getPusherClient()`) Pusher instances — both live in this one file, so any `"use client"` code importing the client helper also pulls in the server SDK; see Conventions below |
+| `src/lib/blob.ts` | Vercel Blob direct-upload + delete-after-transcription — server-only (`import "server-only"` guard); a client component that needs `uploadPathnameForProject` must import it from `src/lib/blob-path.ts` instead, or webpack silently bundles this file's `@vercel/blob`/Sentry imports into the browser |
+| `src/lib/blob-path.ts` | `uploadPathnameForProject` — pure, zero-dependency, the only piece of the blob-path convention a client component (`dashboard/page.tsx`'s direct-upload flow) is allowed to import |
+| `src/lib/pusher.ts` | Server (`pusherServer`) and client (`getPusherClient()`) Pusher instances plus `projectChannel()` (the `private-<projectId>` channel name both sides must use) — all live in this one file, so any `"use client"` code importing the client helper also pulls in the server SDK; see Conventions below |
+| `src/app/api/pusher/auth/route.ts` | Countersigns private-channel subscriptions — only the project's owner gets a signature, which is what keeps third parties (who hold the public `NEXT_PUBLIC_PUSHER_KEY` from the JS bundle) off our Pusher quota |
 | `src/lib/export/*`, `src/workers/export-worker.ts` | Client-side WebCodecs MP4 export (Chromium-only, see `LIMITATIONS.md`), plus browser-agnostic NLE interchange export (`fcpxml.ts`, `cmx3600.ts`) sharing `timebase.ts`/`filename.ts` frame-math and filename-sanitizing helpers, downloaded via `src/lib/download-text-file.ts` |
 | `src/components/export-modal.tsx` | The single Export dialog (MP4, FCPXML, CMX 3600 EDL, plus MP4 resolution) that the export cluster in `dashboard/[id]/page.tsx` now opens; replaced the old inline `StyledSelect`/`ExportFormatMenu` dropdown pair |
 | `src/lib/authz.ts` | Write-route authorization — the `users` row (provisioned by the Clerk webhook or its fallback) IS the authorization; there is no separate access-code verify route (`src/lib/access-codes.ts` no longer exists) |
@@ -59,7 +61,9 @@ npm -w @repo/rough-cut typecheck
 - **Transcript status reaches the client via Pusher, not polling.** The dashboard's
   project list and the studio page both used to poll `/api/projects/[id]/status` on an
   interval; that's gone. The server fires a `transcript_status` event (`{ status: "ready" | "failed" }`)
-  on a channel named for the project id from three places: `api/transcribe/callback/route.ts`
+  on the project's **private** channel — always via `projectChannel(projectId)`
+  (`private-<projectId>`), never a bare id, since Pusher only enforces the
+  `/api/pusher/auth` ownership check on `private-` channels — from three places: `api/transcribe/callback/route.ts`
   (the async/production path), and `api/transcribe/deepgram/route.ts` (the local-sync path and
   its own early-failure branches). Any new failure path added to either route should also fire
   (or deliberately skip) this event — a client subscribed via `getPusherClient()` has no

@@ -11,8 +11,8 @@ import { WALLET_DASHBOARD_URL } from "@/lib/env";
 import { formatUsd, chargeMicrosForSeconds } from "@repo/ui";
 import { formatDuration, formatDate } from "@/lib/utils";
 import { extractAudioForTranscription } from "@/lib/audio-extract";
-import { uploadPathnameForProject } from "@/lib/blob";
-import { getPusherClient } from "@/lib/pusher";
+import { uploadPathnameForProject } from "@/lib/blob-path";
+import { getPusherClient, projectChannel } from "@/lib/pusher";
 
 interface Project {
   id: string;
@@ -676,7 +676,7 @@ export default function DashboardPage() {
     if (!pusher) return;
 
     const channels = ids.map((id) => {
-      const channel = pusher.subscribe(id);
+      const channel = pusher.subscribe(projectChannel(id));
 
       channel.bind("transcript_status", (data: { status: "ready" | "failed" }) => {
         if (data.status !== "ready" && data.status !== "failed") return;
@@ -716,7 +716,7 @@ export default function DashboardPage() {
     return () => {
       channels.forEach(({ id, channel }) => {
         channel.unbind("transcript_status");
-        pusher.unsubscribe(id);
+        pusher.unsubscribe(projectChannel(id));
       });
     };
   }, [processingKey, fetchCredits]);
