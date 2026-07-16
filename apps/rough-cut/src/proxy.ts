@@ -40,11 +40,21 @@ export default clerkMiddleware(async (auth, request) => {
   }
 });
 
+// The machine-to-machine routes (Clerk webhook, cron sweeps, the Deepgram
+// callback) are excluded at the MATCHER level so the Edge Middleware never
+// invokes for them — they carry their own gates (svix signature, CRON_SECRET,
+// per-project callback token + IP rate limit inside the handlers), so Clerk
+// adds nothing but a billed invocation. They stay listed in `isPublicRoute`
+// above as a second layer: if a matcher edit ever re-includes them, they must
+// still not be 401'd by Clerk. Each exclusion ends in `(?:/|$)` so prefix
+// cousins (e.g. /api/cron-admin) are NOT excluded.
 export const config = {
   matcher: [
-    // Skip Next.js internals and all static files, unless found in search params
-    "/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
-    // Always run for API routes
-    "/(api|trpc)(.*)",
+    // Skip Next.js internals, static files, and the machine-to-machine routes
+    "/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)|api/webhooks/clerk(?:/|$)|api/cron(?:/|$)|api/transcribe/callback(?:/|$)).*)",
+    // Safety net: an API route whose path ends in a static-looking extension
+    // (e.g. a future /api/export/foo.csv) would be skipped by the entry above;
+    // this forces middleware back on for it — with the same exclusions.
+    "/(api|trpc)((?!/webhooks/clerk(?:/|$)|/cron(?:/|$)|/transcribe/callback(?:/|$)).*)",
   ],
 };
