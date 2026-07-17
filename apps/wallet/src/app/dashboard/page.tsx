@@ -50,6 +50,7 @@ export default async function DashboardPage() {
         deltaMicros: creditLedger.deltaMicros,
         createdAt: creditLedger.createdAt,
         fileName: projects.fileName,
+        projectId: creditLedger.projectId,
       })
       .from(creditLedger)
       .leftJoin(projects, eq(creditLedger.projectId, projects.id))
@@ -67,6 +68,7 @@ export default async function DashboardPage() {
     deltaMicros: entry.deltaMicros,
     createdAt: entry.createdAt.toISOString(),
     fileName: entry.fileName,
+    projectId: entry.projectId,
     // Add default card info for credit purchases
     cardInfo: savedCard ? `${savedCard.brand} ••••${savedCard.last4}` : null,
   }));

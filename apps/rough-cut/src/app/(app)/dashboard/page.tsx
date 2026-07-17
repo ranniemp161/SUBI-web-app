@@ -258,7 +258,7 @@ export default function DashboardPage() {
   useEffect(() => {
     async function fetchProjects() {
       try {
-        const { data, nextCursor: newCursor } = await loadMoreProjects();
+        const { data } = await loadMoreProjects();
         if (data) {
           setProjects(data as Project[]);
           // A project already mid-transcription (dashboard reloaded while a
