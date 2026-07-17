@@ -11,14 +11,16 @@
  */
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #111111;
+  --foreground: #f2f2f2;
   /* Accent tokens — used by shared components (e.g. ConfirmDialog's confirm
      action) so they inherit the ecosystem palette instead of hardcoding blue. */
-  --accent: #2563eb; /* blue-600 */
-  --accent-hover: #3b82f6; /* blue-500 */
-  --accent-foreground: #ffffff;
-  --accent-shadow: rgb(37 99 235 / 0.25);
+  --accent: #fffc00; /* Key Yellow */
+  --accent-hover: #2997ff; /* Interactive Blue */
+  --accent-foreground: #111111;
+  --accent-shadow: rgba(255, 252, 0, 0.25);
+  --surface: #2c2c2c;
+  --muted: #aaaaaa;
 }
 
 @theme inline {
@@ -27,21 +29,23 @@
   --color-accent: var(--accent);
   --color-accent-hover: var(--accent-hover);
   --color-accent-foreground: var(--accent-foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-surface: var(--surface);
+  --color-muted: var(--muted);
+  --font-sans: var(--font-dm-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-heading: var(--font-space-grotesk), ui-sans-serif, system-ui, sans-serif;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --background: #111111;
+    --foreground: #f2f2f2;
   }
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans);
 }
 
 /* Keyboard-only focus ring. Mouse clicks don't trigger :focus-visible, so this
@@ -54,7 +58,7 @@ body {
   [role="button"]:focus-visible,
   [role="separator"]:focus-visible,
   [tabindex]:focus-visible {
-    outline: 2px solid rgb(59 130 246 / 0.9); /* blue-500 */
+    outline: 2px solid var(--accent-hover); /* blue */
     outline-offset: 2px;
   }
 }

@@ -9,8 +9,8 @@ vi.mock("@clerk/nextjs", () => ({
 }));
 
 vi.mock("next/font/google", () => ({
-  Geist: () => ({ variable: "font-geist" }),
-  Geist_Mono: () => ({ variable: "font-geist-mono" }),
+  DM_Sans: () => ({ variable: "font-dm-sans" }),
+  Space_Grotesk: () => ({ variable: "font-space-grotesk" }),
 }));
 
 vi.mock("@/lib/env", () => ({
@@ -26,9 +26,9 @@ describe("RootLayout", () => {
     );
     
     expect(screen.getByTestId("child")).toBeDefined();
-    expect(screen.getByText("Founder's Frame Wallet")).toBeDefined();
+    expect(screen.getByText("Founder's Frame Credits")).toBeDefined();
     
-    const backLink = screen.getByRole("link", { name: /back to rough cut/i });
+    const backLink = screen.getByRole("link", { name: /back to myfirstcut/i });
     expect(backLink.getAttribute("href")).toBe("http://localhost:3000");
     expect(screen.getByTestId("user-button")).toBeDefined();
   });

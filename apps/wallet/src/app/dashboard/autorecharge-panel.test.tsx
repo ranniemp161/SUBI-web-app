@@ -116,7 +116,7 @@ describe("AutorechargePanel", () => {
     );
     
     await user.click(screen.getByRole("button", { name: "Edit" }));
-    const saveButton = screen.getByRole("button", { name: /Save settings/i });
+    const saveButton = screen.getByRole("button", { name: /^Save$/i });
     await user.click(saveButton);
 
     await screen.findByText("Server error");

@@ -70,6 +70,12 @@ vi.mock("@/components/file-picker", () => ({
 }));
 
 import DashboardPage from "./page";
+import { loadMoreProjects } from "@/app/actions";
+import { type Mock } from "vitest";
+
+vi.mock("@/app/actions", () => ({
+  loadMoreProjects: vi.fn(),
+}));
 
 function jsonResponse(body: unknown, init?: { ok?: boolean; status?: number }) {
   return {
@@ -91,9 +97,6 @@ function stubFetch({
   createdProject?: unknown;
 } = {}) {
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
-    if (url === "/api/projects" && (!init || init.method === undefined)) {
-      return jsonResponse(projects);
-    }
     if (url === "/api/projects" && init?.method === "POST") {
       return jsonResponse(
         createdProject ?? {
@@ -112,6 +115,11 @@ function stubFetch({
     return jsonResponse({});
   });
   vi.stubGlobal("fetch", fetchMock);
+  
+  (loadMoreProjects as Mock).mockResolvedValue({
+    data: projects,
+  });
+  
   return fetchMock;
 }
 

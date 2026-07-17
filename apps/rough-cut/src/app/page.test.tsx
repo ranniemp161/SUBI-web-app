@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 
 vi.mock("next/font/google", () => ({
   Bricolage_Grotesque: () => ({ variable: "font-bricolage" }),
@@ -15,7 +15,7 @@ import LandingPage from "./page";
 describe("LandingPage", () => {
   it("renders the landing page", () => {
     const { getByText } = render(<LandingPage />);
-    expect(getByText("Ruff Cut")).toBeTruthy();
+    expect(screen.getAllByText(/MyFirstCut/i).length).toBeGreaterThan(0);
     expect(getByText("Questions, answered honestly")).toBeTruthy();
   });
 });

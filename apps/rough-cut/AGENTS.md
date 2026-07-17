@@ -59,8 +59,7 @@ npm -w @repo/rough-cut typecheck
   full-page loading state (no transcript panel/timeline/rail mounted yet) with a progress bar
   — never the real editor chrome mid-cut.
 - **Transcript status reaches the client via Pusher, not polling.** The dashboard's
-  project list and the studio page both used to poll `/api/projects/[id]/status` on an
-  interval; that's gone. The server fires a `transcript_status` event (`{ status: "ready" | "failed" }`)
+  project list and the studio page both used to poll on an interval; that's gone. The server fires a `transcript_status` event (`{ status: "ready" | "failed" }`)
   on the project's **private** channel — always via `projectChannel(projectId)`
   (`private-<projectId>`), never a bare id, since Pusher only enforces the
   `/api/pusher/auth` ownership check on `private-` channels — from three places: `api/transcribe/callback/route.ts`
@@ -104,9 +103,6 @@ npm -w @repo/rough-cut typecheck
   synchronously, holding the request open; set `PUBLIC_APP_URL` to force the
   production callback path locally.
 - Deepgram enforces an upload size cap (2 GB by default, configurable via the `DEEPGRAM_MAX_UPLOAD_BYTES` environment variable) enforced at Blob token issuance (`maximumSizeInBytes`), not after upload.
-- `src/app/api/projects/[id]/status` still exists but nothing calls it client-side anymore
-  (superseded by the Pusher `transcript_status` event) — don't assume it's the live status
-  mechanism if you find it while reading the code.
 - The EDL autosave patch (client `createPatch` in `dashboard/[id]/page.tsx`, server `applyPatch` in
   `api/projects/[id]/route.ts`) now runs on `rfc6902`, not `fast-json-patch` — the two libraries'
   `Operation` types don't line up field-for-field, which is why `validation.ts`'s
