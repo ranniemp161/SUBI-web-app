@@ -114,7 +114,7 @@ export async function PATCH(
           );
         }
         updateData.edl = newEdl;
-      } catch (patchErr) {
+      } catch {
         return NextResponse.json(
           { error: "Invalid EDL patch." },
           { status: 400 }

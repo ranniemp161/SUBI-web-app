@@ -42,10 +42,10 @@ export default function AboutPage() {
               for founders on camera.
             </h1>
             <p className="mb-4 text-[15px] leading-relaxed text-[#A1A1AA]">
-              Hi, I'm <strong className="font-semibold text-white">TJ</strong> — founder of The Founder's Frame. I help business owners build their brand and presence on social media, and <strong className="font-semibold text-white">MyFirstCut</strong> is the tool I wished existed every time a founder told me editing was the reason they stopped posting.
+              Hi, I&apos;m <strong className="font-semibold text-white">TJ</strong> — founder of The Founder&apos;s Frame. I help business owners build their brand and presence on social media, and <strong className="font-semibold text-white">MyFirstCut</strong> is the tool I wished existed every time a founder told me editing was the reason they stopped posting.
             </p>
             <p className="text-[15px] leading-relaxed text-[#A1A1AA]">
-              I used to rely on tools like Descript for my own rough cuts — specifically for the long-form videos I produce for my Subi Shop YouTube channel with nearly 100k subscribers. But it felt too costly when all I really wanted was its core rough cut functionality. <strong className="font-semibold text-white">MyFirstCut</strong> isn't here to compete with Descript; it's here to give content creators an affordable, lightning-fast alternative to strip out the dead air without the bloat.
+              I used to rely on tools like Descript for my own rough cuts — specifically for the long-form videos I produce for my Subi Shop YouTube channel with nearly 100k subscribers. But it felt too costly when all I really wanted was its core rough cut functionality. <strong className="font-semibold text-white">MyFirstCut</strong> isn&apos;t here to compete with Descript; it&apos;s here to give content creators an affordable, lightning-fast alternative to strip out the dead air without the bloat.
             </p>
           </div>
         </section>
@@ -61,10 +61,10 @@ export default function AboutPage() {
                 MyFirstCut is a browser-based, AI-powered rough cut editor designed for creators who want to strip dead air and bad takes from their raw footage without the steep learning curve of a traditional timeline editor.
               </p>
               <p>
-                By treating your video's transcript like a text document, MyFirstCut lets you delete silences, retakes, and filler words with a single click. Everything processes entirely on your local machine—meaning no slow server queues, no massive video uploads, and zero privacy risks. 
+                By treating your video&apos;s transcript like a text document, MyFirstCut lets you delete silences, retakes, and filler words with a single click. Everything processes entirely on your local machine—meaning no slow server queues, no massive video uploads, and zero privacy risks. 
               </p>
               <p>
-                It's lightning fast, affordable, and built specifically to turn your raw A-roll into a publishable cut in minutes so you can focus on what actually matters: <strong className="font-semibold text-white">creating content</strong>.
+                It&apos;s lightning fast, affordable, and built specifically to turn your raw A-roll into a publishable cut in minutes so you can focus on what actually matters: <strong className="font-semibold text-white">creating content</strong>.
               </p>
             </div>
           </div>
@@ -76,14 +76,14 @@ export default function AboutPage() {
               <div className="flex h-12 w-12 shrink-0 items-center justify-center">
                 <Image src="/assets/ff-logo.png" alt="The Founder's Frame Logo" width={48} height={48} className="h-full w-full object-contain" />
               </div>
-              <h2 className={`${display} text-[24px] font-bold text-white`}>The Founder's Frame</h2>
+              <h2 className={`${display} text-[24px] font-bold text-white`}>The Founder&apos;s Frame</h2>
             </div>
             
             <p className="mb-6 text-[15px] leading-[1.8] text-[#A1A1AA]">
-              The Founder's Frame helps business owners show up on social media with confidence — building their brand, their presence, and their voice on camera. The biggest thing standing between most founders and consistent content isn't ideas or courage. It's the edit.
+              The Founder&apos;s Frame helps business owners show up on social media with confidence — building their brand, their presence, and their voice on camera. The biggest thing standing between most founders and consistent content isn&apos;t ideas or courage. It&apos;s the edit.
             </p>
             <p className="text-[15px] leading-[1.8] text-[#A1A1AA]">
-              MyFirstCut is the Founder's Frame answer to that: point it at your raw take, let it strip the silences and false starts, and walk away with a rough cut you can actually publish — without learning a timeline editor.
+              MyFirstCut is the Founder&apos;s Frame answer to that: point it at your raw take, let it strip the silences and false starts, and walk away with a rough cut you can actually publish — without learning a timeline editor.
             </p>
           </div>
         </section>
@@ -98,7 +98,7 @@ export default function AboutPage() {
           <div className="rounded-[16px] bg-[#1a1a1a] p-8">
             <h3 className={`${display} mb-3 text-xl font-bold text-[#fffc00]`}>0 uploads</h3>
             <p className="text-[14px] leading-relaxed text-[#A1A1AA]">
-              Your footage never leaves your computer. Only audio travels, then it's deleted.
+              Your footage never leaves your computer. Only audio travels, then it&apos;s deleted.
             </p>
           </div>
           <div className="rounded-[16px] bg-[#1a1a1a] p-8">

@@ -2,8 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useParams, useRouter } from "next/navigation";
-import * as Select from "@radix-ui/react-select";
-import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
   ArrowLeft,
   Clapperboard,
@@ -25,8 +23,6 @@ import {
   Clock,
   Check,
   RotateCcw,
-  ChevronDown,
-  Film,
   type LucideIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -1848,7 +1844,6 @@ function TopBar({
   onCancelExport,
   exportBlockedReason,
   exportState = "idle",
-  exportMaxHeight = null,
   onExportMaxHeightChange,
   onExportFcpxml,
   onExportCmx3600,

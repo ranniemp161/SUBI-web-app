@@ -211,8 +211,6 @@ export default function DashboardPage() {
   const [isLoadingProjects, setIsLoadingProjects] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
   const [credits, setCredits] = useState<CreditsInfo | null>(null);
-  const [nextCursor, setNextCursor] = useState<string | null>(null);
-  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
 
   // Per-project in-flight work, shown as a prominent centered percentage on
@@ -263,7 +261,6 @@ export default function DashboardPage() {
         const { data, nextCursor: newCursor } = await loadMoreProjects();
         if (data) {
           setProjects(data as Project[]);
-          setNextCursor(newCursor ?? null);
           // A project already mid-transcription (dashboard reloaded while a
           // job was in flight) gets its progress estimate started now, so its
           // card shows a number instead of a mystery.
@@ -293,20 +290,6 @@ export default function DashboardPage() {
       }
     });
   }, []);
-
-  async function handleLoadMore() {
-    if (!nextCursor || isLoadingMore) return;
-    setIsLoadingMore(true);
-    try {
-      const { data, nextCursor: newCursor } = await loadMoreProjects(nextCursor);
-      setProjects((prev) => [...prev, ...data as Project[]]);
-      setNextCursor(newCursor ?? null);
-    } catch (error) {
-      console.error("Failed to load more projects:", error);
-    } finally {
-      setIsLoadingMore(false);
-    }
-  }
 
   /** Derived pagination values. */
   const totalPages = Math.ceil(projects.length / PROJECTS_PER_PAGE);
@@ -935,7 +918,7 @@ export default function DashboardPage() {
           </div>
         ) : (() => {
             const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
-            const now = Date.now();
+            const now = nowTick;
             const recentProjects = paginatedProjects.filter(
               (p) => now - new Date(p.createdAt).getTime() <= SEVEN_DAYS_MS
             );
@@ -1012,6 +995,7 @@ export default function DashboardPage() {
                   {(project.transcriptStatus === "failed" || project.transcriptStatus === "idle") && (
                     <div className="px-4 pb-4">
                       <button
+                        // eslint-disable-next-line react-hooks/refs
                         onClick={(e) => handleRetryClick(e, project)}
                         className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-white/[0.03] hover:bg-white/5 border border-white/5 hover:border-white/10 px-3 py-2 text-xs font-semibold text-zinc-300 hover:text-white transition-all duration-200 cursor-pointer"
                       >
