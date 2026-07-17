@@ -255,25 +255,17 @@ export function AutorechargePanel({
   return (
     <section
       id="auto-recharge"
-      className="wallet-card wallet-fade-in p-6"
+      className="wallet-fade-in flex flex-col p-6 rounded-2xl"
       aria-label="Auto-recharge settings"
-      style={{ animationDelay: "160ms" }}
+      style={{ background: "var(--wallet-surface)", border: "1px solid var(--wallet-border)" }}
     >
       <div className="flex items-center justify-between">
-        <div>
-          <h2
-            className="text-lg font-semibold"
-            style={{ color: "var(--wallet-text-primary)" }}
-          >
-            Auto-recharge
-          </h2>
-          <p
-            className="mt-0.5 text-sm"
-            style={{ color: "var(--wallet-text-secondary)" }}
-          >
-            Automatically add funds when your balance gets low.
-          </p>
-        </div>
+        <h2
+          className="text-lg font-bold"
+          style={{ color: "var(--wallet-text-primary)" }}
+        >
+          Auto-recharge
+        </h2>
 
         {/* Toggle switch */}
         <button
@@ -288,7 +280,7 @@ export function AutorechargePanel({
           }`}
           style={{
             background: enabled
-              ? "var(--wallet-accent)"
+              ? "#fffc00"
               : "var(--wallet-border)",
           }}
         >
@@ -301,22 +293,29 @@ export function AutorechargePanel({
         </button>
       </div>
 
+      <p
+        className="mt-1 mb-5 text-[11px]"
+        style={{ color: "var(--wallet-text-secondary)" }}
+      >
+        Top up automatically when your balance gets low.
+      </p>
+
       {/* Settings fields */}
       <div
-        className={`mt-5 grid grid-cols-1 sm:grid-cols-2 gap-4 transition-opacity duration-200 ${
+        className={`mt-1 grid grid-cols-2 gap-4 transition-opacity duration-200 ${
           !hasCard ? "opacity-40 pointer-events-none" : ""
         }`}
       >
-        <label className="flex h-full flex-col justify-end gap-1.5">
+        <label className="flex flex-col gap-1.5">
           <span
-            className="text-xs font-medium"
+            className="text-[11px]"
             style={{ color: "var(--wallet-text-secondary)" }}
           >
-            When balance falls below
+            When below
           </span>
           <div className="relative">
             <span
-              className="absolute left-3 top-1/2 -translate-y-1/2 text-sm"
+              className="absolute left-3 top-1/2 -translate-y-1/2 text-[13px]"
               style={{ color: "var(--wallet-text-tertiary)" }}
             >
               $
@@ -328,26 +327,27 @@ export function AutorechargePanel({
               value={thresholdDollars}
               onChange={(e) => setDraftThresholdDollars(e.target.value)}
               disabled={saving || !isEditing}
-              className="w-full rounded-lg py-2 pl-7 pr-3 text-sm tabular-nums"
+              className="w-full rounded-[8px] py-2 pl-7 pr-3 text-[13px] tabular-nums"
               style={{
-                background: "var(--wallet-surface-sunken)",
+                background: "#111111",
                 color: "var(--wallet-text-primary)",
-                border: "1px solid var(--wallet-border)",
+                border: "none",
+                outline: "none"
               }}
             />
           </div>
         </label>
 
-        <label className="flex h-full flex-col justify-end gap-1.5">
+        <label className="flex flex-col gap-1.5">
           <span
-            className="text-xs font-medium"
+            className="text-[11px]"
             style={{ color: "var(--wallet-text-secondary)" }}
           >
-            Automatically add
+            Add
           </span>
           <div className="relative">
             <span
-              className="absolute left-3 top-1/2 -translate-y-1/2 text-sm"
+              className="absolute left-3 top-1/2 -translate-y-1/2 text-[13px]"
               style={{ color: "var(--wallet-text-tertiary)" }}
             >
               $
@@ -359,52 +359,34 @@ export function AutorechargePanel({
               value={amountDollars}
               onChange={(e) => setDraftAmountDollars(e.target.value)}
               disabled={saving || !isEditing}
-              className="w-full rounded-lg py-2 pl-7 pr-3 text-sm tabular-nums"
+              className="w-full rounded-[8px] py-2 pl-7 pr-3 text-[13px] tabular-nums"
               style={{
-                background: "var(--wallet-surface-sunken)",
+                background: "#111111",
                 color: "var(--wallet-text-primary)",
-                border: "1px solid var(--wallet-border)",
+                border: "none",
+                outline: "none"
               }}
             />
           </div>
         </label>
       </div>
 
-      {/* Threshold/amount edit state: locked + "Saved" after a successful save,
-          unlocked with Save/Cancel while editing. Stops the settings from being
-          re-submitted indefinitely and makes the saved state visible. */}
+      {/* Threshold/amount edit state */}
       {hasCard && (
-        <div className="mt-4 flex items-center justify-between gap-3">
+        <div className="mt-2 flex items-center justify-between gap-3">
           {fieldError ? (
             <p
-              className="text-xs font-medium"
+              className="text-[10px] font-medium"
               style={{ color: "var(--wallet-danger)" }}
             >
               {fieldError}
             </p>
           ) : (
-            !isEditing && (
-              <p
-                className="flex items-center gap-1 text-xs font-medium"
-                style={{ color: "var(--wallet-success)" }}
-              >
-                <svg
-                  className="h-3.5 w-3.5"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                  aria-hidden="true"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M5 13l4 4L19 7"
-                  />
-                </svg>
-                Saved
+            !isEditing ? (
+              <p className="flex items-center gap-1 text-[10px] font-medium opacity-0">
+                Spacer
               </p>
-            )
+            ) : null
           )}
 
           <div className="ml-auto flex gap-2">
@@ -413,11 +395,10 @@ export function AutorechargePanel({
                 <button
                   onClick={handleCancelClick}
                   disabled={saving}
-                  className="rounded-lg px-4 py-1.5 text-xs font-semibold transition-colors"
+                  className="rounded-full px-3 py-1 text-[10px] font-bold transition-colors"
                   style={{
-                    background: "var(--wallet-surface)",
+                    background: "transparent",
                     color: "var(--wallet-text-secondary)",
-                    border: "1px solid var(--wallet-border)",
                     opacity: saving ? 0.5 : 1,
                   }}
                 >
@@ -426,25 +407,24 @@ export function AutorechargePanel({
                 <button
                   onClick={handleSaveSettings}
                   disabled={saving}
-                  className="rounded-lg px-4 py-1.5 text-xs font-semibold transition-colors"
+                  className="rounded-full px-3 py-1 text-[10px] font-bold transition-colors"
                   style={{
-                    background: "var(--wallet-accent)",
-                    color: "#fff",
+                    background: "#fffc00",
+                    color: "#000",
                     opacity: saving ? 0.5 : 1,
                   }}
                 >
-                  {saving ? "Saving…" : "Save settings"}
+                  {saving ? "Saving…" : "Save"}
                 </button>
               </>
             ) : (
               <button
                 onClick={handleEditClick}
                 disabled={saving}
-                className="rounded-lg px-4 py-1.5 text-xs font-semibold transition-colors"
+                className="rounded-full px-3 py-1 text-[10px] font-bold transition-colors"
                 style={{
-                  background: "var(--wallet-surface)",
-                  color: "var(--wallet-accent)",
-                  border: "1px solid var(--wallet-border)",
+                  background: "transparent",
+                  color: "var(--wallet-text-secondary)",
                   opacity: saving ? 0.5 : 1,
                 }}
               >
@@ -457,31 +437,15 @@ export function AutorechargePanel({
 
       {/* Saved card */}
       <div
-        className="mt-5 flex items-center justify-between rounded-lg px-4 py-3"
+        className="mt-3 flex items-center justify-between rounded-xl px-4 py-3"
         style={{
-          background: "var(--wallet-surface-sunken)",
-          border: "1px solid var(--wallet-border-subtle)",
+          background: "#111111",
         }}
       >
         {savedCard ? (
           <div className="flex items-center gap-2">
-            <svg
-              className="h-5 w-5"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-              aria-hidden="true"
-              style={{ color: "var(--wallet-text-tertiary)" }}
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={1.5}
-                d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"
-              />
-            </svg>
             <span
-              className="text-sm"
+              className="text-[12px] font-semibold"
               style={{ color: "var(--wallet-text-primary)" }}
             >
               {brandLabel} •••• {savedCard.last4}
@@ -489,8 +453,8 @@ export function AutorechargePanel({
           </div>
         ) : (
           <span
-            className="text-sm"
-            style={{ color: "var(--wallet-text-tertiary)" }}
+            className="text-[12px] font-semibold"
+            style={{ color: "var(--wallet-text-secondary)" }}
           >
             No card saved
           </span>
@@ -499,11 +463,11 @@ export function AutorechargePanel({
         <button
           onClick={handleAddCard}
           disabled={addingCard}
-          className="rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors"
+          className="rounded-full px-4 py-1 text-[11px] font-bold transition-colors"
           style={{
-            background: "var(--wallet-surface)",
-            color: "var(--wallet-accent)",
-            border: "1px solid var(--wallet-border)",
+            background: "transparent",
+            color: "#2997ff",
+            border: "1px solid #2997ff",
             opacity: addingCard ? 0.5 : 1,
           }}
         >

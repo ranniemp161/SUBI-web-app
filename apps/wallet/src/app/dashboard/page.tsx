@@ -2,7 +2,7 @@ import { auth } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import { getAuthorizedDbUser } from "@/lib/authz";
 import { db } from "@repo/db";
-import { creditLedger } from "@repo/db/schema";
+import { creditLedger, projects } from "@repo/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { getBundles, getSavedCard } from "@/lib/stripe";
 
@@ -44,8 +44,15 @@ export default async function DashboardPage() {
   // Fetch data concurrently.
   const [ledgerHistory, bundles, savedCard] = await Promise.all([
     db
-      .select()
+      .select({
+        id: creditLedger.id,
+        reason: creditLedger.reason,
+        deltaMicros: creditLedger.deltaMicros,
+        createdAt: creditLedger.createdAt,
+        fileName: projects.fileName,
+      })
       .from(creditLedger)
+      .leftJoin(projects, eq(creditLedger.projectId, projects.id))
       .where(eq(creditLedger.userId, user.id))
       .orderBy(desc(creditLedger.createdAt))
       .limit(50),
@@ -59,6 +66,9 @@ export default async function DashboardPage() {
     reason: entry.reason,
     deltaMicros: entry.deltaMicros,
     createdAt: entry.createdAt.toISOString(),
+    fileName: entry.fileName,
+    // Add default card info for credit purchases
+    cardInfo: savedCard ? `${savedCard.brand} ••••${savedCard.last4}` : null,
   }));
 
   return (
@@ -79,15 +89,12 @@ export default async function DashboardPage() {
         />
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
-          {/* Main Column: Apps & Top-up */}
-          <div className="flex flex-col gap-8 lg:col-span-2">
-            <AppLauncher />
-            
-            <BundleCards bundles={bundles} />
-          </div>
-
-          {/* Side Column: Settings & History */}
+          {/* Side Column: Apps & Top-up */}
           <div className="flex flex-col gap-8 lg:col-span-1">
+            <div id="add-funds">
+              <BundleCards bundles={bundles} />
+            </div>
+
             <AutorechargePanel
               enabled={user.autorechargeEnabled}
               thresholdMicros={user.autorechargeThresholdMicros}
@@ -97,6 +104,11 @@ export default async function DashboardPage() {
               failures={user.autorechargeFailures}
             />
 
+            <AppLauncher />
+          </div>
+
+          {/* Main Column: Transaction History */}
+          <div className="flex flex-col gap-8 lg:col-span-2">
             <TransactionHistory entries={serializedHistory} />
           </div>
         </div>

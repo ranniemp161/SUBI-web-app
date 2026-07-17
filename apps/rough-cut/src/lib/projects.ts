@@ -24,25 +24,6 @@ export async function getOwnedProject(projectId: string, clerkId: string) {
 }
 
 /**
- * Fetch only a project's transcript status, verifying ownership — for the
- * dashboard's status poll, which shouldn't pull the whole transcript + EDL
- * jsonb every few seconds just to read one field. Returns null if the project
- * doesn't exist or isn't owned by the caller.
- */
-export async function getOwnedProjectStatus(projectId: string, clerkId: string) {
-  const result = await withDbRetry(() =>
-    db
-      .select({ transcriptStatus: projects.transcriptStatus })
-      .from(projects)
-      .innerJoin(users, eq(projects.userId, users.id))
-      .where(and(eq(projects.id, projectId), eq(users.clerkId, clerkId)))
-      .limit(1)
-  );
-
-  return result.length > 0 ? result[0].transcriptStatus : null;
-}
-
-/**
  * A claimed-but-unfinished AI Cut run is treated as abandoned (the request
  * that held it crashed or timed out) once it's older than this, and can be
  * reclaimed. Gemini is capped at 240s server-side (ai-rough-cut.ts) inside a

@@ -2,8 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useParams, useRouter } from "next/navigation";
-import * as Select from "@radix-ui/react-select";
-import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
   ArrowLeft,
   Clapperboard,
@@ -25,8 +23,6 @@ import {
   Clock,
   Check,
   RotateCcw,
-  ChevronDown,
-  Film,
   type LucideIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -770,7 +766,7 @@ export default function EditorPage() {
           toast.error("Not enough funds", {
             id: "ai-cut",
             description: "This AI pass needs more credit than you have left.",
-            action: { label: "Add funds", onClick: () => window.open(WALLET_DASHBOARD_URL, "_blank") },
+            action: { label: "Add funds", onClick: () => { window.location.href = WALLET_DASHBOARD_URL; } },
           });
           return;
         }
@@ -1375,7 +1371,7 @@ export default function EditorPage() {
               }
               title={tool.title ?? tool.label}
               className={`relative flex w-14 flex-col items-center gap-1 rounded-lg py-2 text-[10px] ${tool.active
-                ? "bg-blue-500/15 text-blue-300 transition-colors hover:bg-blue-500/25"
+                ? "bg-accent/15 text-accent transition-colors hover:bg-accent/25"
                 : "cursor-not-allowed text-foreground/30"
                 }`}
             >
@@ -1414,7 +1410,7 @@ export default function EditorPage() {
                   type="button"
                   aria-label="Play"
                   onClick={() => playerRef.current?.play()}
-                  className="absolute inset-0 m-auto flex h-16 w-16 items-center justify-center rounded-full bg-blue-600/90 text-white shadow-lg motion-safe:transition-transform motion-safe:hover:scale-105"
+                  className="absolute inset-0 m-auto flex h-16 w-16 items-center justify-center rounded-full bg-accent/90 text-accent-foreground shadow-lg motion-safe:transition-transform motion-safe:hover:scale-105"
                 >
                   <Play className="h-7 w-7 translate-x-0.5 fill-current" />
                 </button>
@@ -1443,7 +1439,7 @@ export default function EditorPage() {
                 type="button"
                 aria-label={isPlaying ? "Pause" : "Play"}
                 onClick={() => playerRef.current?.togglePlay()}
-                className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-600 text-white transition-colors hover:bg-blue-500"
+                className="flex h-10 w-10 items-center justify-center rounded-full bg-accent text-accent-foreground transition-colors hover:bg-accent-hover"
               >
                 {isPlaying ? (
                   <Pause className="h-5 w-5 fill-current" />
@@ -1500,7 +1496,7 @@ export default function EditorPage() {
           aria-label="Resize transcript panel"
           className="group relative z-10 w-1 shrink-0 cursor-col-resize"
         >
-          <div className="absolute inset-y-0 -left-1 -right-1 transition-colors group-hover:bg-blue-500/30" />
+          <div className="absolute inset-y-0 -left-1 -right-1 transition-colors group-hover:bg-accent/30" />
         </div>
 
         {/* Transcript */}
@@ -1575,7 +1571,7 @@ export default function EditorPage() {
                   aria-pressed={sensitivity === level}
                   title={`${level} auto-cut`}
                   className={`px-2 py-0.5 capitalize transition-colors ${sensitivity === level
-                    ? "bg-blue-600 text-white"
+                    ? "bg-accent text-accent-foreground"
                     : "text-foreground/55 hover:bg-foreground/10 hover:text-foreground/80"
                     }`}
                 >
@@ -1595,7 +1591,7 @@ export default function EditorPage() {
           <button
             type="button"
             onClick={() => setShowShortcuts(true)}
-            className="text-blue-400/70 hover:text-blue-400 hover:underline"
+            className="text-accent/70 hover:text-accent hover:underline"
           >
             Shortcuts (?)
           </button>
@@ -1622,9 +1618,9 @@ export default function EditorPage() {
               "!rounded-lg !border !border-foreground/10 !bg-background !text-foreground !shadow-2xl",
             description: "!text-foreground/60",
             actionButton:
-              "!rounded-md !bg-blue-600 !px-2.5 !py-1 !text-xs !font-medium !text-white hover:!bg-blue-500",
+              "!rounded-md !bg-accent !px-2.5 !py-1 !text-xs !font-medium !text-accent-foreground hover:!bg-accent-hover",
             error: "!text-red-300",
-            icon: "!text-blue-300",
+            icon: "!text-accent",
           },
         }}
       />
@@ -1688,7 +1684,7 @@ function AutoChainProgressBar({ wordCount }: { wordCount: number }) {
     <div className="w-full max-w-xs">
       <div className="mb-1.5 flex items-center justify-between text-[11px] font-medium text-foreground/50">
         <span>Working…</span>
-        <span className="tabular-nums font-semibold text-blue-400">{rounded}%</span>
+        <span className="tabular-nums font-semibold text-accent">{rounded}%</span>
       </div>
       <div
         role="progressbar"
@@ -1699,7 +1695,7 @@ function AutoChainProgressBar({ wordCount }: { wordCount: number }) {
         className="h-1.5 w-full overflow-hidden rounded-full bg-foreground/10"
       >
         <div
-          className="h-full rounded-full bg-blue-500 transition-all duration-300"
+          className="h-full rounded-full bg-accent transition-all duration-300"
           style={{ width: `${percent}%` }}
         />
       </div>
@@ -1761,7 +1757,7 @@ function StatusScreen({
   return (
     <div className="flex h-screen flex-col items-center justify-center gap-4 bg-background px-6 text-center">
       <div
-        className={`flex h-14 w-14 items-center justify-center rounded-2xl ${tone === "error" ? "bg-red-500/10 text-red-400" : "bg-blue-500/15 text-blue-300"
+        className={`flex h-14 w-14 items-center justify-center rounded-2xl ${tone === "error" ? "bg-red-500/10 text-red-400" : "bg-accent/15 text-accent"
           }`}
       >
         {icon}
@@ -1848,7 +1844,6 @@ function TopBar({
   onCancelExport,
   exportBlockedReason,
   exportState = "idle",
-  exportMaxHeight = null,
   onExportMaxHeightChange,
   onExportFcpxml,
   onExportCmx3600,
@@ -1891,7 +1886,7 @@ function TopBar({
           <ArrowLeft className="h-4 w-4" /> Dashboard
         </ExitToDashboardLink>
         <div className="flex items-center gap-2">
-          <span className="flex h-7 w-7 items-center justify-center rounded-md bg-blue-500/15 text-blue-300">
+          <span className="flex h-7 w-7 items-center justify-center rounded-md bg-accent/15 text-accent">
             <Clapperboard className="h-4 w-4" />
           </span>
           <div>
@@ -1939,7 +1934,7 @@ function TopBar({
           onClick={() => setIsExportModalOpen(true)}
           disabled={exportDisabled && exportFormatDisabled}
           title={exportDisabled && exportFormatDisabled ? "Export is currently unavailable" : "Export options"}
-          className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-blue-600/60 disabled:text-white/70 disabled:hover:bg-blue-600/60"
+          className="flex items-center gap-1.5 rounded-lg bg-accent px-4 py-1.5 text-sm font-semibold text-accent-foreground transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:bg-accent/60 disabled:text-accent-foreground/70 disabled:hover:bg-accent/60"
         >
           {busy ? (
             <Loader2 className="h-4 w-4 motion-safe:animate-spin" />
@@ -2076,7 +2071,7 @@ function RetakeReviewQueue({ edl, onSeek, onRestoreSegment, onClose }: RetakeRev
             <button
               type="button"
               onClick={onClose}
-              className="w-full rounded-lg bg-blue-500/20 px-3 py-2 text-sm font-medium text-blue-300 hover:bg-blue-500/30"
+              className="w-full rounded-lg bg-accent/20 px-3 py-2 text-sm font-medium text-accent hover:bg-accent/30"
             >
               Done
             </button>

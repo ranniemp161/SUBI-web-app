@@ -24,7 +24,6 @@ vi.mock("@repo/db/schema", () => ({
 
 import {
   getOwnedProject,
-  getOwnedProjectStatus,
   claimAiCutSlot,
   releaseAiCutClaim,
   countAiCutRuns,
@@ -81,20 +80,6 @@ describe("getOwnedProject", () => {
   it("returns null when no row matches (not found or not owned)", async () => {
     limitMock.mockResolvedValue([]);
     const result = await getOwnedProject("p1", "clerk_1");
-    expect(result).toBeNull();
-  });
-});
-
-describe("getOwnedProjectStatus", () => {
-  it("returns just the transcript status when owned", async () => {
-    limitMock.mockResolvedValue([{ transcriptStatus: "ready" }]);
-    const result = await getOwnedProjectStatus("p1", "clerk_1");
-    expect(result).toBe("ready");
-  });
-
-  it("returns null when not found or not owned", async () => {
-    limitMock.mockResolvedValue([]);
-    const result = await getOwnedProjectStatus("p1", "clerk_1");
     expect(result).toBeNull();
   });
 });

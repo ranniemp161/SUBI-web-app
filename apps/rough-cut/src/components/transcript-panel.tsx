@@ -115,9 +115,9 @@ const WordSpan = memo(function WordSpan({
                   ? "text-teal-400/70 line-through decoration-teal-400/50 hover:text-emerald-300/80 hover:decoration-transparent"
                   : "text-red-400/70 line-through decoration-red-400/50 hover:text-emerald-300/80 hover:decoration-transparent"
             : isActive
-              ? "bg-blue-600 text-white shadow-sm shadow-blue-500/40 ring-1 ring-blue-300/60"
+              ? "bg-accent text-accent-foreground shadow-sm shadow-accent/40 ring-1 ring-accent/60"
               : "text-foreground/90 hover:bg-foreground/10"
-        } ${isSelected && !isActive ? "bg-blue-500/30" : ""} ${
+        } ${isSelected && !isActive ? "bg-accent/30" : ""} ${
           isMatch && !isSelected && !isActive ? "bg-amber-400/25" : ""
         }`}
         title={
@@ -494,7 +494,7 @@ export default function TranscriptPanel({
           title={hideCut ? "Show removed text" : "Hide removed text"}
           className={`rounded-md p-1.5 transition-colors ${
             hideCut
-              ? "bg-blue-500/15 text-blue-300"
+              ? "bg-accent/15 text-accent"
               : "text-foreground/40 hover:bg-foreground/10 hover:text-foreground/70"
           }`}
         >
@@ -510,7 +510,7 @@ export default function TranscriptPanel({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search transcript…"
-            className="w-full rounded-lg border border-foreground/10 bg-foreground/[0.03] py-2 pl-9 pr-16 text-sm text-foreground placeholder:text-foreground/30 focus:border-blue-500/50 focus:outline-none"
+            className="w-full rounded-lg border border-foreground/10 bg-foreground/[0.03] py-2 pl-9 pr-16 text-sm text-foreground placeholder:text-foreground/30 focus:border-accent/50 focus:outline-none"
           />
           {normalizedQuery && (
             <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-foreground/40">
@@ -633,7 +633,7 @@ export default function TranscriptPanel({
                     type="button"
                     onClick={() => onSeek(words[paragraph.startIndex].start)}
                     title="Jump to this paragraph"
-                    className="mb-0.5 block select-none font-mono text-[10px] text-foreground/30 transition-colors hover:text-blue-400"
+                    className="mb-0.5 block select-none font-mono text-[10px] text-foreground/30 transition-colors hover:text-accent"
                   >
                     {formatDuration(words[paragraph.startIndex].start * 1000)}
                   </button>
@@ -647,9 +647,9 @@ export default function TranscriptPanel({
 
       {/* Post-cut summary card — event-driven, auto-collapses (see showCard) */}
       {showCard && (
-        <div className="m-4 rounded-xl border border-blue-500/20 bg-blue-500/[0.07] p-3">
+        <div className="m-4 rounded-xl border border-accent/20 bg-accent/[0.07] p-3">
           <div className="flex items-start gap-3">
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-500/20 text-blue-300">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent/20 text-accent">
               <Sparkles className="h-4 w-4" />
             </span>
             <div className="min-w-0 flex-1">
@@ -693,7 +693,7 @@ export default function TranscriptPanel({
                 onClick={onPolishWithAi}
                 disabled={aiBusy}
                 title={`AI pass — remove false starts, stumbles & flubbed takes (uses ${aiCostLabel})`}
-                className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-60"
+                className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-xs font-semibold text-accent-foreground transition-colors hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {aiBusy ? (
                   <Loader2 className="h-3.5 w-3.5 motion-safe:animate-spin" />
@@ -710,7 +710,7 @@ export default function TranscriptPanel({
                 type="button"
                 onClick={onRestoreAiSuggestions}
                 title="Re-apply the AI's suggestions — free, no charge"
-                className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-blue-500"
+                className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-xs font-semibold text-accent-foreground transition-colors hover:bg-accent/90"
               >
                 <RotateCcw className="h-3.5 w-3.5" />
                 Restore AI suggestions

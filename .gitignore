@@ -55,3 +55,5 @@ packages/db/scripts/topup-demo-account.ts
 .claude/
 .agents/skills/
 
+#project design files
+.ui-design/
