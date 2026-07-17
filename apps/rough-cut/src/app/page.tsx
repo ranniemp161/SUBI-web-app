@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { FileText, FileVideo2, Globe, ShieldCheck, Video } from "lucide-react";
 
 import { MarketingHeader } from "@/components/marketing-header";
 import { MarketingFooter } from "@/components/marketing-footer";
@@ -158,24 +159,26 @@ export default function LandingPage() {
               className={`${mono} inline-flex items-center gap-2 rounded-full border border-[#fffc00]/30 bg-[#fffc00]/10 px-3.5 py-1.5 text-xs uppercase tracking-[0.04em] text-[#fffc00]`}
             >
               <span className="h-1.5 w-1.5 rounded-full bg-[#fffc00]" />
-              Edit your video like a document
+              Raw footage to a first cut in minutes.
             </div>
 
             <h1
               className={`${display} text-balance text-[44px] font-extrabold leading-[1.04] tracking-[-0.03em] sm:text-[60px] lg:text-[76px]`}
             >
-              Raw footage to a
+              The boring part of
               <br />
+              video editing,{" "}
               <span className="inline-block rounded-[10px] bg-[#fffc00]/20 px-3 text-[#fffc00] shadow-[inset_0_0_0_1px_rgba(255,252,0,0.3)]">
-                rough cut
-              </span>{" "}
-              in minutes
+                done for you
+              </span>
+              .
             </h1>
 
-            <p className="max-w-[560px] text-pretty text-lg leading-[1.65] text-[#8A97AC]">
-              MyFirstCut finds the silence, retakes, and dead air in your footage,
-              then lets you cut it all by editing text — not a timeline. Your
-              video never leaves your computer.
+            <p className="max-w-[640px] text-pretty text-lg leading-[1.65] text-[#8A97AC]">
+              MyFirstCut&apos;s AI watches your entire recording and turns the
+              silences, retakes, and rambling into one coherent first cut
+              automatically. Hours of tedious cutting, done in minutes. You just
+              review and refine.
             </p>
 
             <div className="flex flex-wrap items-center justify-center gap-3.5">
@@ -193,9 +196,53 @@ export default function LandingPage() {
                 How it works
               </Link>
             </div>
-            <p className={`${mono} text-xs text-[#5D6B82]`}>
-              No credit card required · Start editing instantly
-            </p>
+
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              <span
+                className={`${mono} text-[10px] uppercase tracking-[0.12em] text-[#fffc00]/70`}
+              >
+                Exports to
+              </span>
+              <span
+                className={`${mono} inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 text-[12px] text-[#8A97AC]`}
+              >
+                <Video className="h-3.5 w-3.5" aria-hidden />
+                MP4
+              </span>
+              <span
+                className={`${mono} inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 text-[12px] text-[#8A97AC]`}
+              >
+                <FileText className="h-3.5 w-3.5" aria-hidden />
+                DaVinci Resolve
+              </span>
+              <span
+                className={`${mono} inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 text-[12px] text-[#8A97AC]`}
+              >
+                <FileText className="h-3.5 w-3.5" aria-hidden />
+                Premiere Pro
+              </span>
+              <span
+                className={`${mono} inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 text-[12px] text-[#8A97AC]`}
+              >
+                <FileVideo2 className="h-3.5 w-3.5" aria-hidden />
+                Final Cut Pro
+              </span>
+            </div>
+
+            <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
+              <span
+                className={`${mono} inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 text-[12px] text-[#8A97AC]`}
+              >
+                <ShieldCheck className="h-3.5 w-3.5" aria-hidden />
+                Your video stays on your device
+              </span>
+              <span
+                className={`${mono} inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 text-[12px] text-[#8A97AC]`}
+              >
+                <Globe className="h-3.5 w-3.5" aria-hidden />
+                Runs in your browser — no install needed
+              </span>
+            </div>
           </div>
 
           {/* App mockup — illustrative editor UI. */}

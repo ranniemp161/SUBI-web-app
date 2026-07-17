@@ -11,6 +11,7 @@ interface LedgerEntry {
   deltaMicros: number;
   createdAt: string | Date;
   fileName?: string | null;
+  projectId?: string | null;
   cardInfo?: string | null;
 }
 
@@ -24,6 +25,7 @@ const REASON_LABELS: Record<string, string> = {
   auto_recharge: "Auto-recharge",
   transcription: "Transcription",
   ai_cut: "AI Cut",
+  my_first_cut: "MyFirstCut",
   refund: "Refund",
   conversion: "Balance conversion",
   grant: "Monthly grant",
@@ -34,6 +36,7 @@ const REASON_LABELS: Record<string, string> = {
 
 function getIconForReason(reason: string) {
   switch (reason) {
+    case "my_first_cut":
     case "ai_cut":
       return <Scissors className="h-[14px] w-[14px]" />;
     case "transcription":
@@ -58,9 +61,30 @@ export function TransactionHistory({ entries: initialEntries }: TransactionHisto
   const [isPending, startTransition] = useTransition();
   const [hasMore, setHasMore] = useState(initialEntries.length >= 50);
 
+  const combinedEntries = useMemo(() => {
+    const result: LedgerEntry[] = [];
+    const projectMap = new Map<string, LedgerEntry>();
+
+    for (const entry of entries) {
+      if ((entry.reason === "transcription" || entry.reason === "ai_cut") && entry.projectId) {
+        if (projectMap.has(entry.projectId)) {
+          const existing = projectMap.get(entry.projectId)!;
+          existing.deltaMicros += entry.deltaMicros;
+        } else {
+          const combined = { ...entry, reason: "my_first_cut" };
+          projectMap.set(entry.projectId, combined);
+          result.push(combined);
+        }
+      } else {
+        result.push(entry);
+      }
+    }
+    return result;
+  }, [entries]);
+
   const displayedEntries = hideZero
-    ? entries.filter((entry) => entry.deltaMicros !== 0)
-    : entries;
+    ? combinedEntries.filter((entry) => entry.deltaMicros !== 0)
+    : combinedEntries;
 
   const groupedEntries = useMemo(() => {
     const groups: { dateKey: string; entries: LedgerEntry[]; netMicros: number }[] = [];

@@ -1,4 +1,6 @@
 import { SignIn } from "@clerk/nextjs";
+import { auth } from "@clerk/nextjs/server";
+import { redirect } from "next/navigation";
 
 /**
  * Sign-in page using Clerk's prebuilt component.
@@ -12,7 +14,12 @@ import { SignIn } from "@clerk/nextjs";
  * are used instead of hex values so the card follows the user's
  * light/dark color scheme like the rest of the app.
  */
-export default function SignInPage() {
+export default async function SignInPage() {
+  const { userId } = await auth();
+  if (userId) {
+    redirect("/dashboard");
+  }
+
   return (
     <main className="flex min-h-screen items-center justify-center bg-background px-4">
       <SignIn
