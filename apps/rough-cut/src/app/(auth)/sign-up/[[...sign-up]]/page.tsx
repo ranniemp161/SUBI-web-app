@@ -26,7 +26,6 @@ export default function SignUpPage() {
     }
   }, [userId, router]);
 
-  if (userId) return null;
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -34,6 +33,8 @@ export default function SignUpPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [pendingVerification, setPendingVerification] = useState(false);
   const [verificationCode, setVerificationCode] = useState("");
+
+  if (userId) return null;
 
   /** Handle initial signup form submission. */
   async function handleSubmit(e: React.FormEvent) {
