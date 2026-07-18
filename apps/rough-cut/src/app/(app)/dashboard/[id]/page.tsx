@@ -186,6 +186,10 @@ export default function EditorPage() {
   // re-run; restored from the saved EDL on load.
   const [sensitivity, setSensitivity] = useState<SensitivityLevel>(DEFAULT_SENSITIVITY);
   const [videoMeta, setVideoMeta] = useState<VideoMeta | null>(null);
+  // The real file's decoded duration, kept in a ref so applyEdl/undo/redo can
+  // read it without re-creating their callbacks. NaN until the player reports
+  // metadata; extendToMediaDuration no-ops on a non-finite duration.
+  const mediaDurationRef = useRef(NaN);
   const [savedAt, setSavedAt] = useState<"saved" | "saving">("saved");
   // "starting" = save dialog open, no cancellable handle yet; "exporting" =
   // worker is encoding and can be cancelled; "cancelling" = cancel requested.
@@ -271,8 +275,14 @@ export default function EditorPage() {
 
           // The mechanical cut is no longer gated behind a click: a fresh ready
           // project starts with no EDL, and the auto-cut effect populates the cut
-          // timeline the moment it runs. A saved EDL loads as-is.
-          setEdl(savedEdl);
+          // timeline the moment it runs. A saved EDL loads as-is — except for the
+          // media-tail extension, re-applied here in case this is a refetch that
+          // lands after the player already reported the file's real duration.
+          setEdl(
+            savedEdl
+              ? extendToMediaDuration(savedEdl, mediaDurationRef.current)
+              : savedEdl
+          );
         }
       } catch {
         setLoadError("Failed to load project.");
@@ -398,10 +408,16 @@ export default function EditorPage() {
         return false;
       }
       hasEditedRef.current = true;
+      // Every accepted edit re-covers the media tail: a re-run or AI pass
+      // regenerates segments from the transcript's duration, which lands short
+      // of the real file — without this the unselectable residue would return.
+      const extended = extendToMediaDuration(next, mediaDurationRef.current);
       setEdl((prev) => {
         if (prev) undoStack.current.push(prev);
         redoStack.current = [];
-        return prev ? absorbCutResidue(next, words, changedSpan(prev, next)) : next;
+        return prev
+          ? absorbCutResidue(extended, words, changedSpan(prev, extended))
+          : extended;
       });
       return true;
     },
@@ -413,7 +429,9 @@ export default function EditorPage() {
       if (!prev || undoStack.current.length === 0) return prev;
       hasEditedRef.current = true;
       redoStack.current.push(prev);
-      return undoStack.current.pop()!;
+      // An early undo state may predate the media-duration extension — keep
+      // the tail covered rather than resurrecting the unselectable residue.
+      return extendToMediaDuration(undoStack.current.pop()!, mediaDurationRef.current);
     });
   }, []);
 
@@ -422,23 +440,22 @@ export default function EditorPage() {
       if (!prev || redoStack.current.length === 0) return prev;
       hasEditedRef.current = true;
       undoStack.current.push(prev);
-      return redoStack.current.pop()!;
+      return extendToMediaDuration(redoStack.current.pop()!, mediaDurationRef.current);
     });
   }, []);
 
   // The EDL is sized from the transcript's duration, which can land a sliver
-  // short of the real video file. Once the player reports the file's decoded
-  // duration, cover the uncovered tail with a trailing cut segment so it's
-  // visible, selectable, and restorable — instead of unselectable filmstrip
-  // "residue" past the last clip. Not a user edit: it re-derives on every load
-  // (the extension only matters once the source file is reselected, which is
-  // also when the player mounts), so it bypasses applyEdl — no undo entry, no
-  // edited flag. Runs again after any edit or rebuild; extendToMediaDuration
-  // returns the same instance when there's nothing to add, so no render loop.
-  useEffect(() => {
-    if (!videoMeta) return;
-    setEdl((prev) => (prev ? extendToMediaDuration(prev, videoMeta.duration) : prev));
-  }, [videoMeta, edl]);
+  // short of the real video file. The moment the player reports the file's
+  // decoded duration, cover the uncovered tail with a trailing cut segment so
+  // it's visible, selectable, and restorable — instead of unselectable
+  // filmstrip "residue" past the last clip that also plays through in preview.
+  // Not a user edit (no undo entry, no edited flag); applyEdl re-applies the
+  // extension after every later edit or rebuild.
+  const handleLoadedMetadata = useCallback((meta: VideoMeta) => {
+    setVideoMeta(meta);
+    mediaDurationRef.current = meta.duration;
+    setEdl((prev) => (prev ? extendToMediaDuration(prev, meta.duration) : prev));
+  }, []);
 
   const handleCutWords = useCallback(
     (words: TranscriptWord[]) => {
@@ -1411,7 +1428,7 @@ export default function EditorPage() {
                 edl={edl ?? { segments: [] }}
                 onTimeUpdate={handleTimeUpdate}
                 onPlayingChange={setIsPlaying}
-                onLoadedMetadata={setVideoMeta}
+                onLoadedMetadata={handleLoadedMetadata}
                 className="max-h-full max-w-full cursor-pointer rounded-lg bg-black object-contain"
               />
               {resolutionLabel && (
