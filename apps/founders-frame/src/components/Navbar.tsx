@@ -25,10 +25,10 @@ export default function Navbar() {
             Products
             <span className="absolute -bottom-1 left-0 w-0 h-[2px] bg-brand transition-all duration-300 group-hover:w-full"></span>
           </Link>
-          <Link href="/#mentorship" className="relative group hover:text-white transition-colors">
+          <a href="https://apply.thefoundersframe.com" target="_blank" rel="noopener" className="relative group hover:text-white transition-colors">
             Mentorship
             <span className="absolute -bottom-1 left-0 w-0 h-[2px] bg-brand transition-all duration-300 group-hover:w-full"></span>
-          </Link>
+          </a>
           <Link href="/about" className={`relative group transition-colors ${pathname === '/about' ? 'text-white' : 'hover:text-white'}`}>
             About Us
             <span className={`absolute -bottom-1 left-0 h-[2px] bg-brand transition-all duration-300 ${pathname === '/about' ? 'w-full' : 'w-0 group-hover:w-full'}`}></span>

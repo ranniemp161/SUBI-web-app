@@ -29,8 +29,8 @@ export default function Footer() {
             <h4 className="text-white font-semibold mb-6 tracking-wide bg-gradient-to-r from-white to-gray-400 bg-clip-text text-transparent">PRODUCTS</h4>
             <ul className="space-y-4 text-sm text-gray-400">
               <li><Link href={env.NEXT_PUBLIC_ROUGH_CUT_APP_URL} className="hover:text-brand transition-colors">MyFirstCut</Link></li>
-              <li><span className="text-gray-600">MyThumbnail — soon</span></li>
-              <li><span className="text-gray-600">Infographics — soon</span></li>
+              <li><span className="text-gray-600">MyThumbnail (soon)</span></li>
+              <li><span className="text-gray-600">Infographics (soon)</span></li>
             </ul>
           </div>
 
@@ -38,6 +38,7 @@ export default function Footer() {
             <h4 className="text-white font-semibold mb-6 tracking-wide bg-gradient-to-r from-white to-gray-400 bg-clip-text text-transparent">COMPANY</h4>
             <ul className="space-y-4 text-sm text-gray-400">
               <li><Link href="/about" className="hover:text-brand transition-colors">About TJ</Link></li>
+              <li><a href="https://apply.thefoundersframe.com" target="_blank" rel="noopener" className="hover:text-brand transition-colors">Mentorship</a></li>
               <li><Link href={env.NEXT_PUBLIC_WALLET_APP_URL} className="hover:text-brand transition-colors">Credits & billing</Link></li>
             </ul>
           </div>
