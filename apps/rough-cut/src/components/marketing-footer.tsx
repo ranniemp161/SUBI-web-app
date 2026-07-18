@@ -8,15 +8,13 @@ export function MarketingFooter() {
         <div className="flex flex-col gap-6 lg:max-w-xs">
           {/* Brand */}
           <div className="flex items-center gap-3">
-            <div className="flex h-8 w-8 items-center justify-center rounded-[8px] bg-[#fffc00] shadow-[0_0_15px_rgba(255,252,0,0.15)]">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="black" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="6" cy="6" r="3"></circle>
-                <circle cx="6" cy="18" r="3"></circle>
-                <line x1="20" y1="4" x2="8.12" y2="15.88"></line>
-                <line x1="14.47" y1="14.48" x2="20" y2="20"></line>
-                <line x1="8.12" y1="8.12" x2="12" y2="12"></line>
-              </svg>
-            </div>
+            <Image
+              src="/assets/Icon myfirstcut app.png"
+              alt="MyFirstCut Logo"
+              width={32}
+              height={32}
+              className="h-8 w-8 rounded-[8px] shadow-[0_0_15px_rgba(255,252,0,0.15)]"
+            />
             <span className="text-xl font-bold tracking-tight text-white">
               MyFirstCut
             </span>

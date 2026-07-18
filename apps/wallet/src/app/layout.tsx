@@ -50,7 +50,7 @@ export default function RootLayout({
           >
             <div className="max-w-[1200px] mx-auto px-8 h-16 flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <Image src="/assets/ff-logo.png" alt="Founder's Frame" width={28} height={28} className="rounded-md" />
+                <Image src="/assets/Icon myframecredits app.png" alt="Founder's Frame" width={28} height={28} className="rounded-md" />
                 <span className="font-bold text-[17px] tracking-tight text-white">
                   Founder&apos;s Frame Credits
                 </span>
