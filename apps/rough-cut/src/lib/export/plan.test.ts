@@ -85,6 +85,29 @@ describe("createTimeRemapper", () => {
     expect(remap(9)).toBe(9);
   });
 
+  it("recovers after a timestamp past the last keep range (interleaved tracks share one remapper)", () => {
+    // Regression: the worker hands ONE remapper to both the video and the
+    // audio track, and their samples interleave. Once either track sends a
+    // timestamp past the last keep range, the internal cursor used to run off
+    // the end of the range list and never reset, so every later sample from
+    // the other track was dropped — the exported video froze at the end.
+    const remap = createTimeRemapper([{ start: 0, end: 10 }]);
+    expect(remap(10.5)).toBeNull(); // audio track passes the end first
+    expect(remap(9.5)).toBe(9.5); // video track is still inside the range
+    expect(remap(9.9)).toBe(9.9);
+    expect(remap(10.2)).toBeNull();
+  });
+
+  it("recovers past the end across multiple ranges", () => {
+    const remap = createTimeRemapper([
+      { start: 0, end: 5 },
+      { start: 10, end: 15 },
+    ]);
+    expect(remap(20)).toBeNull();
+    expect(remap(12)).toBe(7);
+    expect(remap(4)).toBe(4);
+  });
+
   it("returns null for every timestamp when there are no keep ranges", () => {
     const remap = createTimeRemapper([]);
     expect(remap(0)).toBeNull();
