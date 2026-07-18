@@ -32,15 +32,13 @@ export default function AppLayout({
       <nav className="border-b border-[rgba(255,255,255,0.05)] bg-[#111111]">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
           <Link href="/dashboard" className="flex items-center gap-2">
-            <div className="flex h-7 w-7 items-center justify-center rounded-[6px] bg-[#fffc00]">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="black" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="6" cy="6" r="3"></circle>
-                <circle cx="6" cy="18" r="3"></circle>
-                <line x1="20" y1="4" x2="8.12" y2="15.88"></line>
-                <line x1="14.47" y1="14.48" x2="20" y2="20"></line>
-                <line x1="8.12" y1="8.12" x2="12" y2="12"></line>
-              </svg>
-            </div>
+            <Image
+              src="/assets/Icon myfirstcut app.png"
+              alt="MyFirstCut Logo"
+              width={28}
+              height={28}
+              className="h-7 w-7 rounded-[6px]"
+            />
             <span className="text-[17px] font-bold text-white tracking-tight">
               MyFirstCut
             </span>

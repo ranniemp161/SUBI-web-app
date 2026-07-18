@@ -1,8 +1,10 @@
 import Link from "next/link";
-import { FileText, FileVideo2, Globe, ShieldCheck, Video } from "lucide-react";
+import { FileText, FileVideo2, Globe, ShieldCheck, Video, Laptop, Cloud, X } from "lucide-react";
 
 import { MarketingHeader } from "@/components/marketing-header";
 import { MarketingFooter } from "@/components/marketing-footer";
+import SpotlightCard from "@/components/SpotlightCard";
+import FadeIn from "@/components/FadeIn";
 
 const display = "font-[family-name:var(--font-heading)]";
 const mono = "font-[family-name:var(--font-sans)]";
@@ -148,7 +150,7 @@ export default function LandingPage() {
 
       <main className="flex flex-1 flex-col">
         {/* Hero Section */}
-        <header className="relative px-6 pt-[88px] text-center">
+        <FadeIn className="relative px-6 pt-[88px] text-center">
           {/* Ambient glow behind the headline; decorative only. */}
           <div
             aria-hidden
@@ -175,17 +177,14 @@ export default function LandingPage() {
             </h1>
 
             <p className="max-w-[640px] text-pretty text-lg leading-[1.65] text-[#8A97AC]">
-              MyFirstCut&apos;s AI watches your entire recording and turns the
-              silences, retakes, and rambling into one coherent first cut
-              automatically. Hours of tedious cutting, done in minutes. You just
-              review and refine.
+              MyFirstCut&apos;s AI cuts the silence, retakes, and rambling from your raw footage and delivers one coherent first cut automatically.
             </p>
 
             <div className="flex flex-wrap items-center justify-center gap-3.5">
               <Link
                 href="/sign-up"
                 id="cta-get-started"
-                className="rounded-xl bg-[#fffc00] px-7 py-3.5 text-[15px] font-semibold text-black shadow-[0_4px_24px_rgba(255,252,0,0.2)] transition-colors hover:bg-[#fffc00]/90"
+                className="rounded-xl bg-gradient-to-r from-[#fffc00] via-yellow-400 to-[#fffc00] bg-[length:200%_200%] animate-liquid px-7 py-3.5 text-[15px] font-semibold text-black shadow-[0_4px_24px_rgba(255,252,0,0.2)] transition-all hover:scale-105"
               >
                 Get Started Free
               </Link>
@@ -350,13 +349,10 @@ export default function LandingPage() {
             </div>
             <div className="h-px bg-gradient-to-r from-transparent via-[rgba(255,252,0,0.5)] to-transparent" />
           </div>
-        </header>
+        </FadeIn>
 
         {/* How it works */}
-        <section
-          id="how-it-works"
-          className="mx-auto max-w-[1060px] scroll-mt-20 px-6 pb-10 pt-20 sm:pt-[110px]"
-        >
+        <FadeIn id="how-it-works" className="mx-auto max-w-[1060px] scroll-mt-20 px-6 pb-10 pt-20 sm:pt-[110px]">
           <h2
             className={`${display} mb-14 text-center text-[32px] font-bold tracking-[-0.02em] sm:text-[40px]`}
           >
@@ -364,110 +360,82 @@ export default function LandingPage() {
           </h2>
           <div className="grid grid-cols-1 gap-10 sm:grid-cols-3">
             {steps.map((step) => (
-              <div
+              <SpotlightCard
                 key={step.number}
-                className="flex flex-col gap-3.5 border-t border-[rgba(255,255,255,0.1)] pt-[22px]"
+                className="flex flex-col gap-3.5 pt-[22px] px-6 pb-6 rounded-3xl"
               >
                 <span className={`${mono} text-[13px] text-[#fffc00]`}>
                   {step.number}
                 </span>
                 <h3
-                  className={`${display} text-[21px] font-semibold leading-snug`}
+                  className={`${display} text-[21px] font-semibold leading-snug text-white`}
                 >
                   {step.title}
                 </h3>
                 <p className="text-pretty text-[14.5px] leading-[1.65] text-[#8A97AC]">
                   {step.description}
                 </p>
-              </div>
+              </SpotlightCard>
             ))}
           </div>
-        </section>
+        </FadeIn>
 
         {/* Feature Grid */}
-        <section className="mx-auto max-w-[1060px] px-6 py-[70px]">
+        <FadeIn className="mx-auto max-w-[1060px] px-6 py-[70px]">
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
-            <div className="flex flex-col gap-3.5 rounded-2xl border border-[rgba(255,255,255,0.1)] bg-[#111111] p-7 transition-colors hover:border-[#fffc00]/40">
-              <div className="flex h-10 w-10 items-center justify-center rounded-[11px] border border-[#fffc00]/25 bg-[#fffc00]/10">
-                <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-                  <path
-                    d="M3 4h12M3 9h12M3 14h7"
-                    stroke="#fffc00"
-                    strokeWidth="1.6"
-                    strokeLinecap="round"
-                  />
-                </svg>
-              </div>
-              <h3 className={`${display} text-[19px] font-semibold`}>
-                Text-based editing
+            <SpotlightCard className="flex flex-col gap-3.5 rounded-2xl p-7">
+              <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-white/5 text-[#E8EDF6]">
+                <FileVideo2 className="h-5 w-5" />
+              </span>
+              <h3 className="mt-2 font-semibold text-[#E8EDF6]">
+                Non-Destructive
               </h3>
-              <p className="text-pretty text-sm leading-[1.65] text-[#8A97AC]">
-                Edit your video by editing the transcript. Delete words to cut
-                segments. Click to seek. No timeline dragging.
+              <p className="text-[14.5px] leading-[1.6] text-[#8A97AC]">
+                Your original video is never touched. You edit by ignoring
+                sections, and exports create a brand new file.
               </p>
-            </div>
+            </SpotlightCard>
 
-            <div className="flex flex-col gap-3.5 rounded-2xl border border-[rgba(255,255,255,0.1)] bg-[#111111] p-7 transition-colors hover:border-[#fffc00]/40">
-              <div className="flex h-10 w-10 items-center justify-center rounded-[11px] border border-[#fffc00]/25 bg-[#fffc00]/10">
-                <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-                  <path
-                    d="M10 2L4 10.5h4L8 16l6-8.5h-4L10 2z"
-                    stroke="#fffc00"
-                    strokeWidth="1.5"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              </div>
-              <h3 className={`${display} text-[19px] font-semibold`}>
-                Auto-detects cuts
+            <SpotlightCard className="flex flex-col gap-3.5 rounded-2xl p-7">
+              <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-white/5 text-[#E8EDF6]">
+                <Globe className="h-5 w-5" />
+              </span>
+              <h3 className="mt-2 font-semibold text-[#E8EDF6]">
+                Works Anywhere
               </h3>
-              <p className="text-pretty text-sm leading-[1.65] text-[#8A97AC]">
-                Automatically finds silence, retakes, and dead air. Proposes
-                cuts you can accept, adjust, or reject.
+              <p className="text-[14.5px] leading-[1.6] text-[#8A97AC]">
+                Log in from any computer and your transcripts and edits are
+                waiting. Just point to the local video file to resume.
               </p>
-            </div>
+            </SpotlightCard>
 
-            <div className="flex flex-col gap-3.5 rounded-2xl border border-[rgba(255,255,255,0.1)] bg-[#111111] p-7 transition-colors hover:border-[#fffc00]/40">
-              <div className="flex h-10 w-10 items-center justify-center rounded-[11px] border border-[#fffc00]/25 bg-[#fffc00]/10">
-                <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-                  <rect
-                    x="4"
-                    y="8"
-                    width="10"
-                    height="7"
-                    rx="1.6"
-                    stroke="#fffc00"
-                    strokeWidth="1.5"
-                  />
-                  <path
-                    d="M6.5 8V6a2.5 2.5 0 015 0v2"
-                    stroke="#fffc00"
-                    strokeWidth="1.5"
-                  />
-                </svg>
-              </div>
-              <h3 className={`${display} text-[19px] font-semibold`}>
-                Browser-based rendering
+            <SpotlightCard className="flex flex-col gap-3.5 rounded-2xl p-7">
+              <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-white/5 text-[#E8EDF6]">
+                <ShieldCheck className="h-5 w-5" />
+              </span>
+              <h3 className="mt-2 font-semibold text-[#E8EDF6]">
+                Totally Private
               </h3>
-              <p className="text-pretty text-sm leading-[1.65] text-[#8A97AC]">
-                Preview your edits and export the final cut directly in your
-                browser — no waiting on a render queue.
+              <p className="text-[14.5px] leading-[1.6] text-[#8A97AC]">
+                We don&apos;t store your video. The video never even uploads —
+                only the audio track is sent for transcription.
               </p>
-            </div>
+            </SpotlightCard>
           </div>
-        </section>
+        </FadeIn>
 
         {/* Privacy callout */}
-        <section className="mx-auto max-w-[1060px] px-6 py-[70px]">
-          <div className="grid items-center gap-10 rounded-[20px] border border-[rgba(255,252,0,0.2)] bg-[#111111] p-8 sm:p-14 lg:grid-cols-[1.1fr_1fr] lg:gap-14 shadow-lg shadow-black/50">
-            <div className="flex flex-col gap-[18px]">
+        <FadeIn className="mx-auto max-w-[1060px] px-6 py-[70px]">
+          <SpotlightCard className="rounded-[32px] p-8 sm:p-14">
+            <div className="grid items-center gap-10 md:grid-cols-[1.1fr_1fr] md:gap-14">
+              <div className="flex flex-col gap-[18px]">
               <span
                 className={`${mono} text-xs tracking-[0.08em] text-[#fffc00]`}
               >
                 LOCAL-FIRST
               </span>
               <h2
-                className={`${display} text-balance text-[28px] font-bold tracking-[-0.02em] sm:text-[34px]`}
+                className={`${display} text-balance text-[28px] font-bold tracking-[-0.02em] sm:text-[34px] text-white`}
               >
                 Your video never leaves your computer
               </h2>
@@ -478,52 +446,82 @@ export default function LandingPage() {
                 deleted the moment your transcript is ready. We store your
                 words and your edits, never your video.
               </p>
+
+              {/* Disk → cloud → disk flow diagram */}
+              <div aria-hidden className="mt-8 flex flex-col items-stretch max-w-sm">
+                <div className="flex items-center gap-3.5 rounded-xl border border-[rgba(255,255,255,0.1)] bg-[#0C1322] px-5 py-4">
+                  <span className={`${mono} w-[70px] text-xs text-[#5D6B82]`}>
+                    DISK
+                  </span>
+                  <span className="text-sm font-medium">
+                    podcast_ep42_take3.mp4 stays put
+                  </span>
+                </div>
+                <div className="flex flex-col items-center self-center py-0.5">
+                  <span className="h-3.5 w-px bg-[rgba(255,255,255,0.2)]" />
+                  <span
+                    className={`${mono} rounded-full border border-[rgba(255,252,0,0.3)] bg-[rgba(255,252,0,0.08)] px-2 py-0.5 text-[10.5px] text-[#fffc00]`}
+                  >
+                    audio only ⇅
+                  </span>
+                  <span className="h-3.5 w-px bg-[rgba(255,255,255,0.2)]" />
+                </div>
+                <div className="flex items-center gap-3.5 rounded-xl border border-[rgba(255,255,255,0.1)] bg-[#0C1322] px-5 py-4">
+                  <span className={`${mono} w-[70px] text-xs text-[#5D6B82]`}>
+                    CLOUD
+                  </span>
+                  <span className="text-sm font-medium">
+                    transcript in, audio deleted
+                  </span>
+                </div>
+                <div className="flex flex-col items-center self-center py-0.5">
+                  <span className="h-7 w-px bg-[rgba(255,255,255,0.2)]" />
+                </div>
+                <div className="flex items-center gap-3.5 rounded-xl border border-[rgba(255,252,0,0.35)] bg-[rgba(255,252,0,0.07)] px-5 py-4">
+                  <span className={`${mono} w-[70px] text-xs text-[#fffc00]`}>
+                    DISK
+                  </span>
+                  <span className="text-sm font-medium text-[#E8EDF6]">
+                    final MP4 rendered in-browser
+                  </span>
+                </div>
+              </div>
             </div>
 
-            {/* Disk → cloud → disk flow diagram */}
-            <div aria-hidden className="flex flex-col items-stretch">
-              <div className="flex items-center gap-3.5 rounded-xl border border-[rgba(255,255,255,0.1)] bg-[#0C1322] px-5 py-4">
-                <span className={`${mono} w-[70px] text-xs text-[#5D6B82]`}>
-                  DISK
-                </span>
-                <span className="text-sm font-medium">
-                  podcast_ep42_take3.mp4 stays put
-                </span>
-              </div>
-              <div className="flex flex-col items-center self-center py-0.5">
-                <span className="h-3.5 w-px bg-[rgba(255,255,255,0.2)]" />
-                <span
-                  className={`${mono} rounded-full border border-[rgba(255,252,0,0.3)] bg-[rgba(255,252,0,0.08)] px-2 py-0.5 text-[10.5px] text-[#fffc00]`}
-                >
-                  audio only ⇅
-                </span>
-                <span className="h-3.5 w-px bg-[rgba(255,255,255,0.2)]" />
-              </div>
-              <div className="flex items-center gap-3.5 rounded-xl border border-[rgba(255,255,255,0.1)] bg-[#0C1322] px-5 py-4">
-                <span className={`${mono} w-[70px] text-xs text-[#5D6B82]`}>
-                  CLOUD
-                </span>
-                <span className="text-sm font-medium">
-                  transcript in, audio deleted
-                </span>
-              </div>
-              <div className="flex flex-col items-center self-center py-0.5">
-                <span className="h-7 w-px bg-[rgba(255,255,255,0.2)]" />
-              </div>
-              <div className="flex items-center gap-3.5 rounded-xl border border-[rgba(255,252,0,0.35)] bg-[rgba(255,252,0,0.07)] px-5 py-4">
-                <span className={`${mono} w-[70px] text-xs text-[#fffc00]`}>
-                  DISK
-                </span>
-                <span className="text-sm font-medium text-[#E8EDF6]">
-                  final MP4 rendered in-browser
-                </span>
+            {/* Illustration: Computer vs Cloud */}
+            <div className="flex items-center justify-center p-8 lg:p-0">
+              <div className="relative flex aspect-square w-full max-w-[320px] items-center justify-center rounded-[40px] border border-[rgba(255,252,0,0.08)] bg-gradient-to-br from-[rgba(255,252,0,0.03)] to-transparent shadow-[inset_0_0_80px_rgba(255,252,0,0.02)]">
+                {/* Dotted connection */}
+                <div className="absolute inset-0 flex items-center justify-center -rotate-45">
+                  <div className="w-[80%] border-t-[3px] border-dotted border-[#fffc00]/20" />
+                </div>
+                
+                {/* Computer (Local) */}
+                <div className="absolute bottom-8 left-8 flex flex-col items-center gap-3">
+                  <div className="flex h-[88px] w-[88px] items-center justify-center rounded-2xl border border-[#fffc00]/40 bg-[#fffc00]/10 shadow-[0_0_30px_rgba(255,252,0,0.15)] backdrop-blur-md">
+                    <Laptop className="h-11 w-11 text-[#fffc00]" />
+                  </div>
+                  <span className="text-sm font-bold tracking-wider text-[#fffc00]">LOCAL</span>
+                </div>
+
+                {/* Cloud (Blocked) */}
+                <div className="absolute right-8 top-8 flex flex-col items-center gap-3">
+                  <div className="relative flex h-[88px] w-[88px] items-center justify-center rounded-2xl border border-red-500/30 bg-red-500/10 shadow-[0_0_30px_rgba(239,68,68,0.1)] backdrop-blur-md">
+                    <Cloud className="h-11 w-11 text-red-400" />
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <X className="h-16 w-16 text-red-500 opacity-80" strokeWidth={2.5} />
+                    </div>
+                  </div>
+                  <span className="text-sm font-bold tracking-wider text-red-400 opacity-80">CLOUD</span>
+                </div>
               </div>
             </div>
-          </div>
-        </section>
+            </div>
+          </SpotlightCard>
+        </FadeIn>
 
         {/* FAQ */}
-        <section id="faq" className="mx-auto max-w-[760px] scroll-mt-20 px-6 py-20">
+        <FadeIn id="faq" className="mx-auto max-w-[700px] px-6 py-[90px]">
           <h2
             className={`${display} mb-2.5 text-center text-[32px] font-bold tracking-[-0.02em] sm:text-[40px]`}
           >
@@ -533,32 +531,31 @@ export default function LandingPage() {
             What MyFirstCut does, what it doesn&apos;t, and what to expect before
             you start.
           </p>
-          <div className="flex flex-col gap-2.5">
+          <div className="flex flex-col gap-3">
             {faqs.map((faq, i) => (
-              <details
-                key={faq.question}
-                // Shared `name` makes the accordion exclusive (one open at a
-                // time) with zero JS, matching the design's behavior.
-                name="faq-accordion"
-                open={i === 0}
-                className="group rounded-[14px] border border-[rgba(255,255,255,0.1)] bg-[#0A101C] transition-colors open:border-[rgba(255,252,0,0.35)] open:bg-[#111111]"
-              >
-                <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-[22px] py-[18px] text-left text-[15.5px] font-semibold text-[#E8EDF6] [&::-webkit-details-marker]:hidden">
-                  {faq.question}
-                  <span className="flex h-[22px] w-[22px] flex-none items-center justify-center text-lg font-normal text-[#5D6B82] transition-transform group-open:rotate-45 group-open:text-[#fffc00]">
-                    +
-                  </span>
-                </summary>
-                <p className="px-[22px] pb-5 text-[14.5px] leading-[1.7] text-[#8A97AC]">
-                  {faq.answer}
-                </p>
-              </details>
+              <SpotlightCard key={faq.question} className="rounded-2xl p-0">
+                <details
+                  name="faq-accordion"
+                  open={i === 0}
+                  className="group rounded-2xl border border-[rgba(255,255,255,0.05)] bg-[#0A101C] transition-colors open:border-[rgba(255,252,0,0.35)] open:bg-[#111111]"
+                >
+                  <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-[22px] py-[18px] text-left text-[15.5px] font-semibold text-[#E8EDF6] [&::-webkit-details-marker]:hidden">
+                    {faq.question}
+                    <span className="flex h-[22px] w-[22px] flex-none items-center justify-center text-lg font-normal text-[#5D6B82] transition-transform group-open:rotate-45 group-open:text-[#fffc00]">
+                      +
+                    </span>
+                  </summary>
+                  <p className="px-[22px] pb-5 text-[14.5px] leading-[1.7] text-[#8A97AC]">
+                    {faq.answer}
+                  </p>
+                </details>
+              </SpotlightCard>
             ))}
           </div>
-        </section>
+        </FadeIn>
 
         {/* Bottom CTA */}
-        <section className="relative px-6 pb-[100px] pt-[90px] text-center">
+        <FadeIn className="mx-auto max-w-[880px] px-6 py-[100px] text-center">
           <div
             aria-hidden
             className="pointer-events-none absolute inset-0 bg-[radial-gradient(700px_320px_at_50%_100%,rgba(255,252,0,0.1),transparent_70%)]"
@@ -575,8 +572,7 @@ export default function LandingPage() {
             </h2>
             <Link
               href="/sign-up"
-              id="cta-bottom"
-              className="rounded-xl bg-[#fffc00] px-8 py-[15px] text-base font-semibold text-black shadow-[0_4px_28px_rgba(255,252,0,0.2)] transition-colors hover:bg-[#fffc00]/90"
+              className="rounded-xl bg-gradient-to-r from-[#fffc00] via-yellow-400 to-[#fffc00] bg-[length:200%_200%] animate-liquid px-8 py-4 text-[16px] font-semibold text-black shadow-[0_0_40px_rgba(255,252,0,0.3)] transition-all hover:scale-105"
             >
               Get Started Free
             </Link>
@@ -588,7 +584,7 @@ export default function LandingPage() {
               Chromium browsers support today.
             </p>
           </div>
-        </section>
+        </FadeIn>
         
         <MarketingFooter />
       </main>
