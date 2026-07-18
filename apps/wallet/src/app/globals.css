@@ -11,18 +11,18 @@
 
 :root {
   /* Surface hierarchy */
-  --wallet-surface: #ffffff;
-  --wallet-surface-raised: #f8f9fb;
-  --wallet-surface-sunken: #f1f3f5;
+  --wallet-surface: #2c2c2c;
+  --wallet-surface-raised: #3a3a3a;
+  --wallet-surface-sunken: #111111;
 
   /* Borders and dividers */
-  --wallet-border: #e5e7eb;
-  --wallet-border-subtle: #f0f0f0;
+  --wallet-border: #3a3a3a;
+  --wallet-border-subtle: #2c2c2c;
 
-  /* Accent (calm blue, shared with the ecosystem focus ring) */
-  --wallet-accent: #3b82f6;
-  --wallet-accent-hover: #2563eb;
-  --wallet-accent-subtle: rgba(59, 130, 246, 0.08);
+  /* Accent */
+  --wallet-accent: #fffc00;
+  --wallet-accent-hover: #2997ff;
+  --wallet-accent-subtle: rgba(255, 252, 0, 0.08);
 
   /* State colours */
   --wallet-success: #16a34a;
@@ -33,23 +33,23 @@
   --wallet-danger-subtle: rgba(239, 68, 68, 0.06);
 
   /* Text hierarchy */
-  --wallet-text-primary: #111827;
-  --wallet-text-secondary: #6b7280;
-  --wallet-text-tertiary: #9ca3af;
+  --wallet-text-primary: #f2f2f2;
+  --wallet-text-secondary: #aaaaaa;
+  --wallet-text-tertiary: #666666;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --wallet-surface: #0f0f12;
-    --wallet-surface-raised: #18181b;
-    --wallet-surface-sunken: #09090b;
+    --wallet-surface: #2c2c2c;
+    --wallet-surface-raised: #3a3a3a;
+    --wallet-surface-sunken: #111111;
 
-    --wallet-border: #27272a;
-    --wallet-border-subtle: #1e1e22;
+    --wallet-border: #3a3a3a;
+    --wallet-border-subtle: #2c2c2c;
 
-    --wallet-accent: #60a5fa;
-    --wallet-accent-hover: #93bbfd;
-    --wallet-accent-subtle: rgba(96, 165, 250, 0.1);
+    --wallet-accent: #fffc00;
+    --wallet-accent-hover: #2997ff;
+    --wallet-accent-subtle: rgba(255, 252, 0, 0.08);
 
     --wallet-success: #4ade80;
     --wallet-success-subtle: rgba(74, 222, 128, 0.1);
@@ -58,9 +58,9 @@
     --wallet-danger: #f87171;
     --wallet-danger-subtle: rgba(248, 113, 113, 0.08);
 
-    --wallet-text-primary: #f4f4f5;
-    --wallet-text-secondary: #a1a1aa;
-    --wallet-text-tertiary: #71717a;
+    --wallet-text-primary: #f2f2f2;
+    --wallet-text-secondary: #aaaaaa;
+    --wallet-text-tertiary: #666666;
   }
 }
 
@@ -118,3 +118,23 @@
                 0 4px 16px -2px rgba(0, 0, 0, 0.3);
   }
 }
+
+/* Custom Scrollbar */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--wallet-border);
+  border-radius: 10px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: var(--wallet-text-tertiary);
+}
+

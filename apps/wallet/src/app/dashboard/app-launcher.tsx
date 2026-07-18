@@ -1,124 +1,91 @@
 "use client";
 
 import React from "react";
-import { Scissors, PieChart, Image as ImageIcon, ArrowRight } from "lucide-react";
+import { Scissors } from "lucide-react";
 import { ROUGH_CUT_URL } from "@/lib/env";
 
 export function AppLauncher() {
   return (
-    <section aria-label="Ecosystem Apps" className="wallet-fade-in flex flex-col gap-4">
+    <section 
+      aria-label="Works with apps" 
+      className="wallet-fade-in flex flex-col p-6 rounded-2xl gap-4"
+      style={{ background: "var(--wallet-surface)", border: "1px solid var(--wallet-border)" }}
+    >
       <h2
-        className="text-sm font-semibold tracking-wide uppercase px-2"
+        className="text-xs font-bold uppercase tracking-wide"
         style={{ color: "var(--wallet-text-secondary)" }}
       >
-        Subi Apps
+        Works with
       </h2>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2 gap-4">
-        {/* Active App: Rough Cut */}
+      
+      <div className="flex flex-col gap-2">
+        {/* Active App: MyFirstCut */}
         <a
           href={ROUGH_CUT_URL + "/dashboard"}
-          className="wallet-card group relative p-5 flex flex-col gap-4 overflow-hidden transition-all duration-300"
+          className="group relative px-4 py-3.5 flex items-center gap-4 rounded-xl transition-all duration-200 hover:bg-white/5"
+          style={{ background: "var(--wallet-surface-sunken)" }}
         >
-          <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-          
-          <div className="flex items-center justify-between">
-            <div
-              className="p-2 rounded-xl"
-              style={{
-                background: "var(--wallet-surface-sunken)",
-                color: "var(--wallet-accent)",
-              }}
-            >
-              <Scissors size={24} strokeWidth={2} />
-            </div>
-            <ArrowRight
-              size={18}
-              className="text-gray-400 opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all"
-            />
+          <div
+            className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-sm"
+            style={{
+              background: "#fffc00",
+              color: "#000",
+            }}
+          >
+            <Scissors size={20} strokeWidth={2.5} />
           </div>
           
-          <div>
-            <h3 className="font-bold text-lg" style={{ color: "var(--wallet-text-primary)" }}>
-              Rough Cut
+          <div className="flex flex-col">
+            <h3 className="font-bold text-sm" style={{ color: "var(--wallet-text-primary)" }}>
+              MyFirstCut
             </h3>
-            <p className="text-sm mt-1" style={{ color: "var(--wallet-text-secondary)" }}>
-              AI-powered video cutting and transcription.
+            <p className="text-[11px] mt-0.5" style={{ color: "var(--wallet-text-secondary)" }}>
+              AI video cutting & transcription
             </p>
           </div>
         </a>
 
         {/* Coming Soon: Infographics */}
         <div
-          className="wallet-card relative p-5 flex flex-col gap-4 overflow-hidden opacity-75 grayscale-[0.3]"
-          style={{ cursor: "not-allowed", background: "var(--wallet-surface-raised)" }}
+          className="relative px-4 py-3.5 flex items-center gap-4 rounded-xl"
+          style={{ background: "var(--wallet-surface-sunken)", opacity: 0.6 }}
         >
-          <div className="flex items-center justify-between">
-            <div
-              className="p-2 rounded-xl"
-              style={{
-                background: "var(--wallet-surface-sunken)",
-                color: "var(--wallet-text-tertiary)",
-              }}
-            >
-              <PieChart size={24} strokeWidth={2} />
-            </div>
-            <span
-              className="text-xs font-semibold px-2 py-1 rounded-full uppercase tracking-wider"
-              style={{
-                background: "var(--wallet-surface-sunken)",
-                color: "var(--wallet-text-tertiary)",
-              }}
-            >
-              Coming Soon
-            </span>
+          <div
+            className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border border-white/10"
+            style={{ background: "transparent" }}
+          >
           </div>
           
-          <div>
-            <h3 className="font-bold text-lg" style={{ color: "var(--wallet-text-tertiary)" }}>
+          <div className="flex flex-col">
+            <h3 className="font-bold text-sm" style={{ color: "var(--wallet-text-secondary)" }}>
               Infographics
             </h3>
-            <p className="text-sm mt-1" style={{ color: "var(--wallet-text-tertiary)" }}>
-              Automated data visualization from transcripts.
+            <p className="text-[11px] mt-0.5" style={{ color: "var(--wallet-text-tertiary)" }}>
+              Coming soon
             </p>
           </div>
         </div>
 
         {/* Coming Soon: Thumbnail */}
         <div
-          className="wallet-card relative p-5 flex flex-col gap-4 overflow-hidden opacity-75 grayscale-[0.3]"
-          style={{ cursor: "not-allowed", background: "var(--wallet-surface-raised)" }}
+          className="relative px-4 py-3.5 flex items-center gap-4 rounded-xl"
+          style={{ background: "var(--wallet-surface-sunken)", opacity: 0.6 }}
         >
-          <div className="flex items-center justify-between">
-            <div
-              className="p-2 rounded-xl"
-              style={{
-                background: "var(--wallet-surface-sunken)",
-                color: "var(--wallet-text-tertiary)",
-              }}
-            >
-              <ImageIcon size={24} strokeWidth={2} />
-            </div>
-            <span
-              className="text-xs font-semibold px-2 py-1 rounded-full uppercase tracking-wider"
-              style={{
-                background: "var(--wallet-surface-sunken)",
-                color: "var(--wallet-text-tertiary)",
-              }}
-            >
-              Coming Soon
-            </span>
+          <div
+            className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border border-white/10"
+            style={{ background: "transparent" }}
+          >
           </div>
           
-          <div>
-            <h3 className="font-bold text-lg" style={{ color: "var(--wallet-text-tertiary)" }}>
+          <div className="flex flex-col">
+            <h3 className="font-bold text-sm" style={{ color: "var(--wallet-text-secondary)" }}>
               Thumbnail
             </h3>
-            <p className="text-sm mt-1" style={{ color: "var(--wallet-text-tertiary)" }}>
-              AI-generated youtube thumbnails.
+            <p className="text-[11px] mt-0.5" style={{ color: "var(--wallet-text-tertiary)" }}>
+              Coming soon
             </p>
           </div>
         </div>
-
       </div>
     </section>
   );

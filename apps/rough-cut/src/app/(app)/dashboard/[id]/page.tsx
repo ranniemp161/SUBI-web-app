@@ -2,8 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useParams, useRouter } from "next/navigation";
-import * as Select from "@radix-ui/react-select";
-import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
   ArrowLeft,
   Clapperboard,
@@ -25,11 +23,10 @@ import {
   Clock,
   Check,
   RotateCcw,
-  ChevronDown,
-  Film,
   type LucideIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
+import { ExportModal } from "@/components/export-modal";
 import { Toaster, toast } from "sonner";
 import FilePicker from "@/components/file-picker";
 import ProgressRing from "@/components/progress-ring";
@@ -77,8 +74,9 @@ import {
 } from "@/lib/edl";
 import { applyAiCuts, type AiCutRun } from "@/lib/ai-cuts";
 import { ConfirmDialog } from "@repo/ui";
-import { getPusherClient } from "@/lib/pusher";
-import { compare } from "fast-json-patch";
+import { FeedbackButton } from "@/components/feedback-button";
+import { getPusherClient, projectChannel } from "@/lib/pusher";
+import { createPatch } from "rfc6902";
 
 // A project holds at most this many stored AI Cut runs at once (ADR 0002-ai-cut-paid-rerun).
 const AI_CUT_RUN_LIMIT = 3;
@@ -296,7 +294,7 @@ export default function EditorPage() {
     const pusher = getPusherClient();
     if (!pusher) return;
 
-    const channel = pusher.subscribe(id);
+    const channel = pusher.subscribe(projectChannel(id));
     channel.bind("transcript_status", (data: { status: "ready" | "failed" }) => {
       if (!settled && (data.status === "ready" || data.status === "failed")) {
         settled = true;
@@ -306,7 +304,7 @@ export default function EditorPage() {
 
     return () => {
       channel.unbind("transcript_status");
-      pusher.unsubscribe(id);
+      pusher.unsubscribe(projectChannel(id));
     };
   }, [transcriptStatus, id]);
 
@@ -343,7 +341,7 @@ export default function EditorPage() {
       
       if (lastSavedEdlRef.current) {
         // We have a baseline to diff against. Send a patch.
-        const patch = compare(lastSavedEdlRef.current, targetEdl);
+        const patch = createPatch(lastSavedEdlRef.current, targetEdl);
         // Only send a request if there is an actual difference.
         if (patch.length === 0) {
           setSavedAt("saved");
@@ -768,7 +766,7 @@ export default function EditorPage() {
           toast.error("Not enough funds", {
             id: "ai-cut",
             description: "This AI pass needs more credit than you have left.",
-            action: { label: "Add funds", onClick: () => window.open(WALLET_DASHBOARD_URL, "_blank") },
+            action: { label: "Add funds", onClick: () => { window.location.href = WALLET_DASHBOARD_URL; } },
           });
           return;
         }
@@ -800,6 +798,18 @@ export default function EditorPage() {
         });
         return;
       }
+
+      // If the Vercel Proxy heartbeat stream started successfully (200 OK) but Gemini failed 
+      // mid-stream, the error is shipped inside the JSON payload.
+      const lateError = (data as { error?: string } | null)?.error;
+      if (lateError) {
+        toast.error("AI cut failed", {
+          id: "ai-cut",
+          description: lateError,
+        });
+        return;
+      }
+
       const run = data as AiCutRun;
       setProject((prev) =>
         prev
@@ -1361,7 +1371,7 @@ export default function EditorPage() {
               }
               title={tool.title ?? tool.label}
               className={`relative flex w-14 flex-col items-center gap-1 rounded-lg py-2 text-[10px] ${tool.active
-                ? "bg-blue-500/15 text-blue-300 transition-colors hover:bg-blue-500/25"
+                ? "bg-accent/15 text-accent transition-colors hover:bg-accent/25"
                 : "cursor-not-allowed text-foreground/30"
                 }`}
             >
@@ -1400,7 +1410,7 @@ export default function EditorPage() {
                   type="button"
                   aria-label="Play"
                   onClick={() => playerRef.current?.play()}
-                  className="absolute inset-0 m-auto flex h-16 w-16 items-center justify-center rounded-full bg-blue-600/90 text-white shadow-lg motion-safe:transition-transform motion-safe:hover:scale-105"
+                  className="absolute inset-0 m-auto flex h-16 w-16 items-center justify-center rounded-full bg-accent/90 text-accent-foreground shadow-lg motion-safe:transition-transform motion-safe:hover:scale-105"
                 >
                   <Play className="h-7 w-7 translate-x-0.5 fill-current" />
                 </button>
@@ -1429,7 +1439,7 @@ export default function EditorPage() {
                 type="button"
                 aria-label={isPlaying ? "Pause" : "Play"}
                 onClick={() => playerRef.current?.togglePlay()}
-                className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-600 text-white transition-colors hover:bg-blue-500"
+                className="flex h-10 w-10 items-center justify-center rounded-full bg-accent text-accent-foreground transition-colors hover:bg-accent-hover"
               >
                 {isPlaying ? (
                   <Pause className="h-5 w-5 fill-current" />
@@ -1486,7 +1496,7 @@ export default function EditorPage() {
           aria-label="Resize transcript panel"
           className="group relative z-10 w-1 shrink-0 cursor-col-resize"
         >
-          <div className="absolute inset-y-0 -left-1 -right-1 transition-colors group-hover:bg-blue-500/30" />
+          <div className="absolute inset-y-0 -left-1 -right-1 transition-colors group-hover:bg-accent/30" />
         </div>
 
         {/* Transcript */}
@@ -1561,7 +1571,7 @@ export default function EditorPage() {
                   aria-pressed={sensitivity === level}
                   title={`${level} auto-cut`}
                   className={`px-2 py-0.5 capitalize transition-colors ${sensitivity === level
-                    ? "bg-blue-600 text-white"
+                    ? "bg-accent text-accent-foreground"
                     : "text-foreground/55 hover:bg-foreground/10 hover:text-foreground/80"
                     }`}
                 >
@@ -1581,7 +1591,7 @@ export default function EditorPage() {
           <button
             type="button"
             onClick={() => setShowShortcuts(true)}
-            className="text-blue-400/70 hover:text-blue-400 hover:underline"
+            className="text-accent/70 hover:text-accent hover:underline"
           >
             Shortcuts (?)
           </button>
@@ -1608,9 +1618,9 @@ export default function EditorPage() {
               "!rounded-lg !border !border-foreground/10 !bg-background !text-foreground !shadow-2xl",
             description: "!text-foreground/60",
             actionButton:
-              "!rounded-md !bg-blue-600 !px-2.5 !py-1 !text-xs !font-medium !text-white hover:!bg-blue-500",
+              "!rounded-md !bg-accent !px-2.5 !py-1 !text-xs !font-medium !text-accent-foreground hover:!bg-accent-hover",
             error: "!text-red-300",
-            icon: "!text-blue-300",
+            icon: "!text-accent",
           },
         }}
       />
@@ -1674,7 +1684,7 @@ function AutoChainProgressBar({ wordCount }: { wordCount: number }) {
     <div className="w-full max-w-xs">
       <div className="mb-1.5 flex items-center justify-between text-[11px] font-medium text-foreground/50">
         <span>Working…</span>
-        <span className="tabular-nums font-semibold text-blue-400">{rounded}%</span>
+        <span className="tabular-nums font-semibold text-accent">{rounded}%</span>
       </div>
       <div
         role="progressbar"
@@ -1685,7 +1695,7 @@ function AutoChainProgressBar({ wordCount }: { wordCount: number }) {
         className="h-1.5 w-full overflow-hidden rounded-full bg-foreground/10"
       >
         <div
-          className="h-full rounded-full bg-blue-500 transition-all duration-300"
+          className="h-full rounded-full bg-accent transition-all duration-300"
           style={{ width: `${percent}%` }}
         />
       </div>
@@ -1747,7 +1757,7 @@ function StatusScreen({
   return (
     <div className="flex h-screen flex-col items-center justify-center gap-4 bg-background px-6 text-center">
       <div
-        className={`flex h-14 w-14 items-center justify-center rounded-2xl ${tone === "error" ? "bg-red-500/10 text-red-400" : "bg-blue-500/15 text-blue-300"
+        className={`flex h-14 w-14 items-center justify-center rounded-2xl ${tone === "error" ? "bg-red-500/10 text-red-400" : "bg-accent/15 text-accent"
           }`}
       >
         {icon}
@@ -1823,126 +1833,6 @@ function EditorSkeleton() {
   );
 }
 
-/** Shared styling for the two select-style controls in the export cluster (AC-8). */
-const dropdownTriggerClass =
-  "flex items-center gap-1.5 rounded-lg border border-foreground/10 bg-transparent px-2 py-1.5 text-sm text-foreground/70 transition-colors hover:bg-foreground/10 disabled:cursor-not-allowed disabled:opacity-50";
-const dropdownOptionClass =
-  "flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm transition-colors hover:bg-foreground/10";
-
-/**
- * A design-token-styled listbox replacing the browser's native `<select>`
- * chrome (AC-8), built on Radix Select rather than hand-rolled dismiss/focus
- * logic (the pattern packages/ui/src/confirm-dialog.tsx already established:
- * prefer Radix over reimplementing focus trapping, ESC handling, and overlay
- * dismissal). Radix supplies arrow-key navigation between options and
- * restores focus to the trigger on close for free.
- */
-function StyledSelect<T extends string>({
-  id,
-  label,
-  value,
-  options,
-  onChange,
-  disabled,
-  title,
-}: {
-  id: string;
-  label: string;
-  value: T;
-  options: { value: T; label: string }[];
-  onChange: (value: T) => void;
-  disabled?: boolean;
-  title?: string;
-}) {
-  return (
-    <Select.Root value={value} onValueChange={(v) => onChange(v as T)} disabled={disabled}>
-      <Select.Trigger id={id} title={title} aria-label={label} className={dropdownTriggerClass}>
-        <Select.Value />
-        <Select.Icon>
-          <ChevronDown className="h-3.5 w-3.5" />
-        </Select.Icon>
-      </Select.Trigger>
-      <Select.Portal>
-        <Select.Content
-          position="popper"
-          sideOffset={4}
-          align="end"
-          className="z-20 min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-lg border border-foreground/10 bg-background py-1 shadow-lg"
-        >
-          <Select.Viewport>
-            {options.map((opt) => (
-              <Select.Item
-                key={opt.value}
-                value={opt.value}
-                className={`${dropdownOptionClass} cursor-pointer select-none outline-none data-[highlighted]:bg-foreground/10 data-[state=checked]:text-blue-300 data-[state=unchecked]:text-foreground/70`}
-              >
-                <Select.ItemText>{opt.label}</Select.ItemText>
-                <Select.ItemIndicator className="ml-auto">
-                  <Check className="h-3.5 w-3.5" />
-                </Select.ItemIndicator>
-              </Select.Item>
-            ))}
-          </Select.Viewport>
-        </Select.Content>
-      </Select.Portal>
-    </Select.Root>
-  );
-}
-
-/**
- * The export cluster's format menu (AC-16): one styled trigger, matching the
- * resolution dropdown, opening two action entries (FCPXML, CMX 3600 EDL).
- * Each entry immediately generates and downloads its format, then closes —
- * there's no persisted selection, just two actions behind one control. Built
- * on Radix DropdownMenu for the same reason as StyledSelect above: this is a
- * menu of actions, not a value picker, so DropdownMenu (not Select) is the
- * semantic fit.
- */
-function ExportFormatMenu({
-  onExportFcpxml,
-  onExportCmx3600,
-  disabled,
-  title,
-}: {
-  onExportFcpxml?: () => void;
-  onExportCmx3600?: () => void;
-  disabled?: boolean;
-  title?: string;
-}) {
-  return (
-    <DropdownMenu.Root>
-      <DropdownMenu.Trigger
-        disabled={disabled}
-        title={title ?? "Export cut list for DaVinci Resolve or Premiere Pro"}
-        className={dropdownTriggerClass}
-      >
-        <Film className="h-4 w-4" />
-        For DaVinci / Premiere
-        <ChevronDown className="h-3.5 w-3.5" />
-      </DropdownMenu.Trigger>
-      <DropdownMenu.Portal>
-        <DropdownMenu.Content
-          align="end"
-          sideOffset={4}
-          className="z-20 min-w-[12rem] overflow-hidden rounded-lg border border-foreground/10 bg-background py-1 shadow-lg"
-        >
-          <DropdownMenu.Item
-            onSelect={() => onExportFcpxml?.()}
-            className={`${dropdownOptionClass} cursor-pointer select-none outline-none data-[highlighted]:bg-foreground/10`}
-          >
-            FCPXML (.fcpxml)
-          </DropdownMenu.Item>
-          <DropdownMenu.Item
-            onSelect={() => onExportCmx3600?.()}
-            className={`${dropdownOptionClass} cursor-pointer select-none outline-none data-[highlighted]:bg-foreground/10`}
-          >
-            CMX 3600 EDL (.edl)
-          </DropdownMenu.Item>
-        </DropdownMenu.Content>
-      </DropdownMenu.Portal>
-    </DropdownMenu.Root>
-  );
-}
 
 function TopBar({
   fileName,
@@ -1954,7 +1844,6 @@ function TopBar({
   onCancelExport,
   exportBlockedReason,
   exportState = "idle",
-  exportMaxHeight = null,
   onExportMaxHeightChange,
   onExportFcpxml,
   onExportCmx3600,
@@ -1981,6 +1870,7 @@ function TopBar({
   // Non-empty when both format export options should be disabled (no kept EDL yet); doubles as the tooltip.
   exportFormatBlockedReason?: string;
 }) {
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const iconBtn =
     "flex h-8 w-8 items-center justify-center rounded-md text-foreground/60 hover:bg-foreground/10 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40";
   const busy = exportState !== "idle";
@@ -1996,7 +1886,7 @@ function TopBar({
           <ArrowLeft className="h-4 w-4" /> Dashboard
         </ExitToDashboardLink>
         <div className="flex items-center gap-2">
-          <span className="flex h-7 w-7 items-center justify-center rounded-md bg-blue-500/15 text-blue-300">
+          <span className="flex h-7 w-7 items-center justify-center rounded-md bg-accent/15 text-accent">
             <Clapperboard className="h-4 w-4" />
           </span>
           <div>
@@ -2018,6 +1908,7 @@ function TopBar({
       </div>
 
       <div className="flex items-center gap-2">
+        <FeedbackButton variant="icon" />
         <div className="flex items-center rounded-lg border border-foreground/10">
           <button type="button" onClick={onUndo} disabled={disabled} aria-label="Undo" className={iconBtn}>
             <Undo2 className="h-4 w-4" />
@@ -2026,25 +1917,6 @@ function TopBar({
             <Redo2 className="h-4 w-4" />
           </button>
         </div>
-        <StyledSelect
-          id="export-quality"
-          label="Export resolution"
-          value={exportMaxHeight === null ? "source" : String(exportMaxHeight)}
-          onChange={(v) => onExportMaxHeightChange?.(v === "source" ? null : Number(v))}
-          disabled={busy}
-          title="Export resolution — downscales larger sources, never upscales"
-          options={[
-            { value: "source", label: "Source" },
-            { value: "1080", label: "1080p" },
-            { value: "720", label: "720p" },
-          ]}
-        />
-        <ExportFormatMenu
-          onExportFcpxml={onExportFcpxml}
-          onExportCmx3600={onExportCmx3600}
-          disabled={exportFormatDisabled}
-          title={exportFormatBlockedReason}
-        />
         {showCancel && (
           <button
             type="button"
@@ -2059,10 +1931,10 @@ function TopBar({
         )}
         <button
           type="button"
-          onClick={onExport}
-          disabled={exportDisabled}
-          title={exportBlockedReason ?? "Export to MP4"}
-          className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-blue-600/60 disabled:text-white/70 disabled:hover:bg-blue-600/60"
+          onClick={() => setIsExportModalOpen(true)}
+          disabled={exportDisabled && exportFormatDisabled}
+          title={exportDisabled && exportFormatDisabled ? "Export is currently unavailable" : "Export options"}
+          className="flex items-center gap-1.5 rounded-lg bg-accent px-4 py-1.5 text-sm font-semibold text-accent-foreground transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:bg-accent/60 disabled:text-accent-foreground/70 disabled:hover:bg-accent/60"
         >
           {busy ? (
             <Loader2 className="h-4 w-4 motion-safe:animate-spin" />
@@ -2072,6 +1944,27 @@ function TopBar({
           {busy ? "Exporting…" : "Export"}
         </button>
       </div>
+
+      <ExportModal
+        isOpen={isExportModalOpen}
+        onClose={() => setIsExportModalOpen(false)}
+        onExportMp4={(maxHeight) => {
+          onExportMaxHeightChange?.(maxHeight);
+          onExport?.();
+          setIsExportModalOpen(false);
+        }}
+        onExportFcpxml={() => {
+          onExportFcpxml?.();
+          setIsExportModalOpen(false);
+        }}
+        onExportCmx3600={() => {
+          onExportCmx3600?.();
+          setIsExportModalOpen(false);
+        }}
+        exportBlockedReason={exportBlockedReason}
+        exportFormatBlockedReason={exportFormatBlockedReason}
+        busy={busy}
+      />
     </div>
   );
 }
@@ -2178,7 +2071,7 @@ function RetakeReviewQueue({ edl, onSeek, onRestoreSegment, onClose }: RetakeRev
             <button
               type="button"
               onClick={onClose}
-              className="w-full rounded-lg bg-blue-500/20 px-3 py-2 text-sm font-medium text-blue-300 hover:bg-blue-500/30"
+              className="w-full rounded-lg bg-accent/20 px-3 py-2 text-sm font-medium text-accent hover:bg-accent/30"
             >
               Done
             </button>

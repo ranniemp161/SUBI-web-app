@@ -7,6 +7,17 @@ if (process.env.NEXT_PUBLIC_SENTRY_DSN) {
     dsn: process.env.NEXT_PUBLIC_SENTRY_DSN,
     tracesSampleRate: Number(process.env.NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE ?? "0"),
     environment: process.env.NODE_ENV,
+    integrations: [
+      Sentry.feedbackIntegration({
+        colorScheme: "system",
+        autoInject: false,
+        submitButtonLabel: "Send",
+        formTitle: "Request a feature or share feedback",
+        messagePlaceholder:
+          "What feature would make Ruff Cut better for you? The more detail the better.",
+        showBranding: false,
+      }),
+    ],
   });
 }
 

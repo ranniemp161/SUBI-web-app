@@ -1,12 +1,18 @@
 "use client";
 
+import { useState, useMemo, useTransition } from "react";
 import { formatUsd } from "@repo/ui";
+import { Scissors, FileText, Plus, Loader2, RefreshCcw, Banknote, DollarSign } from "lucide-react";
+import { loadMoreTransactions } from "../actions";
 
 interface LedgerEntry {
   id: string;
   reason: string;
   deltaMicros: number;
   createdAt: string | Date;
+  fileName?: string | null;
+  projectId?: string | null;
+  cardInfo?: string | null;
 }
 
 interface TransactionHistoryProps {
@@ -19,6 +25,7 @@ const REASON_LABELS: Record<string, string> = {
   auto_recharge: "Auto-recharge",
   transcription: "Transcription",
   ai_cut: "AI Cut",
+  my_first_cut: "MyFirstCut",
   refund: "Refund",
   conversion: "Balance conversion",
   grant: "Monthly grant",
@@ -27,145 +34,221 @@ const REASON_LABELS: Record<string, string> = {
   reclaim: "Hold released",
 };
 
-/**
- * Refined ledger table: date, humanised reason, and signed dollar amount.
- * Deposits are green, charges are neutral, and there is a friendly empty state.
- */
-export function TransactionHistory({ entries }: TransactionHistoryProps) {
+function getIconForReason(reason: string) {
+  switch (reason) {
+    case "my_first_cut":
+    case "ai_cut":
+      return <Scissors className="h-[14px] w-[14px]" />;
+    case "transcription":
+      return <FileText className="h-[14px] w-[14px]" />;
+    case "purchase":
+    case "auto_recharge":
+    case "grant":
+      return <Plus className="h-[14px] w-[14px]" />;
+    case "refund":
+    case "reclaim":
+      return <RefreshCcw className="h-[14px] w-[14px]" />;
+    case "conversion":
+      return <Banknote className="h-[14px] w-[14px]" />;
+    default:
+      return <DollarSign className="h-[14px] w-[14px]" />;
+  }
+}
+
+export function TransactionHistory({ entries: initialEntries }: TransactionHistoryProps) {
+  const [hideZero, setHideZero] = useState(false);
+  const [entries, setEntries] = useState<LedgerEntry[]>(initialEntries);
+  const [isPending, startTransition] = useTransition();
+  const [hasMore, setHasMore] = useState(initialEntries.length >= 50);
+
+  const combinedEntries = useMemo(() => {
+    const result: LedgerEntry[] = [];
+    const projectMap = new Map<string, LedgerEntry>();
+
+    for (const entry of entries) {
+      if ((entry.reason === "transcription" || entry.reason === "ai_cut") && entry.projectId) {
+        if (projectMap.has(entry.projectId)) {
+          const existing = projectMap.get(entry.projectId)!;
+          existing.deltaMicros += entry.deltaMicros;
+        } else {
+          const combined = { ...entry, reason: "my_first_cut" };
+          projectMap.set(entry.projectId, combined);
+          result.push(combined);
+        }
+      } else {
+        result.push(entry);
+      }
+    }
+    return result;
+  }, [entries]);
+
+  const displayedEntries = hideZero
+    ? combinedEntries.filter((entry) => entry.deltaMicros !== 0)
+    : combinedEntries;
+
+  const groupedEntries = useMemo(() => {
+    const groups: { dateKey: string; entries: LedgerEntry[]; netMicros: number }[] = [];
+    let currentGroupKey = "";
+    
+    for (const entry of displayedEntries) {
+      const entryDate = new Date(entry.createdAt);
+      const dateStr = entryDate.toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: entryDate.getFullYear() !== new Date().getFullYear() ? "numeric" : undefined,
+      });
+      
+      const isToday = dateStr === new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      const groupKey = isToday ? `Today · ${dateStr}` : dateStr;
+      
+      if (groupKey !== currentGroupKey) {
+        groups.push({ dateKey: groupKey, entries: [], netMicros: 0 });
+        currentGroupKey = groupKey;
+      }
+      
+      const currentGroup = groups[groups.length - 1];
+      currentGroup.entries.push(entry);
+      currentGroup.netMicros += entry.deltaMicros;
+    }
+    
+    return groups;
+  }, [displayedEntries]);
+
+  const handleLoadMore = () => {
+    if (entries.length === 0) return;
+    const oldestEntry = entries[entries.length - 1];
+    
+    startTransition(async () => {
+      try {
+        const olderEntries = await loadMoreTransactions(
+          typeof oldestEntry.createdAt === "string" ? oldestEntry.createdAt : oldestEntry.createdAt.toISOString()
+        );
+        
+        if (olderEntries.length > 0) {
+          setEntries((prev) => [...prev, ...olderEntries]);
+        }
+        
+        if (olderEntries.length < 50) {
+          setHasMore(false);
+        }
+      } catch (err) {
+        console.error("Failed to load more transactions", err);
+      }
+    });
+  };
+
   return (
     <section
-      className="wallet-fade-in"
+      className="wallet-fade-in flex flex-col p-6 rounded-2xl"
       aria-label="Transaction history"
-      style={{ animationDelay: "240ms" }}
+      style={{ background: "var(--wallet-surface)", border: "1px solid var(--wallet-border)" }}
     >
-      <h2
-        className="text-lg font-semibold mb-4"
-        style={{ color: "var(--wallet-text-primary)" }}
-      >
-        Transaction history
-      </h2>
+      <div className="flex items-center justify-between mb-4">
+        <h2
+          className="text-lg font-bold"
+          style={{ color: "var(--wallet-text-primary)" }}
+        >
+          Transaction history
+        </h2>
+        <label
+          className="flex items-center gap-2 text-[11px] cursor-pointer select-none"
+          style={{ color: "var(--wallet-text-secondary)" }}
+        >
+          <input
+            type="checkbox"
+            checked={hideZero}
+            onChange={(e) => setHideZero(e.target.checked)}
+            className="h-3.5 w-3.5 rounded-sm border-gray-600 bg-transparent text-[#fffc00] focus:ring-0 focus:ring-offset-0"
+          />
+          Hide $0.00 entries
+        </label>
+      </div>
 
-      <div
-        className="rounded-xl overflow-hidden"
-        style={{
-          background: "var(--wallet-surface)",
-          border: "1px solid var(--wallet-border)",
-        }}
-      >
-        <table className="w-full text-left">
-          <thead>
-            <tr
-              style={{
-                background: "var(--wallet-surface-raised)",
-                borderBottom: "1px solid var(--wallet-border)",
-              }}
-            >
-              <th
-                className="px-5 py-3 text-xs font-semibold uppercase tracking-wide"
-                style={{ color: "var(--wallet-text-tertiary)" }}
-              >
-                Date
-              </th>
-              <th
-                className="px-5 py-3 text-xs font-semibold uppercase tracking-wide"
-                style={{ color: "var(--wallet-text-tertiary)" }}
-              >
-                Description
-              </th>
-              <th
-                className="px-5 py-3 text-xs font-semibold uppercase tracking-wide text-right"
-                style={{ color: "var(--wallet-text-tertiary)" }}
-              >
-                Amount
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {entries.length === 0 ? (
-              <tr>
-                <td
-                  colSpan={3}
-                  className="px-5 py-12 text-center text-sm"
-                  style={{ color: "var(--wallet-text-tertiary)" }}
-                >
-                  <svg
-                    className="mx-auto mb-3 h-8 w-8"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                    aria-hidden="true"
-                    style={{ color: "var(--wallet-text-tertiary)" }}
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={1.5}
-                      d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
-                    />
-                  </svg>
-                  No transactions yet. Your history will appear here after your
-                  first purchase or usage.
-                </td>
-              </tr>
+      <div className="flex flex-col">
+        {groupedEntries.length === 0 ? (
+          <div className="px-5 py-12 text-center text-sm" style={{ color: "var(--wallet-text-tertiary)" }}>
+            No transactions yet.
+          </div>
+        ) : (
+          <div className="flex flex-col overflow-y-auto custom-scrollbar gap-4" style={{ maxHeight: "700px" }}>
+            {groupedEntries.map((group) => (
+              <div key={group.dateKey} className="flex flex-col">
+                <div className="flex items-center justify-between text-[11px] font-bold mb-3 px-1">
+                  <span style={{ color: "var(--wallet-text-primary)" }}>{group.dateKey}</span>
+                  <span style={{ color: "var(--wallet-text-secondary)" }}>
+                    Net {group.netMicros >= 0 ? "+" : "-"}{formatUsd(Math.abs(group.netMicros))}
+                  </span>
+                </div>
+                
+                <div className="flex flex-col gap-1">
+                  {group.entries.map((entry) => {
+                    const isDeposit = entry.deltaMicros > 0;
+                    const isZero = entry.deltaMicros === 0;
+                    const label = REASON_LABELS[entry.reason] ?? entry.reason.replace(/_/g, " ");
+                    const subtitle = entry.reason === "purchase" || entry.reason === "auto_recharge" ? entry.cardInfo : entry.fileName;
+
+                    return (
+                      <div
+                        key={entry.id}
+                        className="group flex items-center justify-between px-3 py-2 rounded-xl transition-colors duration-150"
+                        onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.02)")}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                      >
+                        <div className="flex items-center gap-3">
+                          <div 
+                            className="flex h-[26px] w-[26px] items-center justify-center rounded-[6px]"
+                            style={{ background: "#111111", color: "var(--wallet-text-secondary)" }}
+                          >
+                            {getIconForReason(entry.reason)}
+                          </div>
+                          <div className="flex flex-col">
+                            <span className="text-[12px] font-semibold capitalize" style={{ color: "var(--wallet-text-primary)" }}>
+                              {label}
+                            </span>
+                            {subtitle && (
+                              <span className="text-[10px]" style={{ color: "var(--wallet-text-tertiary)" }}>
+                                {subtitle}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <div
+                          className="text-[12px] font-bold tabular-nums"
+                          style={{ color: isDeposit && !isZero ? "var(--wallet-success)" : "var(--wallet-text-primary)" }}
+                        >
+                          {isDeposit && !isZero ? "+" : ""}{!isDeposit && !isZero ? "-" : ""}{formatUsd(Math.abs(entry.deltaMicros))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        
+        {hasMore && (
+          <button
+            onClick={handleLoadMore}
+            disabled={isPending}
+            className="w-full mt-6 py-2.5 rounded-full text-[12px] font-bold transition-colors flex justify-center items-center gap-2"
+            style={{ 
+              background: "#111111", 
+              color: "var(--wallet-text-secondary)",
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.color = "var(--wallet-text-primary)")}
+            onMouseLeave={(e) => (e.currentTarget.style.color = "var(--wallet-text-secondary)")}
+          >
+            {isPending ? (
+              <>
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Loading...
+              </>
             ) : (
-              entries.map((entry) => {
-                const isDeposit = entry.deltaMicros > 0;
-                const date = new Date(entry.createdAt);
-                const label =
-                  REASON_LABELS[entry.reason] ??
-                  entry.reason.replace(/_/g, " ");
-
-                return (
-                  <tr
-                    key={entry.id}
-                    className="transition-colors duration-150"
-                    style={{
-                      borderBottom: "1px solid var(--wallet-border-subtle)",
-                    }}
-                    onMouseEnter={(e) =>
-                      (e.currentTarget.style.background =
-                        "var(--wallet-surface-raised)")
-                    }
-                    onMouseLeave={(e) =>
-                      (e.currentTarget.style.background = "transparent")
-                    }
-                  >
-                    <td
-                      className="px-5 py-3.5 text-sm tabular-nums"
-                      style={{ color: "var(--wallet-text-secondary)" }}
-                    >
-                      {date.toLocaleDateString("en-US", {
-                        month: "short",
-                        day: "numeric",
-                        year:
-                          date.getFullYear() !== new Date().getFullYear()
-                            ? "numeric"
-                            : undefined,
-                      })}
-                    </td>
-                    <td
-                      className="px-5 py-3.5 text-sm font-medium capitalize"
-                      style={{ color: "var(--wallet-text-primary)" }}
-                    >
-                      {label}
-                    </td>
-                    <td
-                      className="px-5 py-3.5 text-sm font-semibold text-right tabular-nums"
-                      style={{
-                        color: isDeposit
-                          ? "var(--wallet-success)"
-                          : "var(--wallet-text-primary)",
-                      }}
-                    >
-                      {isDeposit ? "+" : ""}
-                      {formatUsd(entry.deltaMicros)}
-                    </td>
-                  </tr>
-                );
-              })
+              "Show earlier transactions"
             )}
-          </tbody>
-        </table>
+          </button>
+        )}
       </div>
     </section>
   );

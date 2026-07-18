@@ -82,17 +82,14 @@ export async function POST(request: Request) {
     );
   }
 
-  const limit = await ipRateLimit(request, "webhook-stripe", WEBHOOK_LIMIT, WEBHOOK_WINDOW_SECONDS);
-  if (!limit.allowed) {
-    return NextResponse.json(
-      { error: "Too many webhook requests." },
-      { status: 429 }
-    );
-  }
-
   // Raw body — the signature covers the exact bytes, so .json() would break it.
   const body = await request.text();
 
+  // Signature BEFORE the rate limit: verification is pure CPU (HMAC), while
+  // the limiter costs a Redis command. Checked in this order, unauthenticated
+  // junk can't burn the Upstash quota — whose exhaustion would flip every
+  // fail-open abuse cap in both apps to "allow" (see the 2026-07-15 DDoS
+  // review). The limiter then only ever counts Stripe-signed traffic.
   let event: Stripe.Event;
   try {
     event = getStripe().webhooks.constructEvent(body, signature, webhookSecret);
@@ -100,6 +97,14 @@ export async function POST(request: Request) {
     return NextResponse.json(
       { error: "Invalid webhook signature." },
       { status: 400 }
+    );
+  }
+
+  const limit = await ipRateLimit(request, "webhook-stripe", WEBHOOK_LIMIT, WEBHOOK_WINDOW_SECONDS);
+  if (!limit.allowed) {
+    return NextResponse.json(
+      { error: "Too many webhook requests." },
+      { status: 429 }
     );
   }
 

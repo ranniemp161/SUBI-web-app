@@ -1,6 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import proxyMiddleware, { config } from './proxy';
 import { NextResponse } from 'next/server';
+import { createRequire } from 'node:module';
+
+// The matcher strings are path-to-regexp patterns, not plain RegExp — compile
+// them with the exact library Next.js uses so these tests exercise the real
+// routing behavior (no .d.ts ships with the compiled copy, hence the cast).
+const nodeRequire = createRequire(import.meta.url);
+const { pathToRegexp } = nodeRequire('next/dist/compiled/path-to-regexp') as {
+  pathToRegexp: (path: string) => RegExp;
+};
 
 const { getMiddlewareHandler, setMiddlewareHandler } = vi.hoisted(() => {
   let handler: (...args: unknown[]) => unknown;
@@ -123,5 +132,56 @@ describe('proxy middleware', () => {
     expect(auth).toHaveBeenCalled();
     expect(protect).not.toHaveBeenCalled();
     expect(response).toBeUndefined();
+  });
+});
+
+describe('config.matcher (Edge Middleware routing)', () => {
+  const matchers = (config.matcher as string[]).map((p) => pathToRegexp(p));
+  const middlewareRuns = (pathname: string) => matchers.some((r) => r.test(pathname));
+
+  // These routes self-gate (svix signature, CRON_SECRET, per-project callback
+  // token) — the matcher must exclude them so the Edge Middleware never bills
+  // an invocation for them.
+  it.each([
+    '/api/webhooks/clerk',
+    '/api/cron/blob-sweep',
+    '/api/transcribe/callback',
+  ])('never invokes middleware for the self-gated route %s', (pathname) => {
+    expect(middlewareRuns(pathname)).toBe(false);
+  });
+
+  // Prefix cousins of the excluded routes must NOT inherit the exclusion —
+  // a future route like /api/cron-admin has no self-gate and needs Clerk.
+  it.each([
+    '/api/webhooks/clerk2',
+    '/api/cron-admin',
+    '/api/transcribe/callback-x',
+  ])('still invokes middleware for the prefix cousin %s', (pathname) => {
+    expect(middlewareRuns(pathname)).toBe(true);
+  });
+
+  it.each([
+    '/',
+    '/sign-in',
+    '/dashboard',
+    '/api/projects/123',
+    '/api/credits',
+    '/api/pusher/auth',
+    '/api/transcribe/deepgram',
+  ])('invokes middleware for %s', (pathname) => {
+    expect(middlewareRuns(pathname)).toBe(true);
+  });
+
+  it.each(['/_next/static/chunk.js', '/favicon.ico', '/logo.png'])(
+    'skips middleware for the static path %s',
+    (pathname) => {
+      expect(middlewareRuns(pathname)).toBe(false);
+    }
+  );
+
+  // The second matcher entry exists solely for this: an API route whose path
+  // ends in a static-looking extension must still get middleware.
+  it('keeps middleware on for API paths ending in a static-looking extension', () => {
+    expect(middlewareRuns('/api/export/report.csv')).toBe(true);
   });
 });

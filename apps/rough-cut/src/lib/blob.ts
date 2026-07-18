@@ -1,5 +1,8 @@
+import "server-only";
 import { del } from "@vercel/blob";
 import { reportError } from "@/lib/observability";
+
+export { uploadPathnameForProject } from "@/lib/blob-path";
 
 /**
  * Shared helpers for validating our own Vercel Blob store's public URLs.
@@ -36,19 +39,6 @@ export function isOwnBlobUrl(url: string): boolean {
 
   if (expectedBlobHostname) return hostname === expectedBlobHostname;
   return hostname.endsWith(".public.blob.vercel-storage.com");
-}
-
-/**
- * The canonical pathname a project's transcription audio is uploaded under.
- *
- * The blob-token route enforces this exact value (uniqueness comes from the
- * store's `addRandomSuffix`, not the pathname), which guarantees every upload
- * lands under the `projects/` prefix — the orphan sweep
- * (/api/cron/blob-sweep) lists that prefix, so a client that could pick its
- * own pathname could park blobs where the sweep never looks.
- */
-export function uploadPathnameForProject(projectId: string): string {
-  return `projects/${projectId}/audio`;
 }
 
 /**

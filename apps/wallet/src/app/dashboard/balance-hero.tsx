@@ -22,7 +22,7 @@ export function BalanceHero({
 
   return (
     <section
-      className="wallet-card wallet-fade-in relative overflow-hidden px-8 py-10 text-center"
+      className="wallet-card wallet-fade-in relative overflow-hidden px-8 py-10 flex flex-col md:flex-row md:items-center justify-between gap-6 text-left"
       aria-label="Account balance"
     >
       {/* Shimmer background accent */}
@@ -30,65 +30,67 @@ export function BalanceHero({
 
       <div className="relative">
         <p
-          className="text-sm font-medium tracking-wide uppercase"
+          className="text-[11px] font-bold tracking-widest uppercase mb-1"
           style={{ color: "var(--wallet-text-secondary)" }}
         >
           Available balance
         </p>
 
-        <p
-          className="mt-3 text-6xl font-extrabold tracking-tight tabular-nums"
-          style={{ color: "var(--wallet-text-primary)" }}
-        >
-          {formatUsd(balanceMicros)}
-        </p>
+        <div className="flex flex-col sm:flex-row sm:items-baseline gap-2 sm:gap-4">
+          <p
+            className="text-6xl font-bold tracking-tight tabular-nums"
+            style={{ color: "var(--wallet-text-primary)" }}
+          >
+            {formatUsd(balanceMicros)}
+          </p>
 
-        <p
-          className="mt-3 text-sm"
-          style={{ color: "var(--wallet-text-tertiary)" }}
-        >
-          About {estimatedMinutes.toLocaleString()}{" "}
-          {estimatedMinutes === 1 ? "minute" : "minutes"} of transcription
-        </p>
+          <p
+            className="text-[13px] font-medium"
+            style={{ color: "var(--wallet-text-tertiary)" }}
+          >
+            ≈ {estimatedMinutes.toLocaleString()}{" "}
+            {estimatedMinutes === 1 ? "minute" : "minutes"} of transcription
+          </p>
+        </div>
+      </div>
 
+      <div className="relative flex flex-col sm:flex-row items-center gap-4">
         {/* Auto-recharge status chip */}
-        <div className="mt-5 flex justify-center">
+        <div>
           {autorechargeEnabled && autorechargeThresholdMicros != null ? (
             <span
-              className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium"
+              className="inline-flex items-center gap-2 rounded-full px-4 py-2.5 text-xs font-medium border"
               style={{
-                background: "var(--wallet-success-subtle)",
-                color: "var(--wallet-success)",
+                background: "var(--wallet-surface-raised)",
+                borderColor: "var(--wallet-border)",
+                color: "var(--wallet-text-secondary)",
               }}
             >
-              <svg
-                className="h-3 w-3"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-                aria-hidden="true"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M5 13l4 4L19 7"
-                />
-              </svg>
+              <span className="h-1.5 w-1.5 rounded-full" style={{ background: "#fffc00" }} />
               Auto-recharge on below {formatUsd(autorechargeThresholdMicros)}
             </span>
           ) : (
             <span
-              className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium"
+              className="inline-flex items-center gap-2 rounded-full px-4 py-2.5 text-xs font-medium border"
               style={{
                 background: "var(--wallet-surface-sunken)",
+                borderColor: "var(--wallet-border-subtle)",
                 color: "var(--wallet-text-tertiary)",
               }}
             >
+              <span className="h-1.5 w-1.5 rounded-full bg-gray-600" />
               Auto-recharge off
             </span>
           )}
         </div>
+        
+        <button
+          onClick={() => document.getElementById("add-funds")?.scrollIntoView({ behavior: "smooth" })}
+          className="rounded-full px-6 py-2.5 text-sm font-bold text-black transition-transform hover:scale-105 active:scale-95 shadow-sm"
+          style={{ background: "#fffc00" }}
+        >
+          Add funds
+        </button>
       </div>
     </section>
   );

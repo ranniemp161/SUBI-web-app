@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useSignUp } from "@clerk/nextjs/legacy";
+import { useAuth } from "@clerk/nextjs";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 
@@ -16,7 +17,15 @@ import Link from "next/link";
  */
 export default function SignUpPage() {
   const { isLoaded, signUp, setActive } = useSignUp();
+  const { userId } = useAuth();
   const router = useRouter();
+
+  useEffect(() => {
+    if (userId) {
+      router.push("/dashboard");
+    }
+  }, [userId, router]);
+
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -24,6 +33,8 @@ export default function SignUpPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [pendingVerification, setPendingVerification] = useState(false);
   const [verificationCode, setVerificationCode] = useState("");
+
+  if (userId) return null;
 
   /** Handle initial signup form submission. */
   async function handleSubmit(e: React.FormEvent) {

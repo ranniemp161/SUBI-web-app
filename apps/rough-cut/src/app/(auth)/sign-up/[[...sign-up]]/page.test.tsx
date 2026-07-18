@@ -32,6 +32,12 @@ vi.mock("@clerk/nextjs/legacy", () => ({
   }),
 }));
 
+vi.mock("@clerk/nextjs", () => ({
+  useAuth: () => ({
+    userId: null,
+  }),
+}));
+
 describe("SignUpPage Component", () => {
   beforeEach(() => {
     vi.clearAllMocks();

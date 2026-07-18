@@ -220,13 +220,13 @@ export default function FilePicker({
         disabled={isLoading}
         className={`group relative flex w-full cursor-pointer flex-col items-center justify-center rounded-2xl border transition-all duration-300 px-8 py-16 ${
           isDragging
-            ? "border-blue-500 bg-blue-500/10 shadow-2xl shadow-blue-500/10"
-            : "border-white/10 bg-white/[0.01] hover:border-blue-500/30 hover:bg-blue-500/[0.02] hover:shadow-2xl hover:shadow-blue-500/5"
+            ? "border-[#fffc00] bg-[#fffc00]/10 shadow-2xl shadow-[#fffc00]/10"
+            : "border-dashed border-white/20 bg-[#111111] hover:border-[#fffc00]/50 hover:bg-[#fffc00]/[0.05] hover:shadow-2xl hover:shadow-[#fffc00]/10"
         } ${isLoading ? "opacity-50 cursor-not-allowed" : ""}`}
       >
-        <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-blue-500/10 border border-blue-500/20 transition-all duration-300 group-hover:scale-110 group-hover:bg-blue-500/20 group-hover:border-blue-500/30 group-active:scale-95">
+        <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-[#2c2c2c] border border-white/10 transition-all duration-300 group-hover:scale-110 group-active:scale-95 shadow-inner">
           <svg
-            className="h-6 w-6 text-blue-400 transition-transform duration-300 group-hover:-translate-y-0.5"
+            className="h-6 w-6 text-[#fffc00] transition-transform duration-300 group-hover:-translate-y-0.5"
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -247,7 +247,7 @@ export default function FilePicker({
           or drag and drop here — MP4, MOV, WebM
         </span>
         <span className="mt-3 text-xs text-zinc-600">
-          MP4, MOV, or WebM up to a few hours long
+          Up to a few hours long
         </span>
       </button>
 

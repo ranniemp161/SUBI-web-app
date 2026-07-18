@@ -1,23 +1,24 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { DM_Sans, Space_Grotesk } from "next/font/google";
 import "./globals.css";
 import { ClerkProvider, UserButton } from "@clerk/nextjs";
 import { ROUGH_CUT_URL } from "@/lib/env";
+import Image from "next/image";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const dmSans = DM_Sans({
+  variable: "--font-dm-sans",
   subsets: ["latin"],
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const spaceGrotesk = Space_Grotesk({
+  variable: "--font-space-grotesk",
   subsets: ["latin"],
 });
 
 export const metadata: Metadata = {
-  title: "SUBI Wallet — Billing & Credits",
+  title: "Founder's Frame Credits",
   description:
-    "Manage your SUBI balance, purchase credit bundles, and configure auto-recharge. Your centralized billing portal for the SUBI ecosystem.",
+    "Manage your balance, purchase credit bundles, and configure auto-recharge.",
 };
 
 export default function RootLayout({
@@ -30,7 +31,7 @@ export default function RootLayout({
       <html
         lang="en"
         suppressHydrationWarning
-        className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+        className={`${dmSans.variable} ${spaceGrotesk.variable} h-full antialiased`}
       >
         <body
           suppressHydrationWarning
@@ -41,31 +42,40 @@ export default function RootLayout({
           }}
         >
           <header
-            className="sticky top-0 z-10 backdrop-blur-md"
+            className="sticky top-0 z-10"
             style={{
-              background:
-                "color-mix(in srgb, var(--wallet-surface) 85%, transparent)",
+              background: "#111111",
               borderBottom: "1px solid var(--wallet-border-subtle)",
-              boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
             }}
           >
-            <div className="max-w-5xl mx-auto px-8 h-16 flex items-center justify-between">
-              <span className="font-bold text-xl tracking-tight">
-                Founder&apos;s Frame Wallet
-              </span>
-              <div className="flex items-center gap-4">
+            <div className="max-w-[1200px] mx-auto px-8 h-16 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <Image src="/assets/Icon myframecredits app.png" alt="Founder's Frame" width={28} height={28} className="rounded-md" />
+                <span className="font-bold text-[17px] tracking-tight text-white">
+                  Founder&apos;s Frame Credits
+                </span>
+              </div>
+              <div className="flex items-center gap-6">
                 <a
                   href={ROUGH_CUT_URL}
-                  className="text-sm font-medium transition-colors hover:opacity-80"
+                  className="text-sm font-medium transition-colors hover:text-white"
                   style={{ color: "var(--wallet-text-secondary)" }}
                 >
-                  Back to Rough Cut
+                  ← Back to MyFirstCut
                 </a>
                 <UserButton />
               </div>
             </div>
           </header>
-          <main className="flex-1">{children}</main>
+          <main className="flex-1" style={{ background: "#111111" }}>{children}</main>
+          <footer style={{ borderTop: "1px solid var(--wallet-border-subtle)", background: "#111111" }}>
+            <div style={{ maxWidth: 1200, margin: "0 auto", padding: "24px 32px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
+              <a href="#" style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <Image src="/assets/ff-wordmark.webp" alt="The Founder's Frame" width={180} height={40} style={{ height: 40, width: "auto", margin: "-8px 0", display: "block" }} />
+              </a>
+              <span style={{ fontSize: 13, color: "#666" }}>A Founder&apos;s Frame product · © 2026 MyFirstCut</span>
+            </div>
+          </footer>
         </body>
       </html>
     </ClerkProvider>

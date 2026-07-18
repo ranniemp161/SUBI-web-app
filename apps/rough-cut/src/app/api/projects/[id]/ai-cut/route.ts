@@ -16,7 +16,9 @@ import type { Transcript } from "@/lib/edl";
 
 // Gemini legitimately takes minutes on a long transcript with thinking enabled
 // (capped at 240s in ai-rough-cut.ts) — don't let the platform cut it off first.
+// Using Edge runtime bypasses the 10-second Hobby serverless limit for I/O waits.
 export const maxDuration = 300;
+export const runtime = "edge";
 
 /** Best-effort refund — a credits hiccup must never mask the real Gemini error. */
 async function refundAiCutQuietly(
@@ -142,36 +144,57 @@ export async function POST(
         );
       }
 
-      let aiCuts;
-      try {
-        aiCuts = await runAiRoughCut(transcript.words);
-      } catch (error) {
-        await refundAiCutQuietly(project.userId, id, costSeconds, idempotencyKey);
-        throw error;
-      }
+      // Start a stream immediately so the Vercel Proxy doesn't kill the connection at 10s (Hobby limit).
+      // We stream a space character every 5 seconds to keep the connection alive while Gemini thinks.
+      const stream = new ReadableStream({
+        async start(controller) {
+          const encoder = new TextEncoder();
+          const heartbeat = setInterval(() => {
+            controller.enqueue(encoder.encode(" "));
+          }, 5000);
 
-      // Configured + non-empty words were checked above, so null here means
-      // the transcript tripped the size guard — no usable result was delivered.
-      if (!aiCuts) {
-        await refundAiCutQuietly(project.userId, id, costSeconds, idempotencyKey);
-        await releaseAiCutClaim(id);
-        return NextResponse.json(
-          { error: "This transcript is too long for the AI pass." },
-          { status: 422 }
-        );
-      }
+          try {
+            const aiCuts = await runAiRoughCut(transcript.words);
 
-      const run = await createAiCutRun(id, aiCuts.ranges, aiCuts.model);
+            if (!aiCuts) {
+              await refundAiCutQuietly(project.userId, id, costSeconds, idempotencyKey);
+              await releaseAiCutClaim(id);
+              clearInterval(heartbeat);
+              // Since HTTP 200 is already sent, we must send the error inside the JSON payload
+              controller.enqueue(encoder.encode(JSON.stringify({ error: "This transcript is too long for the AI pass." })));
+              controller.close();
+              return;
+            }
 
-      return NextResponse.json(run);
+            const run = await createAiCutRun(id, aiCuts.ranges, aiCuts.model);
+            clearInterval(heartbeat);
+            controller.enqueue(encoder.encode(JSON.stringify(run)));
+            controller.close();
+          } catch (error) {
+            clearInterval(heartbeat);
+            await refundAiCutQuietly(project.userId, id, costSeconds, idempotencyKey);
+            await releaseAiCutClaim(id);
+            reportError("Error running AI rough cut", error);
+            controller.enqueue(encoder.encode(JSON.stringify({ error: "The AI pass failed — try again." })));
+            controller.close();
+          }
+        },
+      });
+
+      return new NextResponse(stream, {
+        headers: {
+          "Content-Type": "application/json",
+          "Transfer-Encoding": "chunked",
+          "Cache-Control": "no-cache",
+        },
+      });
     } catch (error) {
-      // Any failure after a successful claim must release it — otherwise the
-      // project is stuck permanently "pending" and can never be re-run.
+      // Fast-failing errors (before the stream starts) still use standard responses
       await releaseAiCutClaim(id);
       throw error;
     }
   } catch (error) {
-    reportError("Error running AI rough cut", error);
+    reportError("Error initializing AI rough cut", error);
     return NextResponse.json(
       { error: "The AI pass failed — try again." },
       { status: 502 }

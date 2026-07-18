@@ -77,7 +77,8 @@ const VIDEO_H = 72;
 const AUDIO_H = 104;
 const TOTAL_H = RULER_H + VIDEO_H + AUDIO_H;
 const HEADER_W = 88;
-const WAVE_COLOR = "rgba(96, 165, 250, 0.6)"; // blue-400 — matches the app accent
+// Hardcoded wave color matches the new brand identity
+const WAVE_COLOR = "rgba(255, 252, 0, 0.6)"; // Accent yellow
 // Amplitude boost so quieter passages still read clearly; clamped to the track.
 const WAVE_GAIN = 2.2;
 
@@ -659,7 +660,7 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
             title="Toggle snapping to word edges"
             className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors ${
               snapEnabled
-                ? "bg-blue-500/20 text-blue-300"
+                ? "bg-accent/20 text-accent"
                 : "text-foreground/50 hover:bg-foreground/10 hover:text-foreground/80"
             }`}
           >
@@ -672,7 +673,7 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
             title="Hand tool — drag to pan without holding Space"
             className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors ${
               handToolActive
-                ? "bg-blue-500/20 text-blue-300"
+                ? "bg-accent/20 text-accent"
                 : "text-foreground/50 hover:bg-foreground/10 hover:text-foreground/80"
             }`}
           >
@@ -852,10 +853,10 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
                                 ? "border-foreground/10 bg-black/70"
                                 : "border-foreground/10 bg-black/40"
                               : filmstrip
-                            ? // Frames show through kept clips; the blue wash keeps
-                              // them reading as "kept" against the darkened cuts.
-                              "border-blue-400/50 bg-blue-500/15 hover:bg-blue-400/20"
-                            : "border-blue-400/40 bg-gradient-to-b from-blue-500/85 to-blue-600/85 hover:from-blue-500 hover:to-blue-600"
+                            ? // Frames show through kept clips; the yellow wash keeps
+                              // them visible while marking the region active.
+                              "border-accent/50 bg-accent/15 hover:bg-accent/20"
+                            : "border-accent/40 bg-accent/85 hover:bg-accent/95"
                     } ${isSelected || isSelectedCut ? "ring-2 ring-inset ring-white/90" : ""}`}
                   >
                     {!isCut && index === firstKeepIndex && (
@@ -899,7 +900,7 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
               })}
 
               {/* Boundary trim handles — a razor split boundary reads brighter
-                  (blue) so the user can see where they cut the clip. */}
+                  (accent) so the user can see where they cut the clip. */}
               {edl.segments.slice(0, -1).map((segment, index) => {
                 const isSplit = edl.segments[index + 1]?.split;
                 return (
@@ -915,8 +916,8 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
                     className="group absolute top-0 z-10 flex h-full cursor-col-resize items-center justify-center"
                   >
                     <div
-                      className={`h-8 w-0.5 rounded-full group-hover:bg-blue-400 ${
-                        isSplit ? "bg-blue-400/80" : "bg-foreground/25"
+                      className={`h-8 w-0.5 rounded-full group-hover:bg-accent ${
+                        isSplit ? "bg-accent/80" : "bg-foreground/25"
                       }`}
                     />
                   </div>
