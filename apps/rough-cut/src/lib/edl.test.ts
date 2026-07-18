@@ -12,6 +12,10 @@ import {
   trimBoundary,
   keptDuration,
   cutEachWord,
+  extendToMediaDuration,
+  nextPlaybackTime,
+  stopPlaybackTime,
+  MIN_SEGMENT_SECONDS,
   isFillerWord,
   findFillerWords,
   groupWordsIntoParagraphs,
@@ -508,5 +512,88 @@ describe("changedSpan", () => {
   it("returns null when nothing changed", () => {
     const a = keep(10);
     expect(changedSpan(a, { segments: [...a.segments] })).toBeNull();
+  });
+});
+
+describe("stopPlaybackTime — trailing cut / past-the-end playback", () => {
+  // Regression: a cut at the very end of the timeline has no keep segment to
+  // skip to, so nextPlaybackTime reports "continue normally" and the deleted
+  // tail plays through. stopPlaybackTime is the player's stop signal there.
+  const edl: EDL = {
+    segments: [
+      { start: 0, end: 2, status: "cut", reason: "silence" },
+      { start: 2, end: 8, status: "keep", reason: null },
+      { start: 8, end: 10, status: "cut", reason: "silence" },
+    ],
+  };
+
+  it("keeps playing inside a kept segment", () => {
+    expect(stopPlaybackTime(edl, 5)).toBeNull();
+  });
+
+  it("keeps playing inside a leading cut (a keep lies ahead)", () => {
+    expect(stopPlaybackTime(edl, 1)).toBeNull();
+    // nextPlaybackTime handles the actual skip there.
+    expect(nextPlaybackTime(edl, 1)).toBe(2);
+  });
+
+  it("stops at the last keep's end inside a trailing cut", () => {
+    // nextPlaybackTime has nothing to skip to (the hole this fixes)…
+    expect(nextPlaybackTime(edl, 9)).toBeNull();
+    // …so the stop signal must fire instead.
+    expect(stopPlaybackTime(edl, 9)).toBe(8);
+  });
+
+  it("stops when the playhead is past every segment (uncovered media tail)", () => {
+    expect(stopPlaybackTime(edl, 11)).toBe(8);
+  });
+
+  it("returns null for an EDL with no kept segments at all", () => {
+    const allCut: EDL = {
+      segments: [{ start: 0, end: 10, status: "cut", reason: "silence" }],
+    };
+    expect(stopPlaybackTime(allCut, 5)).toBeNull();
+  });
+});
+
+describe("extendToMediaDuration — transcript-vs-media duration gap", () => {
+  // Regression: the EDL is sized from the transcript's (audio) duration; a
+  // video file that runs longer paints filmstrip/waveform residue past the
+  // last clip that can't be selected or deleted.
+  it("appends the uncovered tail as a silence cut", () => {
+    const edl = keep(10);
+    const extended = extendToMediaDuration(edl, 10.4);
+    expect(extended.segments).toEqual([
+      { start: 0, end: 10, status: "keep", reason: null },
+      { start: 10, end: 10.4, status: "cut", reason: "silence" },
+    ]);
+  });
+
+  it("merges the tail into an existing trailing silence cut", () => {
+    const edl: EDL = {
+      segments: [
+        { start: 0, end: 8, status: "keep", reason: null },
+        { start: 8, end: 10, status: "cut", reason: "silence" },
+      ],
+    };
+    expect(extendToMediaDuration(edl, 10.4).segments).toEqual([
+      { start: 0, end: 8, status: "keep", reason: null },
+      { start: 8, end: 10.4, status: "cut", reason: "silence" },
+    ]);
+  });
+
+  it("ignores gaps at or below MIN_SEGMENT_SECONDS (identity)", () => {
+    const edl = keep(10);
+    expect(extendToMediaDuration(edl, 10 + MIN_SEGMENT_SECONDS)).toBe(edl);
+    expect(extendToMediaDuration(edl, 10)).toBe(edl);
+    expect(extendToMediaDuration(edl, 9.5)).toBe(edl);
+  });
+
+  it("is a no-op for a non-finite media duration or an empty EDL", () => {
+    const edl = keep(10);
+    expect(extendToMediaDuration(edl, NaN)).toBe(edl);
+    expect(extendToMediaDuration(edl, Infinity)).toBe(edl);
+    const empty: EDL = { segments: [] };
+    expect(extendToMediaDuration(empty, 10)).toBe(empty);
   });
 });

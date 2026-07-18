@@ -7,7 +7,7 @@ import {
   useRef,
 } from "react";
 import type { EDL } from "@/lib/edl";
-import { nextPlaybackTime } from "@/lib/edl";
+import { nextPlaybackTime, stopPlaybackTime } from "@/lib/edl";
 
 export interface VideoPlayerHandle {
   seek: (seconds: number) => void;
@@ -22,6 +22,8 @@ export interface VideoPlayerHandle {
 export interface VideoMeta {
   width: number;
   height: number;
+  /** Decoded duration of the actual media file, in seconds. */
+  duration: number;
 }
 
 interface VideoPlayerProps {
@@ -103,7 +105,21 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
 
       function syncTime() {
         if (!video) return;
-        const skipTo = nextPlaybackTime(edlRef.current, video.currentTime);
+        // A cut with no kept content after it has nowhere to skip to — stop
+        // playback at the end of the last kept clip instead of letting the
+        // deleted tail (or media past the timeline's end) play through. Only
+        // continuous playback stops; a paused manual seek into the tail stands.
+        const stopAt = !video.paused
+          ? stopPlaybackTime(edlRef.current, video.currentTime)
+          : null;
+        if (stopAt !== null) {
+          video.pause();
+          video.currentTime = stopAt;
+        }
+        const skipTo =
+          stopAt === null
+            ? nextPlaybackTime(edlRef.current, video.currentTime)
+            : null;
         if (skipTo !== null) {
           // Add 0.01s (10ms) to ensure we land strictly inside the keep segment.
           // Browser media engines can round a precise float down slightly, causing
@@ -132,7 +148,11 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
         onPlayingChange?.(false);
       };
       const handleMeta = () =>
-        onLoadedMetadata?.({ width: video.videoWidth, height: video.videoHeight });
+        onLoadedMetadata?.({
+          width: video.videoWidth,
+          height: video.videoHeight,
+          duration: video.duration,
+        });
 
       video.addEventListener("timeupdate", syncTime);
       video.addEventListener("play", handlePlay);

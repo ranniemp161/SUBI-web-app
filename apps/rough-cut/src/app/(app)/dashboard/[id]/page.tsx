@@ -61,6 +61,7 @@ import {
   reRoughCut as reRoughCutInEdl,
   buildInitialEDL,
   pinTrimmedBoundary as pinTrimmedBoundaryInEdl,
+  extendToMediaDuration,
   findSegmentAt,
   findFillerWords,
   keptDuration,
@@ -424,6 +425,20 @@ export default function EditorPage() {
       return redoStack.current.pop()!;
     });
   }, []);
+
+  // The EDL is sized from the transcript's duration, which can land a sliver
+  // short of the real video file. Once the player reports the file's decoded
+  // duration, cover the uncovered tail with a trailing cut segment so it's
+  // visible, selectable, and restorable — instead of unselectable filmstrip
+  // "residue" past the last clip. Not a user edit: it re-derives on every load
+  // (the extension only matters once the source file is reselected, which is
+  // also when the player mounts), so it bypasses applyEdl — no undo entry, no
+  // edited flag. Runs again after any edit or rebuild; extendToMediaDuration
+  // returns the same instance when there's nothing to add, so no render loop.
+  useEffect(() => {
+    if (!videoMeta) return;
+    setEdl((prev) => (prev ? extendToMediaDuration(prev, videoMeta.duration) : prev));
+  }, [videoMeta, edl]);
 
   const handleCutWords = useCallback(
     (words: TranscriptWord[]) => {

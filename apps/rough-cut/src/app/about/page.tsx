@@ -28,6 +28,9 @@ export default function AboutPage() {
                 src="/assets/TJ-image.png"
                 alt="TJ, Founder of The Founder's Frame"
                 fill
+                // fill defaults to sizes="100vw", making the optimizer serve a
+                // viewport-wide image for this fixed 256/340px box.
+                sizes="(min-width: 1024px) 340px, 256px"
                 className="object-contain"
               />
             </div>
