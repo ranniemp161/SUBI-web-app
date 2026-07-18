@@ -37,8 +37,7 @@
         "SENTRY_AUTH_TOKEN",
         "PUSHER_APP_ID",
         "PUSHER_SECRET",
-        "NEXT_PUBLIC_WALLET_APP_URL",
-        "NEXT_PUBLIC_ROUGH_CUT_APP_URL"
+        "NEXT_PUBLIC_*"
       ]
     },
     "lint": {
