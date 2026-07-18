@@ -13,8 +13,8 @@ const spaceGrotesk = Space_Grotesk({
 });
 
 export const metadata: Metadata = {
-  title: "Founder's Frame",
-  description: "Advanced tooling for video creators. Automate your edits, refine your thumbnails, and boost your engagement.",
+  title: "The Founder's Frame",
+  description: "The mindset, the strategy, and the AI tools for business owners and content creators to grow on YouTube and social media.",
 };
 
 export default function RootLayout({
