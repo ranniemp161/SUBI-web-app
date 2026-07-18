@@ -3,12 +3,19 @@
 import { motion } from "framer-motion";
 import { useEffect, useState } from "react";
 
+interface BoxConfig {
+  width: number;
+  height: number;
+  left: string;
+  top: string;
+  duration: number;
+  delay: number;
+}
+
 export function FloatingBoxes() {
-  const [isMounted, setIsMounted] = useState(false);
-  const [boxes, setBoxes] = useState<any[]>([]);
+  const [boxes, setBoxes] = useState<BoxConfig[]>([]);
 
   useEffect(() => {
-    setIsMounted(true);
     // Generate static random values once mounted to avoid hydration mismatch
     setBoxes(
       [...Array(6)].map(() => ({
@@ -22,7 +29,7 @@ export function FloatingBoxes() {
     );
   }, []);
 
-  if (!isMounted || boxes.length === 0) return null;
+  if (boxes.length === 0) return null;
 
   return (
     <div className="pointer-events-none fixed inset-0 z-0 overflow-hidden flex items-center justify-center">
