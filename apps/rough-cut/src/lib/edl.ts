@@ -702,6 +702,52 @@ export function nextPlaybackTime(edl: EDL, timeSec: number): number | null {
   return next ? next.start : null;
 }
 
+/**
+ * Given the current playback time, return the time continuous playback should
+ * stop at, or null to keep playing. Playback stops (at the end of the last
+ * kept segment) once the playhead is inside a trailing cut, or past every
+ * segment, with no kept content ahead — without this, a cut at the very end of
+ * the timeline plays through to the end of the file, because nextPlaybackTime
+ * has no "keep" segment to skip to and reports "continue normally".
+ */
+export function stopPlaybackTime(edl: EDL, timeSec: number): number | null {
+  const current = findSegmentAt(edl, timeSec);
+  if (current?.status === "keep") return null;
+  // Inside a cut, anything from its end onward counts as "ahead"; past every
+  // segment, everything from the playhead onward does.
+  const from = current ? current.end : timeSec;
+  const keepAhead = edl.segments.some(
+    (seg) => seg.status === "keep" && seg.start >= from
+  );
+  if (keepAhead) return null;
+  const keeps = edl.segments.filter((seg) => seg.status === "keep");
+  if (keeps.length === 0) return null;
+  return Math.max(...keeps.map((seg) => seg.end));
+}
+
+/**
+ * Extend the EDL with a trailing "cut" segment when the real media file runs
+ * longer than the timeline. The EDL is sized from the transcript's duration
+ * (Deepgram's decoded audio length), which can land short of the video track —
+ * that uncovered tail otherwise paints filmstrip/waveform "residue" past the
+ * last clip that can't be selected, deleted, or restored. Gaps below
+ * MIN_SEGMENT_SECONDS are ignored (too small to be a segment; playback-stop
+ * handles them). Returns the same EDL instance when nothing changes.
+ */
+export function extendToMediaDuration(edl: EDL, mediaDurationSeconds: number): EDL {
+  if (!Number.isFinite(mediaDurationSeconds)) return edl;
+  if (edl.segments.length === 0) return edl;
+  const total = totalDuration(edl);
+  if (mediaDurationSeconds - total <= MIN_SEGMENT_SECONDS + 1e-6) return edl;
+  return {
+    ...edl,
+    segments: mergeAdjacent([
+      ...edl.segments,
+      { start: total, end: mediaDurationSeconds, status: "cut", reason: "silence" },
+    ]),
+  };
+}
+
 export function totalDuration(edl: EDL): number {
   if (edl.segments.length === 0) return 0;
   return Math.max(...edl.segments.map((s) => s.end));
