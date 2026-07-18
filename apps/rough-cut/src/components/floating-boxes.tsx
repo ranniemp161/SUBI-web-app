@@ -17,6 +17,7 @@ export function FloatingBoxes() {
 
   useEffect(() => {
     // Generate static random values once mounted to avoid hydration mismatch
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setBoxes(
       [...Array(6)].map(() => ({
         width: Math.random() * 100 + 80,
