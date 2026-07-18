@@ -1,4 +1,4 @@
-import Link from 'next/link';
+﻿import Link from 'next/link';
 import Image from 'next/image';
 import { env } from '@/lib/env';
 import { Check, ArrowRight } from 'lucide-react';
@@ -6,6 +6,8 @@ import Navbar from '@/components/Navbar';
 import Footer from '@/components/Footer';
 import SpotlightCard from '@/components/SpotlightCard';
 import FadeIn from '@/components/FadeIn';
+import HeroHeadline from '@/components/HeroHeadline';
+import ProductShowcase from '@/components/ProductShowcase';
 
 export default function Home() {
   return (
@@ -35,31 +37,28 @@ export default function Home() {
             
             {/* Floating Product Icons */}
             <div className="absolute top-20 left-[15%] opacity-40 animate-float blur-[1px]">
-              <Image src="/assets/Icon myfirstcut app.png" alt="MyFirstCut" width={70} height={70} />
+              <Image src="/assets/icon-myfirstcut.webp" alt="MyFirstCut" width={70} height={70} />
             </div>
             <div className="absolute bottom-32 left-[10%] opacity-30 animate-float-delayed blur-[2px]">
-              <Image src="/assets/Icon mythumnail app.png" alt="MyThumbnail" width={50} height={50} />
+              <Image src="/assets/icon-mythumbnail.webp" alt="MyThumbnail" width={50} height={50} />
             </div>
             <div className="absolute top-32 right-[20%] opacity-30 animate-float-slow blur-[1px]">
-              <Image src="/assets/Icon myinforgraphics app.png" alt="Infographics" width={80} height={80} />
+              <Image src="/assets/icon-myinfographics.webp" alt="Infographics" width={80} height={80} />
             </div>
             <div className="absolute bottom-40 right-[15%] opacity-40 animate-float">
-              <Image src="/assets/Icon mytitle generator app.png" alt="Title Generator" width={60} height={60} />
+              <Image src="/assets/icon-mytitlegen.webp" alt="Title Generator" width={60} height={60} />
             </div>
           </div>
 
           <div className="relative inline-flex items-center gap-2 px-3 py-1.5 rounded-full glass-panel text-xs text-gray-300 font-medium mb-8">
             <span className="w-1.5 h-1.5 rounded-full bg-brand"></span>
-            MyFirstCut is live <span className="text-gray-500">— two more tools on the way</span>
+            MyFirstCut is live <span className="text-gray-500">and mentorship is open</span>
           </div>
 
-          <h1 className="relative text-5xl md:text-6xl lg:text-7xl font-heading font-bold tracking-tight leading-[1.1] max-w-4xl mb-6">
-            Your business deserves <br />
-            to be <span className="bg-gradient-to-r from-brand to-yellow-200 bg-clip-text text-transparent drop-shadow-[0_0_15px_rgba(255,255,0,0.3)]">seen.</span>
-          </h1>
+          <HeroHeadline />
 
           <p className="relative text-base md:text-lg text-gray-400 max-w-xl mx-auto leading-relaxed mb-10">
-            The Founder&apos;s Frame builds tools that take the hardest parts of content creation off your plate — so founders and creators can show up on social media consistently, without an editing team.
+            Founders Frame gives business owners and content creators the mindset, the strategy, and the AI tools to grow on YouTube and social media, and to turn that attention into customers.
           </p>
 
           <div className="relative flex flex-col sm:flex-row justify-center items-center gap-4 mb-8 z-10">
@@ -67,13 +66,13 @@ export default function Home() {
               href={env.NEXT_PUBLIC_ROUGH_CUT_APP_URL} 
               className="w-full sm:w-auto inline-flex items-center justify-center bg-gradient-to-r from-brand via-yellow-400 to-brand bg-[length:200%_200%] animate-liquid text-black px-6 py-2.5 rounded-full font-semibold text-sm md:text-base transition-all shadow-[0_0_20px_rgba(255,255,0,0.2)]"
             >
-              Start cutting free
+              Start with MyFirstCut
             </Link>
-            <Link 
-              href="#products" 
+            <Link
+              href="#products"
               className="w-full sm:w-auto inline-flex items-center justify-center glass-panel text-white px-6 py-2.5 rounded-full font-medium text-sm md:text-base hover:bg-white/10 transition-colors"
             >
-              Explore Our Products
+              See the toolkit
             </Link>
           </div>
 
@@ -95,7 +94,7 @@ export default function Home() {
                 </h2>
               </div>
               <p className="text-gray-400 max-w-sm text-lg">
-                Founder&apos;s Frame Credits work across the whole suite. Buy once, spend anywhere — starting with MyFirstCut today.
+                The hardest parts of publishing, handled. Founder&apos;s Frame Credits work across the whole suite, starting with MyFirstCut today.
               </p>
             </div>
 
@@ -107,11 +106,11 @@ export default function Home() {
                     Available Now
                   </span>
                   <div className="w-14 h-14 bg-brand/10 rounded-xl flex items-center justify-center mb-6">
-                    <Image src="/assets/Icon myfirstcut app.png" alt="MyFirstCut" width={32} height={32} />
+                    <Image src="/assets/icon-myfirstcut.webp" alt="MyFirstCut" width={32} height={32} />
                   </div>
                   <h3 className="text-3xl font-heading font-bold mb-4">MyFirstCut</h3>
                   <p className="text-gray-400 leading-relaxed">
-                    Raw footage to a rough cut in minutes. It finds the silences, retakes, and dead air — you edit by editing text, not a timeline. Local-first: your video never leaves your computer.
+                    Raw footage to a rough cut in minutes. It finds the silences, retakes, and dead air. You edit by editing text, not a timeline. Local-first: your video never leaves your computer.
                   </p>
                 </div>
                 <div className="mt-auto pt-8">
@@ -128,11 +127,11 @@ export default function Home() {
                     Coming Soon
                   </span>
                   <div className="w-14 h-14 bg-white/5 rounded-xl flex items-center justify-center mb-6">
-                    <Image src="/assets/Icon mythumnail app.png" alt="MyThumbnail" width={32} height={32} />
+                    <Image src="/assets/icon-mythumbnail.webp" alt="MyThumbnail" width={32} height={32} />
                   </div>
                   <h3 className="text-3xl font-heading font-bold mb-4">MyThumbnail</h3>
                   <p className="text-gray-400 leading-relaxed">
-                    Scroll-stopping thumbnails generated from your video and your face — no design skills, no Photoshop.
+                    Scroll-stopping thumbnails generated from your video and your face. No design skills, no Photoshop.
                   </p>
                 </div>
               </SpotlightCard>
@@ -144,7 +143,7 @@ export default function Home() {
                     Coming Soon
                   </span>
                   <div className="w-14 h-14 bg-white/5 rounded-xl flex items-center justify-center mb-6">
-                    <Image src="/assets/Icon myinforgraphics app.png" alt="Infographics" width={32} height={32} />
+                    <Image src="/assets/icon-myinfographics.webp" alt="Infographics" width={32} height={32} />
                   </div>
                   <h3 className="text-3xl font-heading font-bold mb-4">Infographics</h3>
                   <p className="text-gray-400 leading-relaxed">
@@ -164,10 +163,10 @@ export default function Home() {
             <div className="space-y-8">
               <h4 className="text-brand font-semibold text-xs tracking-widest uppercase">Why Founders Stall</h4>
               <h2 className="text-4xl md:text-5xl font-heading font-bold leading-tight bg-gradient-to-r from-white to-gray-400 bg-clip-text text-transparent pb-1">
-                It&apos;s never the ideas. <br /> It&apos;s the production.
+                It&apos;s never the ideas. <br /> It&apos;s everything after them.
               </h2>
               <p className="text-gray-400 text-lg leading-relaxed max-w-lg">
-                Most business owners record one video, spend a weekend fighting an editor, and never post again. Founder&apos;s Frame removes that wall: each tool takes one production chore — cutting, thumbnails, graphics — and makes it a five-minute job.
+                Most business owners record one video, spend a weekend fighting an editor, and never post again. Founders Frame removes the production wall with tools that make each chore a five-minute job, and closes the strategy gap with mentorship from someone who publishes every day.
               </p>
               <ul className="space-y-6 pt-4">
                 <li className="flex gap-4">
@@ -191,16 +190,56 @@ export default function Home() {
               </ul>
             </div>
             
-            <div className="relative rounded-3xl overflow-hidden border border-white/10 shadow-2xl group bg-[#0c0c0e]">
-              <div className="absolute inset-0 bg-gradient-to-tr from-brand/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity z-10 pointer-events-none"></div>
-              <Image 
-                src="/assets/Hero-image.png" 
-                alt="Rough Cut App Interface" 
-                width={1200} 
-                height={800} 
-                className="w-full h-auto object-cover transition-transform duration-700 group-hover:scale-[1.02]" 
-              />
-            </div>
+            <ProductShowcase />
+          </div>
+        </section>
+      </FadeIn>
+
+      {/* Mentorship Section */}
+      <FadeIn delay={0.2}>
+        <section id="mentorship" className="py-24 px-6 relative">
+          <div className="max-w-7xl mx-auto">
+            <SpotlightCard className="glow-panel p-8 md:p-14 relative overflow-hidden">
+              <div className="absolute top-0 left-0 w-64 h-64 bg-brand/10 blur-[100px] rounded-full pointer-events-none" />
+              <div className="grid lg:grid-cols-2 gap-12 items-center relative z-10">
+                <div className="space-y-6">
+                  <h4 className="text-brand font-semibold text-xs tracking-widest uppercase">Mentorship</h4>
+                  <h2 className="text-4xl md:text-5xl font-heading font-bold leading-tight bg-gradient-to-r from-white to-gray-400 bg-clip-text text-transparent pb-1">
+                    Tools speed you up. Strategy makes it work.
+                  </h2>
+                  <p className="text-gray-400 text-lg leading-relaxed">
+                    Work with TJ directly on the things software cannot do for you: your positioning, your content strategy, your delivery on camera, and the mindset to keep publishing when you would rather quit. Everything taught is what TJ actually uses to run his own channel every single day, including the AI workflows that let one person publish like a whole team.
+                  </p>
+                  <div className="pt-2">
+                    <a
+                      href="https://apply.thefoundersframe.com"
+                      target="_blank"
+                      rel="noopener"
+                      className="inline-flex items-center gap-2 bg-gradient-to-r from-brand via-yellow-400 to-brand bg-[length:200%_200%] animate-liquid text-black px-8 py-3 rounded-full font-semibold text-sm md:text-base transition-all shadow-[0_0_20px_rgba(255,255,0,0.2)]"
+                    >
+                      Apply for mentorship <ArrowRight className="w-4 h-4" />
+                    </a>
+                  </div>
+                </div>
+                <div className="rounded-2xl overflow-hidden border border-white/10 shadow-2xl bg-[#0c0c0e]">
+                  <div className="flex items-center gap-1.5 px-4 py-3 border-b border-white/10 bg-white/[0.03]">
+                    <span className="w-2.5 h-2.5 rounded-full bg-white/15" />
+                    <span className="w-2.5 h-2.5 rounded-full bg-white/15" />
+                    <span className="w-2.5 h-2.5 rounded-full bg-brand/40" />
+                  </div>
+                  <Image
+                    src="/assets/subi-shop-channel.webp"
+                    alt="TJ's YouTube channel, The Subi Shop"
+                    width={1360}
+                    height={836}
+                    className="w-full h-auto object-cover"
+                  />
+                  <p className="text-gray-500 text-xs md:text-sm px-4 py-3 text-center border-t border-white/10">
+                    Taught from a channel that publishes every day, not from theory.
+                  </p>
+                </div>
+              </div>
+            </SpotlightCard>
           </div>
         </section>
       </FadeIn>
@@ -213,11 +252,11 @@ export default function Home() {
             
             <div className="flex flex-col md:flex-row gap-10 items-center md:items-start relative z-10">
               <div className="w-32 h-32 rounded-full overflow-hidden shrink-0">
-                <Image src="/assets/TJ-image.png" alt="TJ - Founder" width={128} height={128} className="object-cover w-full h-full" />
+                <Image src="/assets/tj-portrait.webp" alt="TJ - Founder" width={448} height={448} className="object-cover w-full h-full" />
               </div>
               <div className="space-y-6 text-center md:text-left">
                 <p className="text-2xl md:text-3xl font-heading font-medium leading-relaxed">
-                  &quot;Every founder I coach has the same blocker: not courage, not ideas — the edit. So we&apos;re building the tools that delete that excuse.&quot;
+                  &quot;I left the corporate world, moved to Uganda, and opened a shoe shop. It failed badly. But the YouTube channel I started to save it now pays for my whole life, and it taught me everything I teach here.&quot;
                 </p>
                 <div>
                   <p className="font-semibold text-brand">TJ</p>
@@ -240,7 +279,7 @@ export default function Home() {
               Post your first video this week.
             </h2>
             <p className="text-xl text-gray-400">
-              MyFirstCut is ready today, MyThumbnail and Infographics join it soon — same balance, same account.
+              Start with MyFirstCut today, and when you are ready to grow faster, mentorship is open. The tools and the strategy live in one place.
             </p>
             <div className="pt-8">
               <Link 
