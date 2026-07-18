@@ -54,12 +54,18 @@ export function createTimeRemapper(ranges: KeepRange[]): (t: number) => number |
 
   let lastIdx = 0;
   return function remap(t: number): number | null {
-    // Since t increases monotonically, we can advance lastIdx as long as t is past the current range's end.
+    // Fast path for the common forward march: advance lastIdx while t is past the current range's end.
     while (lastIdx < withOffset.length && t >= withOffset[lastIdx].end) {
       lastIdx++;
     }
-    // If t is before the current range (e.g. backward jump in unit tests), reset lastIdx to 0 and find again.
-    if (lastIdx < withOffset.length && t < withOffset[lastIdx].start) {
+    // Timestamps are NOT globally monotonic: the export worker hands one
+    // shared remapper to both the video and the audio track, and their
+    // interleaved samples jump backward between calls. If t is before the
+    // current range, or the cursor ran off the end of the list (the other
+    // track already crossed the last keep range), rescan from the start —
+    // otherwise the tail samples of the slower track get dropped and the
+    // exported video freezes at the end.
+    if (lastIdx >= withOffset.length || t < withOffset[lastIdx].start) {
       lastIdx = 0;
       while (lastIdx < withOffset.length && t >= withOffset[lastIdx].end) {
         lastIdx++;
