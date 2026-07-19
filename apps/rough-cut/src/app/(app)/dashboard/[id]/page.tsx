@@ -100,6 +100,9 @@ interface Project {
 const AUTOSAVE_DELAY_MS = 800;
 const MIN_TRANSCRIPT_W = 300;
 const MAX_TRANSCRIPT_W = 640;
+// Open wide by default — the transcript is the primary editing surface. A
+// width the user dragged themselves (rc:transcriptWidth) still wins on mount.
+const DEFAULT_TRANSCRIPT_W = 640;
 
 /**
  * Structural equality on an EDL's cut layout — same segment boundaries and
@@ -566,6 +569,13 @@ export default function EditorPage() {
 
   const handleSeek = useCallback((seconds: number) => {
     playerRef.current?.seek(seconds);
+  }, []);
+
+  // "Play from here": seek AND start playback, so the action does what it says
+  // instead of leaving the player parked on a frame.
+  const handlePlayFrom = useCallback((seconds: number) => {
+    playerRef.current?.seek(seconds);
+    playerRef.current?.play();
   }, []);
 
   const seekRelative = useCallback(
@@ -1532,13 +1542,14 @@ export default function EditorPage() {
         </div>
 
         {/* Transcript */}
-        <div ref={transcriptRef} className="shrink-0" style={{ width: 380 }}>
+        <div ref={transcriptRef} className="shrink-0" style={{ width: DEFAULT_TRANSCRIPT_W }}>
           <TranscriptPanel
             words={words}
             edl={edl ?? { segments: [] }}
             currentTime={currentTime}
             isPlaying={isPlaying}
             onSeek={handleSeek}
+            onPlayFrom={handlePlayFrom}
             onCutWords={handleCutWords}
             onRestoreSegment={handleRestoreSegment}
             onOpenRetakeReview={() => setShowRetakeReview(true)}
@@ -1844,7 +1855,7 @@ function EditorSkeleton() {
             <div className={`h-7 w-20 ${block}`} />
           </div>
         </div>
-        <div className="w-[380px] shrink-0 space-y-3 border-l border-foreground/5 p-5">
+        <div className="w-[640px] shrink-0 space-y-3 border-l border-foreground/5 p-5">
           <div className={`h-7 w-32 ${block}`} />
           <div className={`h-9 w-full ${block}`} />
           <div className="space-y-2.5 pt-3">
