@@ -10,7 +10,6 @@ import {
   DEFAULT_FPS,
   isDropFrame,
   minClipSeconds,
-  nominalFps,
   toFrames,
   type VideoFps,
 } from "@/lib/export/timebase";

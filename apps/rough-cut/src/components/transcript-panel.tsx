@@ -789,8 +789,6 @@ export default function TranscriptPanel({
                     runEnd++;
                   }
                   const count = runEnd - index + 1;
-                  const start = words[index].start;
-                  const end = words[runEnd].end;
                   // Preview the hidden text in the tooltip so restoring isn't
                   // a blind gamble.
                   const previewWords = words

@@ -155,6 +155,16 @@ export default function EditorPage() {
   // seconds; 0 until detection settles, fails, or the source has none. See
   // detect-embedded-timecode.ts.
   const [sourceTimecodeOffset, setSourceTimecodeOffset] = useState(0);
+  // Tracks which file the two values above were last reset for, so the reset
+  // can happen during render (React's documented pattern for "adjusting
+  // state when a prop changes") instead of as a synchronous setState at the
+  // top of an effect body.
+  const [sourceFileForDetection, setSourceFileForDetection] = useState(sourceFile);
+  if (sourceFile !== sourceFileForDetection) {
+    setSourceFileForDetection(sourceFile);
+    setSourceFps(null);
+    setSourceTimecodeOffset(0);
+  }
 
   const [edl, setEdl] = useState<EDL | null>(null);
   // Auto-cut chain (ADR 0003 child 1): a fresh, ready project runs the
@@ -1085,8 +1095,6 @@ export default function EditorPage() {
   // seconds. Guarded against a stale async result landing after the file
   // changed again.
   useEffect(() => {
-    setSourceFps(null);
-    setSourceTimecodeOffset(0);
     if (!sourceFile) return;
     let cancelled = false;
     detectVideoFps(sourceFile).then((fps) => {
