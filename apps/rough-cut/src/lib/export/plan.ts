@@ -6,7 +6,7 @@
  * No browser/WebCodecs APIs here — this is exercised directly by vitest.
  */
 import type { EDL } from "@/lib/edl";
-import { MIN_CLIP_SECONDS } from "@/lib/export/timebase";
+import { DEFAULT_FPS, minClipSeconds, type VideoFps } from "@/lib/export/timebase";
 
 export interface KeepRange {
   start: number;
@@ -27,13 +27,14 @@ export function totalKeptSeconds(ranges: KeepRange[]): number {
 
 /**
  * Whether the EDL has at least one kept range the NLE exporters will actually
- * emit as a clip/event — i.e. one at or above MIN_CLIP_SECONDS, matching the
+ * emit as a clip/event — i.e. one at or above one frame at fps, matching the
  * exporters' own per-range filter. keptDuration(edl) > 0 is NOT equivalent:
  * several sub-frame kept segments can sum to a positive total while every
  * individual range still gets dropped, producing a file with zero clips.
  */
-export function hasExportableRanges(edl: EDL): boolean {
-  return getKeepRanges(edl).some((r) => r.end - r.start >= MIN_CLIP_SECONDS);
+export function hasExportableRanges(edl: EDL, fps: VideoFps = DEFAULT_FPS): boolean {
+  const minSeconds = minClipSeconds(fps);
+  return getKeepRanges(edl).some((r) => r.end - r.start >= minSeconds);
 }
 
 /**
@@ -54,12 +55,18 @@ export function createTimeRemapper(ranges: KeepRange[]): (t: number) => number |
 
   let lastIdx = 0;
   return function remap(t: number): number | null {
-    // Since t increases monotonically, we can advance lastIdx as long as t is past the current range's end.
+    // Fast path for the common forward march: advance lastIdx while t is past the current range's end.
     while (lastIdx < withOffset.length && t >= withOffset[lastIdx].end) {
       lastIdx++;
     }
-    // If t is before the current range (e.g. backward jump in unit tests), reset lastIdx to 0 and find again.
-    if (lastIdx < withOffset.length && t < withOffset[lastIdx].start) {
+    // Timestamps are NOT globally monotonic: the export worker hands one
+    // shared remapper to both the video and the audio track, and their
+    // interleaved samples jump backward between calls. If t is before the
+    // current range, or the cursor ran off the end of the list (the other
+    // track already crossed the last keep range), rescan from the start —
+    // otherwise the tail samples of the slower track get dropped and the
+    // exported video freezes at the end.
+    if (lastIdx >= withOffset.length || t < withOffset[lastIdx].start) {
       lastIdx = 0;
       while (lastIdx < withOffset.length && t >= withOffset[lastIdx].end) {
         lastIdx++;

@@ -26,6 +26,13 @@ export interface VideoMeta {
   duration: number;
 }
 
+// How far the media engine's currentTime readback may drift from a requested
+// seek before we stop treating them as the same instant. Chromium quantizes to
+// microseconds (sub-millisecond drift); other engines round to a millisecond
+// or two. 20ms stays well below word length (~100ms+), so snapping within it
+// can never move the highlight to a different word than the one clicked.
+const SEEK_QUANTIZATION_EPS = 0.02;
+
 interface VideoPlayerProps {
   src: string;
   edl: EDL;
@@ -51,6 +58,13 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
     // latest EDL without needing to re-attach the event listener on every edit.
     const edlRef = useRef(edl);
     edlRef.current = edl;
+    // The media engine quantizes currentTime (Chromium: microseconds), so a
+    // seek to a repeating-decimal word boundary like 34.96666666666667 reads
+    // back a hair BELOW the requested time. Exact comparisons downstream
+    // (active-word highlight, findSegmentAt) then resolve to the previous
+    // word/segment. Remember the requested time and report it verbatim while
+    // the readback sits within the quantization error.
+    const pendingSeekRef = useRef<number | null>(null);
 
     // video.play() returns a promise that rejects with AbortError if a pause()
     // or seek interrupts it before it resolves. The editor interleaves
@@ -66,7 +80,10 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
 
     useImperativeHandle(ref, () => ({
       seek(seconds: number) {
-        if (videoRef.current) videoRef.current.currentTime = seconds;
+        const video = videoRef.current;
+        if (!video) return;
+        pendingSeekRef.current = seconds;
+        video.currentTime = seconds;
       },
       play() {
         if (videoRef.current) safePlay(videoRef.current);
@@ -105,31 +122,39 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
 
       function syncTime() {
         if (!video) return;
+        // Snap the readback to the last requested seek while it's within the
+        // engine's quantization error, so downstream exact comparisons (the
+        // active-word highlight, findSegmentAt) see the precise time the user
+        // asked for. Once playback moves on (or a new seek lands elsewhere),
+        // the pending value is dropped and the real clock takes over.
+        const pending = pendingSeekRef.current;
+        let time = video.currentTime;
+        if (pending !== null) {
+          if (Math.abs(time - pending) <= SEEK_QUANTIZATION_EPS) time = pending;
+          else if (!video.seeking) pendingSeekRef.current = null;
+        }
         // A cut with no kept content after it has nowhere to skip to — stop
         // playback at the end of the last kept clip instead of letting the
         // deleted tail (or media past the timeline's end) play through. Only
         // continuous playback stops; a paused manual seek into the tail stands.
-        const stopAt = !video.paused
-          ? stopPlaybackTime(edlRef.current, video.currentTime)
-          : null;
+        const stopAt = !video.paused ? stopPlaybackTime(edlRef.current, time) : null;
         if (stopAt !== null) {
           video.pause();
           video.currentTime = stopAt;
+          time = stopAt;
         }
-        const skipTo =
-          stopAt === null
-            ? nextPlaybackTime(edlRef.current, video.currentTime)
-            : null;
+        const skipTo = stopAt === null ? nextPlaybackTime(edlRef.current, time) : null;
         if (skipTo !== null) {
           // Add 0.01s (10ms) to ensure we land strictly inside the keep segment.
           // Browser media engines can round a precise float down slightly, causing
           // the next frame to still evaluate as inside the cut segment, creating
           // an infinite seek loop where the video appears to "stop on its own".
           video.currentTime = skipTo + 0.01;
+          time = skipTo + 0.01;
         }
-        if (video.currentTime !== lastReported) {
-          lastReported = video.currentTime;
-          onTimeUpdate?.(video.currentTime);
+        if (time !== lastReported) {
+          lastReported = time;
+          onTimeUpdate?.(time);
         }
       }
 

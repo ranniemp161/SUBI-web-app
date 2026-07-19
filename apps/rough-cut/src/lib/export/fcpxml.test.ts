@@ -115,6 +115,50 @@ describe("buildFcpxml", () => {
     const xml = buildFcpxml(edl, "My Project", "source.mov");
     expect(xml).toContain('width="1920" height="1080"');
   });
+
+  describe("at a detected source frame rate", () => {
+    it("uses the exact NTSC rational and DF at 29.97", () => {
+      const edl: EDL = { segments: [{ start: 0, end: 5, status: "keep", reason: null }] };
+      const xml = buildFcpxml(edl, "My Project", "source.mov", undefined, {
+        numerator: 30000,
+        denominator: 1001,
+      });
+      expect(xml).toContain('frameDuration="1001/30000s"');
+      // 5s = 150 frames = 150 * 1001 / 30000 seconds.
+      expect(xml).toContain('duration="150150/30000s"');
+      expect(xml).toContain('tcFormat="DF"');
+      expect(xml).toContain('name="FFVideoFormat1080p2997"');
+    });
+
+    it("stays NDF at 23.976", () => {
+      const edl: EDL = { segments: [{ start: 0, end: 5, status: "keep", reason: null }] };
+      const xml = buildFcpxml(edl, "My Project", "source.mov", undefined, {
+        numerator: 24000,
+        denominator: 1001,
+      });
+      expect(xml).toContain('frameDuration="1001/24000s"');
+      expect(xml).toContain('tcFormat="NDF"');
+      expect(xml).toContain('name="FFVideoFormat1080p2398"');
+    });
+  });
+
+  describe("with a source timecode offset", () => {
+    it("shifts the clip's source start and the asset duration, not the sequence offset", () => {
+      const edl: EDL = { segments: [{ start: 0, end: 5, status: "keep", reason: null }] };
+      const xml = buildFcpxml(
+        edl,
+        "My Project",
+        "source.mov",
+        undefined,
+        undefined,
+        3600 // 1 hour embedded start offset
+      );
+      expect(xml).toContain('offset="0/30s"'); // sequence position stays zero-based
+      expect(xml).toContain('start="108000/30s"'); // (0 + 3600)s * 30fps
+      const assetMatch = xml.match(/<asset[^>]*duration="(\d+)\/30s"/);
+      expect(Number(assetMatch![1])).toBe((5 + 3600) * 30);
+    });
+  });
 });
 
 describe("sanitizeFilename", () => {

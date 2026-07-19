@@ -46,8 +46,12 @@ import {
 } from "@/lib/export/export-trigger";
 import { buildFcpxml } from "@/lib/export/fcpxml";
 import { buildCmx3600Edl } from "@/lib/export/cmx3600";
+import { buildXmeml } from "@/lib/export/xmeml";
 import { sanitizeFilename } from "@/lib/export/filename";
 import { hasExportableRanges } from "@/lib/export/plan";
+import { DEFAULT_FPS, type VideoFps } from "@/lib/export/timebase";
+import { detectVideoFps } from "@/lib/detect-frame-rate";
+import { detectEmbeddedTimecodeOffset } from "@/lib/detect-embedded-timecode";
 import { downloadTextFile } from "@/lib/download-text-file";
 import {
   absorbCutResidue,
@@ -100,6 +104,9 @@ interface Project {
 const AUTOSAVE_DELAY_MS = 800;
 const MIN_TRANSCRIPT_W = 300;
 const MAX_TRANSCRIPT_W = 640;
+// Open wide by default — the transcript is the primary editing surface. A
+// width the user dragged themselves (rc:transcriptWidth) still wins on mount.
+const DEFAULT_TRANSCRIPT_W = 640;
 
 /**
  * Structural equality on an EDL's cut layout — same segment boundaries and
@@ -140,6 +147,24 @@ export default function EditorPage() {
   const [loadError, setLoadError] = useState("");
 
   const [sourceFile, setSourceFile] = useState<File | null>(null);
+  // The reselected source's detected frame rate; null until detection settles
+  // (or when it fails / no file yet), in which case exports fall back to
+  // DEFAULT_FPS. Detection is best-effort — see detect-frame-rate.ts.
+  const [sourceFps, setSourceFps] = useState<VideoFps | null>(null);
+  // The reselected source's embedded start timecode (tmcd track), in
+  // seconds; 0 until detection settles, fails, or the source has none. See
+  // detect-embedded-timecode.ts.
+  const [sourceTimecodeOffset, setSourceTimecodeOffset] = useState(0);
+  // Tracks which file the two values above were last reset for, so the reset
+  // can happen during render (React's documented pattern for "adjusting
+  // state when a prop changes") instead of as a synchronous setState at the
+  // top of an effect body.
+  const [sourceFileForDetection, setSourceFileForDetection] = useState(sourceFile);
+  if (sourceFile !== sourceFileForDetection) {
+    setSourceFileForDetection(sourceFile);
+    setSourceFps(null);
+    setSourceTimecodeOffset(0);
+  }
 
   const [edl, setEdl] = useState<EDL | null>(null);
   // Auto-cut chain (ADR 0003 child 1): a fresh, ready project runs the
@@ -566,6 +591,13 @@ export default function EditorPage() {
 
   const handleSeek = useCallback((seconds: number) => {
     playerRef.current?.seek(seconds);
+  }, []);
+
+  // "Play from here": seek AND start playback, so the action does what it says
+  // instead of leaving the player parked on a frame.
+  const handlePlayFrom = useCallback((seconds: number) => {
+    playerRef.current?.seek(seconds);
+    playerRef.current?.play();
   }, []);
 
   const seekRelative = useCallback(
@@ -1055,12 +1087,38 @@ export default function EditorPage() {
     }
   }, [sourceFile, edl, project, handleCancelExport, exportMaxHeight]);
 
-  // Builds an FCPXML or CMX 3600 EDL file describing the current EDL's kept
-  // segments and downloads it directly — no WebCodecs, no save picker, no
-  // reselected source video required, since both formats only reference the
-  // source by filename.
+  // Detect the reselected source's real frame rate, then its embedded start
+  // timecode (if any) at that rate, so interchange exports emit frame-
+  // accurate, correctly-offset timecode — DaVinci Resolve's strict Media
+  // Pool relink checks both against the actual media. Offset detection runs
+  // after fps resolves since it needs the fps to convert a frame count to
+  // seconds. Guarded against a stale async result landing after the file
+  // changed again.
+  useEffect(() => {
+    if (!sourceFile) return;
+    let cancelled = false;
+    detectVideoFps(sourceFile).then((fps) => {
+      if (cancelled) return;
+      setSourceFps(fps);
+      detectEmbeddedTimecodeOffset(sourceFile, fps ?? DEFAULT_FPS).then((offset) => {
+        if (!cancelled) setSourceTimecodeOffset(offset);
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [sourceFile]);
+
+  // Builds an FCPXML / CMX 3600 EDL / FCP7 XML file describing the current
+  // EDL's kept segments and downloads it directly — no WebCodecs, no save
+  // picker, no reselected source video required, since these formats only
+  // reference the source by filename. Without a reselected file the timebase
+  // falls back to DEFAULT_FPS (30) with no offset, which strict NLE
+  // relinking may reject.
+  const exportFps = sourceFps ?? DEFAULT_FPS;
+
   const handleExportFcpxml = useCallback(() => {
-    if (!edl || !project || !hasExportableRanges(edl)) {
+    if (!edl || !project || !hasExportableRanges(edl, exportFps)) {
       toast.error("Nothing to export", {
         description: "This project has no kept segments yet.",
       });
@@ -1072,27 +1130,58 @@ export default function EditorPage() {
       project.fileName,
       videoMeta && videoMeta.width && videoMeta.height
         ? { width: videoMeta.width, height: videoMeta.height }
-        : undefined
+        : undefined,
+      exportFps,
+      sourceTimecodeOffset
     );
     downloadTextFile(xml, `${sanitizeFilename(project.fileName)}.fcpxml`, "application/xml");
     toast.success("FCPXML exported", {
-      description: "Open it in DaVinci Resolve or Premiere Pro and relink your source file.",
+      description: "Open it in Final Cut Pro or DaVinci Resolve and relink your source file.",
     });
-  }, [edl, project, videoMeta]);
+  }, [edl, project, videoMeta, exportFps, sourceTimecodeOffset]);
 
   const handleExportCmx3600 = useCallback(() => {
-    if (!edl || !project || !hasExportableRanges(edl)) {
+    if (!edl || !project || !hasExportableRanges(edl, exportFps)) {
       toast.error("Nothing to export", {
         description: "This project has no kept segments yet.",
       });
       return;
     }
-    const doc = buildCmx3600Edl(edl, project.fileName, project.fileName);
+    const doc = buildCmx3600Edl(
+      edl,
+      project.fileName,
+      project.fileName,
+      exportFps,
+      sourceTimecodeOffset
+    );
     downloadTextFile(doc, `${sanitizeFilename(project.fileName)}.edl`, "text/plain");
     toast.success("CMX 3600 EDL exported", {
-      description: "Open it in DaVinci Resolve or Premiere Pro and relink your source file.",
+      description: "Open it in DaVinci Resolve and relink your source file.",
     });
-  }, [edl, project]);
+  }, [edl, project, exportFps, sourceTimecodeOffset]);
+
+  const handleExportXmeml = useCallback(() => {
+    if (!edl || !project || !hasExportableRanges(edl, exportFps)) {
+      toast.error("Nothing to export", {
+        description: "This project has no kept segments yet.",
+      });
+      return;
+    }
+    const xml = buildXmeml(
+      edl,
+      project.fileName,
+      project.fileName,
+      exportFps,
+      videoMeta && videoMeta.width && videoMeta.height
+        ? { width: videoMeta.width, height: videoMeta.height }
+        : undefined,
+      sourceTimecodeOffset
+    );
+    downloadTextFile(xml, `${sanitizeFilename(project.fileName)}.xml`, "application/xml");
+    toast.success("Premiere Pro XML exported", {
+      description: "Import it in Premiere Pro and relink your source file.",
+    });
+  }, [edl, project, videoMeta, exportFps, sourceTimecodeOffset]);
 
   // Warn on tab close/reload only while an export is actively encoding — that's
   // the one state with work worth losing. "starting" has nothing yet, and
@@ -1382,8 +1471,9 @@ export default function EditorPage() {
         onExportMaxHeightChange={setExportMaxHeight}
         onExportFcpxml={handleExportFcpxml}
         onExportCmx3600={handleExportCmx3600}
+        onExportXmeml={handleExportXmeml}
         exportFormatBlockedReason={
-          !edl || !hasExportableRanges(edl) ? "Nothing to export yet" : undefined
+          !edl || !hasExportableRanges(edl, exportFps) ? "Nothing to export yet" : undefined
         }
       />
 
@@ -1532,13 +1622,14 @@ export default function EditorPage() {
         </div>
 
         {/* Transcript */}
-        <div ref={transcriptRef} className="shrink-0" style={{ width: 380 }}>
+        <div ref={transcriptRef} className="shrink-0" style={{ width: DEFAULT_TRANSCRIPT_W }}>
           <TranscriptPanel
             words={words}
             edl={edl ?? { segments: [] }}
             currentTime={currentTime}
             isPlaying={isPlaying}
             onSeek={handleSeek}
+            onPlayFrom={handlePlayFrom}
             onCutWords={handleCutWords}
             onRestoreSegment={handleRestoreSegment}
             onOpenRetakeReview={() => setShowRetakeReview(true)}
@@ -1844,7 +1935,7 @@ function EditorSkeleton() {
             <div className={`h-7 w-20 ${block}`} />
           </div>
         </div>
-        <div className="w-[380px] shrink-0 space-y-3 border-l border-foreground/5 p-5">
+        <div className="w-[640px] shrink-0 space-y-3 border-l border-foreground/5 p-5">
           <div className={`h-7 w-32 ${block}`} />
           <div className={`h-9 w-full ${block}`} />
           <div className="space-y-2.5 pt-3">
@@ -1879,6 +1970,7 @@ function TopBar({
   onExportMaxHeightChange,
   onExportFcpxml,
   onExportCmx3600,
+  onExportXmeml,
   exportFormatBlockedReason,
 }: {
   fileName: string;
@@ -1895,10 +1987,12 @@ function TopBar({
   // Output resolution cap for export; null = source resolution.
   exportMaxHeight?: number | null;
   onExportMaxHeightChange?: (height: number | null) => void;
-  // Exports the current EDL as an FCPXML file for DaVinci Resolve / Premiere Pro.
+  // Exports the current EDL as an FCPXML file for Final Cut Pro / DaVinci Resolve.
   onExportFcpxml?: () => void;
   // Exports the current EDL as a CMX 3600 EDL file, the alternate interchange format.
   onExportCmx3600?: () => void;
+  // Exports the current EDL as an FCP7 XML (xmeml) file for Premiere Pro.
+  onExportXmeml?: () => void;
   // Non-empty when both format export options should be disabled (no kept EDL yet); doubles as the tooltip.
   exportFormatBlockedReason?: string;
 }) {
@@ -1991,6 +2085,10 @@ function TopBar({
         }}
         onExportCmx3600={() => {
           onExportCmx3600?.();
+          setIsExportModalOpen(false);
+        }}
+        onExportXmeml={() => {
+          onExportXmeml?.();
           setIsExportModalOpen(false);
         }}
         exportBlockedReason={exportBlockedReason}

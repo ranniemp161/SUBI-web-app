@@ -9,7 +9,7 @@ export default function Footer() {
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[400px] bg-brand/5 blur-[120px] rounded-[100%] pointer-events-none mix-blend-screen z-[-1]" />
       
       <div className="max-w-7xl mx-auto relative z-10">
-        <div className="grid md:grid-cols-4 gap-10 mb-16">
+        <div className="grid md:grid-cols-5 gap-10 mb-16">
           <div className="md:col-span-2 space-y-6">
             <Link href="/" className="inline-block opacity-80 hover:opacity-100 transition-opacity">
               <Image 
@@ -40,6 +40,14 @@ export default function Footer() {
               <li><Link href="/about" className="hover:text-brand transition-colors">About TJ</Link></li>
               <li><a href="https://apply.thefoundersframe.com" target="_blank" rel="noopener" className="hover:text-brand transition-colors">Mentorship</a></li>
               <li><Link href={env.NEXT_PUBLIC_WALLET_APP_URL} className="hover:text-brand transition-colors">Credits & billing</Link></li>
+            </ul>
+          </div>
+
+          <div>
+            <h4 className="text-white font-semibold mb-6 tracking-wide bg-gradient-to-r from-white to-gray-400 bg-clip-text text-transparent">LEGAL</h4>
+            <ul className="space-y-4 text-sm text-gray-400">
+              <li><Link href="/privacy" className="hover:text-brand transition-colors">Privacy Policy</Link></li>
+              <li><Link href="/terms" className="hover:text-brand transition-colors">Terms of Service</Link></li>
             </ul>
           </div>
         </div>
