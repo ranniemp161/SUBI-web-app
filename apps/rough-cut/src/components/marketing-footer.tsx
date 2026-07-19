@@ -50,8 +50,8 @@ export function MarketingFooter() {
           <div className="flex flex-col gap-5">
             <h4 className="text-xs font-bold uppercase tracking-wider text-white">Legal</h4>
             <nav className="flex flex-col gap-3.5">
-              <a href="#" className="text-[14.5px] text-[#8A97AC] transition-colors hover:text-white">Privacy Policy</a>
-              <a href="#" className="text-[14.5px] text-[#8A97AC] transition-colors hover:text-white">Terms of Service</a>
+              <Link href="/privacy" className="text-[14.5px] text-[#8A97AC] transition-colors hover:text-white">Privacy Policy</Link>
+              <Link href="/terms" className="text-[14.5px] text-[#8A97AC] transition-colors hover:text-white">Terms of Service</Link>
             </nav>
           </div>
 
