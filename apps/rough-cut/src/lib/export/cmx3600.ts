@@ -7,7 +7,13 @@
  */
 import type { EDL } from "@/lib/edl";
 import { getKeepRanges } from "@/lib/export/plan";
-import { MIN_CLIP_SECONDS, formatTimecode } from "@/lib/export/timebase";
+import {
+  DEFAULT_FPS,
+  formatTimecode,
+  isDropFrame,
+  minClipSeconds,
+  type VideoFps,
+} from "@/lib/export/timebase";
 
 /** Conventional reel name for file-based/auxiliary sources when no real reel exists. */
 const FALLBACK_REEL_NAME = "AX";
@@ -31,14 +37,27 @@ function reelName(sourceFilename: string): string {
 
 /**
  * Builds a CMX 3600 EDL string describing the EDL's kept segments as
- * sequential events, in order, at a fixed 30fps timebase. Segments shorter
- * than one frame are dropped rather than included as zero-length events.
+ * sequential events, in order, at the source's timebase (drop-frame timecode
+ * for the NTSC 29.97/59.94 rates). Segments shorter than one frame are
+ * dropped rather than included as zero-length events. `sourceOffsetSeconds`
+ * (see `detect-embedded-timecode.ts`) shifts only the source in/out
+ * timecodes, matching the source media's own embedded start timecode when
+ * it doesn't start at zero — record timecodes stay a zero-based edited
+ * timeline regardless.
  */
-export function buildCmx3600Edl(edl: EDL, projectTitle: string, sourceFilename: string): string {
-  const ranges = getKeepRanges(edl).filter((r) => r.end - r.start >= MIN_CLIP_SECONDS);
+export function buildCmx3600Edl(
+  edl: EDL,
+  projectTitle: string,
+  sourceFilename: string,
+  fps: VideoFps = DEFAULT_FPS,
+  sourceOffsetSeconds = 0
+): string {
+  const minSeconds = minClipSeconds(fps);
+  const ranges = getKeepRanges(edl).filter((r) => r.end - r.start >= minSeconds);
   const reel = reelName(sourceFilename);
   const safeTitle = stripControlChars(projectTitle);
   const safeSourceFilename = stripControlChars(sourceFilename);
+  const frameCountMode = isDropFrame(fps) ? "DROP FRAME" : "NON-DROP FRAME";
 
   let recordCursor = 0;
   const events = ranges
@@ -46,15 +65,15 @@ export function buildCmx3600Edl(edl: EDL, projectTitle: string, sourceFilename: 
       const duration = range.end - range.start;
       if (duration <= 0) return null;
       const eventNumber = String(index + 1).padStart(3, "0");
-      const sourceIn = formatTimecode(range.start);
-      const sourceOut = formatTimecode(range.end);
-      const recordIn = formatTimecode(recordCursor);
+      const sourceIn = formatTimecode(range.start + sourceOffsetSeconds, fps);
+      const sourceOut = formatTimecode(range.end + sourceOffsetSeconds, fps);
+      const recordIn = formatTimecode(recordCursor, fps);
       recordCursor += duration;
-      const recordOut = formatTimecode(recordCursor);
+      const recordOut = formatTimecode(recordCursor, fps);
       return `${eventNumber}  ${reel}      V     C        ${sourceIn} ${sourceOut} ${recordIn} ${recordOut}\n* FROM CLIP NAME: ${safeSourceFilename}`;
     })
     .filter((event): event is string => event !== null)
     .join("\n");
 
-  return `TITLE: ${safeTitle}\nFCM: NON-DROP FRAME\n\n${events}\n`;
+  return `TITLE: ${safeTitle}\nFCM: ${frameCountMode}\n\n${events}\n`;
 }

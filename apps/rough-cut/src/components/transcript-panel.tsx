@@ -120,13 +120,15 @@ const WordSpan = memo(function WordSpan({
                   ? "text-teal-400/70 line-through decoration-teal-400/50 hover:text-emerald-300/80 hover:decoration-transparent"
                   : "text-red-400/70 line-through decoration-red-400/50 hover:text-emerald-300/80 hover:decoration-transparent"
             : isActive
-              ? "bg-accent text-accent-foreground shadow-sm shadow-accent/40 ring-1 ring-accent/60"
+              ? // Accent yellow is reserved for the playhead — the one word
+                // playback is on — so it can never be confused with selection.
+                "bg-accent text-accent-foreground shadow-sm shadow-accent/40 ring-1 ring-accent/60"
               : isSelected
-                ? // Selected reads as a solid Descript-style highlight, not a
-                  // faint wash — the range the user marked must be unmistakable.
-                  "bg-accent/80 text-accent-foreground"
+                ? // Selection uses the universal text-selection blue: solid and
+                  // unmistakable, and a different language from the playhead.
+                  "bg-blue-500/80 text-white"
                 : "text-foreground/90 hover:bg-foreground/10"
-        } ${isCut && isSelected ? "bg-accent/40" : ""} ${
+        } ${isCut && isSelected ? "bg-blue-500/35" : ""} ${
           isMatch && !isSelected && !isActive ? "bg-amber-400/25" : ""
         }`}
         title={
@@ -724,7 +726,7 @@ export default function TranscriptPanel({
         {/* Selection action bar */}
         {selection.size > 0 && (
           <div className="sticky top-0 z-10 -mx-5 mb-2 flex items-center justify-between border-b border-foreground/10 bg-background/95 px-5 py-2 backdrop-blur">
-            <span className="text-xs text-foreground/60">
+            <span className="text-xs text-blue-300">
               {selection.size} word{selection.size === 1 ? "" : "s"} selected
               <span className="ml-2 hidden text-[10px] text-foreground/35 min-[380px]:inline">
                 Delete key cuts · Esc deselects
@@ -787,8 +789,6 @@ export default function TranscriptPanel({
                     runEnd++;
                   }
                   const count = runEnd - index + 1;
-                  const start = words[index].start;
-                  const end = words[runEnd].end;
                   // Preview the hidden text in the tooltip so restoring isn't
                   // a blind gamble.
                   const previewWords = words
