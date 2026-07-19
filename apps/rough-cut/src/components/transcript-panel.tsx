@@ -301,20 +301,21 @@ export default function TranscriptPanel({
   }, [cutEvent, aiBusy]);
   // Explicit X-button dismissal. Separate from `dismissedAt` (the auto-collapse
   // timer) so the two don't fight: closing the card should always win over the
-  // "reopen while diverged" behavior below, until something new happens.
+  // "reopen while diverged" behavior below, until something new happens (a
+  // fresh cut event, or a new divergence after being restored). Tracked with
+  // state mirrors (not refs) and reset during render — React's documented
+  // pattern for "adjust state when a prop changes" — since this repo's lint
+  // config also forbids reading/writing refs during render.
   const [manuallyDismissed, setManuallyDismissed] = useState(false);
-  const wasDivergedRef = useRef(hasDiverged);
-  useEffect(() => {
-    // A *new* divergence (false -> true) re-arms the card even if the user
-    // dismissed it earlier — that's what keeps "Restore AI suggestions"
-    // reachable. Re-checking the same still-diverged state must not.
-    if (hasDiverged && !wasDivergedRef.current) setManuallyDismissed(false);
-    wasDivergedRef.current = hasDiverged;
-  }, [hasDiverged]);
-  useEffect(() => {
-    // A fresh cut event (new AI/rough-cut run) always gets its own card.
-    setManuallyDismissed(false);
-  }, [cutEvent?.at]);
+  const [prevCutEventAt, setPrevCutEventAt] = useState(cutEvent?.at);
+  const [prevHasDiverged, setPrevHasDiverged] = useState(hasDiverged);
+  if (cutEvent?.at !== prevCutEventAt || hasDiverged !== prevHasDiverged) {
+    const cutEventChanged = cutEvent?.at !== prevCutEventAt;
+    const newlyDiverged = hasDiverged && !prevHasDiverged;
+    setPrevCutEventAt(cutEvent?.at);
+    setPrevHasDiverged(hasDiverged);
+    if (manuallyDismissed && (cutEventChanged || newlyDiverged)) setManuallyDismissed(false);
+  }
   const showCard =
     cutEvent !== null &&
     !manuallyDismissed &&
