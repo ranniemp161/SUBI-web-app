@@ -32,6 +32,9 @@ interface TranscriptPanelProps {
   currentTime: number;
   isPlaying: boolean;
   onSeek: (seconds: number) => void;
+  /** Seek AND start playback — the "Play from here" actions. Falls back to
+   *  onSeek (seek only) when not provided. */
+  onPlayFrom?: (seconds: number) => void;
   onCutWords: (words: TranscriptWord[]) => void;
   onRestoreSegment: (segment: EDLSegment) => void;
   onOpenRetakeReview: () => void;
@@ -98,9 +101,11 @@ const WordSpan = memo(function WordSpan({
   onContextMenu,
 }: WordSpanProps) {
   return (
-    <span>
+    // The hit-test attribute lives on the wrapper (word + trailing space) so a
+    // drag passing through the space between words still resolves to a word —
+    // the inner span alone leaves dead zones that stall the selection.
+    <span data-word-index={index}>
       <span
-        data-word-index={index}
         ref={innerRef}
         onMouseDown={(e) => onMouseDown(index, e)}
         onMouseEnter={() => onMouseEnter(index)}
@@ -116,8 +121,12 @@ const WordSpan = memo(function WordSpan({
                   : "text-red-400/70 line-through decoration-red-400/50 hover:text-emerald-300/80 hover:decoration-transparent"
             : isActive
               ? "bg-accent text-accent-foreground shadow-sm shadow-accent/40 ring-1 ring-accent/60"
-              : "text-foreground/90 hover:bg-foreground/10"
-        } ${isSelected && !isActive ? "bg-accent/30" : ""} ${
+              : isSelected
+                ? // Selected reads as a solid Descript-style highlight, not a
+                  // faint wash — the range the user marked must be unmistakable.
+                  "bg-accent/80 text-accent-foreground"
+                : "text-foreground/90 hover:bg-foreground/10"
+        } ${isCut && isSelected ? "bg-accent/40" : ""} ${
           isMatch && !isSelected && !isActive ? "bg-amber-400/25" : ""
         }`}
         title={
@@ -143,6 +152,36 @@ const WordSpan = memo(function WordSpan({
 // (localStorage is an external system; effect-body setState is a lint error
 // and an extra render). The listener set makes same-tab toggles reactive —
 // the native "storage" event only fires in *other* tabs.
+/**
+ * Resolve the transcript word under (or nearest to) a viewport point. Tries a
+ * direct element hit first, then falls back to the caret position — which the
+ * browser resolves to the nearest text position — so dragging through the
+ * whitespace between words, past a line's end, or slightly off the text row
+ * still lands on a word instead of stalling the selection.
+ */
+function wordIndexAtPoint(x: number, y: number): number | null {
+  let el: Element | null =
+    document.elementFromPoint(x, y)?.closest("[data-word-index]") ?? null;
+  if (!el) {
+    let node: Node | null = null;
+    if (typeof document.caretRangeFromPoint === "function") {
+      node = document.caretRangeFromPoint(x, y)?.startContainer ?? null;
+    } else if ("caretPositionFromPoint" in document) {
+      node =
+        (
+          document as Document & {
+            caretPositionFromPoint(x: number, y: number): { offsetNode: Node } | null;
+          }
+        ).caretPositionFromPoint(x, y)?.offsetNode ?? null;
+    }
+    const base = node instanceof Element ? node : (node?.parentElement ?? null);
+    el = base?.closest("[data-word-index]") ?? null;
+  }
+  if (!(el instanceof HTMLElement)) return null;
+  const index = Number(el.dataset.wordIndex);
+  return Number.isNaN(index) ? null : index;
+}
+
 const HIDE_CUT_STORAGE_KEY = "rc:hideCutWords";
 const hideCutListeners = new Set<() => void>();
 
@@ -160,10 +199,33 @@ function writeHideCutPreference(hide: boolean) {
   hideCutListeners.forEach((listener) => listener());
 }
 
+// First-visit gesture hint, dismissible once per browser. Same external-store
+// shape as the hide-cut preference above. The server snapshot says "dismissed"
+// so returning users never see it flash during hydration; first-time users see
+// it appear right after mount.
+const HINT_STORAGE_KEY = "rc:transcriptHintDismissed";
+const hintListeners = new Set<() => void>();
+
+function subscribeHint(listener: () => void): () => void {
+  hintListeners.add(listener);
+  return () => hintListeners.delete(listener);
+}
+
+function readHintDismissed(): boolean {
+  return localStorage.getItem(HINT_STORAGE_KEY) === "1";
+}
+
+function dismissHint() {
+  localStorage.setItem(HINT_STORAGE_KEY, "1");
+  hintListeners.forEach((listener) => listener());
+}
+
 /**
- * Transcript panel — click a word to seek, click-drag or shift-click to select
- * a range, right-click for cut/restore/play, click a cut (red) word to restore.
- * Keeps the active word scrolled into view during playback and supports search.
+ * Transcript panel — click a word to seek (and set the range anchor), then
+ * Shift or Ctrl/Cmd-click another word to select everything between them;
+ * click-drag also selects. Right-click for cut/restore/play, click a cut (red)
+ * word to restore. Keeps the active word scrolled into view during playback
+ * and supports search.
  */
 export default function TranscriptPanel({
   words,
@@ -171,6 +233,7 @@ export default function TranscriptPanel({
   currentTime,
   isPlaying,
   onSeek,
+  onPlayFrom,
   onCutWords,
   onRestoreSegment,
   onOpenRetakeReview,
@@ -216,6 +279,7 @@ export default function TranscriptPanel({
     readHideCutPreference,
     () => false
   );
+  const hintDismissed = useSyncExternalStore(subscribeHint, readHintDismissed, () => true);
   const toggleHideCut = useCallback(() => {
     writeHideCutPreference(!readHideCutPreference());
   }, []);
@@ -246,6 +310,9 @@ export default function TranscriptPanel({
   const selectingRef = useRef(false);
   const didDragRef = useRef(false);
   const downIndexRef = useRef<number | null>(null);
+  // True while the click that opened the menu is still in flight, so the
+  // close-on-outside-click listener doesn't treat it as an outside click.
+  const menuOpenedByClickRef = useRef(false);
   // Mirrors of state read by the per-word callbacks, so those callbacks can stay
   // referentially stable and the memoized word spans don't all re-render mid-drag.
   const anchorIndexRef = useRef<number | null>(null);
@@ -289,6 +356,9 @@ export default function TranscriptPanel({
   ).length;
   const aiCount = edl.segments.filter(
     (s) => s.status === "cut" && s.reason === "ai"
+  ).length;
+  const repetitionCount = edl.segments.filter(
+    (s) => s.status === "cut" && s.reason === "repetition"
   ).length;
 
   // Keep the active word in view while playing.
@@ -337,49 +407,81 @@ export default function TranscriptPanel({
   const handleWordMouseDown = useCallback(
     (index: number, e: React.MouseEvent) => {
       if (e.button !== 0) return; // left button only; right opens the menu
-      if (e.shiftKey && anchorIndexRef.current !== null) {
-        selectRange(anchorIndexRef.current, index);
+      // Shift or Ctrl/Cmd+click extends the selection from the anchor — the
+      // last plain-clicked word — to this one (Descript-style range select).
+      // With no anchor yet, it starts one here.
+      if (e.shiftKey || e.ctrlKey || e.metaKey) {
+        const anchor = anchorIndexRef.current;
+        if (anchor !== null) {
+          selectRange(anchor, index);
+        } else {
+          setAnchorIndex(index);
+          setSelection(new Set([index]));
+        }
         return;
       }
+      // The drag seed stays invisible: no selection is set on mousedown, so a
+      // plain click never flashes the selection bar open and closed. The
+      // selection first appears when a real drag is detected (pointer crosses
+      // to another word) in mouseenter or the rAF hit-test loop below.
       downIndexRef.current = index;
       selectingRef.current = true;
       didDragRef.current = false;
       setDragging(true);
       setAnchorIndex(index);
-      setSelection(new Set([index]));
     },
     [selectRange]
   );
 
   const handleWordMouseEnter = useCallback(
     (index: number) => {
-      if (!selectingRef.current || downIndexRef.current === null) return;
-      didDragRef.current = true;
-      selectRange(downIndexRef.current, index);
+      const down = downIndexRef.current;
+      if (!selectingRef.current || down === null) return;
+      if (index !== down) didDragRef.current = true;
+      if (didDragRef.current) selectRange(down, index);
     },
     [selectRange]
   );
 
-  // End-of-drag: a click with no drag seeks (or restores a cut) and leaves no
-  // lingering selection; a real drag keeps the multi-word selection.
+  // End-of-drag: a click with no drag seeks (or, on a cut word, opens the
+  // small anchored menu with Restore — a lightweight validation step so an
+  // accidental click can't silently un-delete) and leaves no lingering
+  // selection; a real drag keeps the multi-word selection.
   useEffect(() => {
-    function onUp() {
+    function onUp(e: MouseEvent) {
       if (!selectingRef.current) return;
       selectingRef.current = false;
       setDragging(false);
       const i = downIndexRef.current;
       if (didDragRef.current || i === null) return;
       const segment = segmentForWord[i];
-      if (segment?.status === "cut") onRestoreSegment(segment);
-      else onSeek(words[i].start);
-      clearSelection();
+      if (segment?.status === "cut") {
+        // The trailing `click` of this same gesture must not instantly close
+        // the menu — flag it so the close listener lets it pass.
+        menuOpenedByClickRef.current = true;
+        setMenu({
+          x: Math.min(e.clientX, window.innerWidth - 180),
+          y: Math.min(e.clientY, window.innerHeight - 100),
+          index: i,
+        });
+      } else {
+        onSeek(words[i].start);
+      }
+      // The clicked word stays the range anchor (so a following Shift or
+      // Ctrl-click extends from here); only the visible selection clears.
+      setAnchorIndex(i);
+      setSelection(new Set());
     }
     window.addEventListener("mouseup", onUp);
     return () => window.removeEventListener("mouseup", onUp);
-  }, [segmentForWord, words, onSeek, onRestoreSegment, clearSelection]);
+  }, [segmentForWord, words, onSeek]);
 
-  // Auto-scroll the transcript while drag-selecting past the top/bottom edge,
-  // extending the selection to whatever word scrolls under the cursor.
+  // While drag-selecting: every frame, extend the selection to the word under
+  // (or nearest) the pointer via geometric hit-testing, and auto-scroll past
+  // the top/bottom edge. The per-word mouseenter path still gives instant
+  // feedback over the words themselves; this loop covers everywhere it can't —
+  // the spaces between words, line ends, and off-row drift — which is what
+  // made dragging feel like it only caught individual words.
   useEffect(() => {
     if (!dragging) return;
     const container = containerRef.current;
@@ -387,6 +489,10 @@ export default function TranscriptPanel({
     const point = { x: 0, y: 0 };
     let hasPoint = false;
     let frame = 0;
+    // Skip the setSelection when the resolved range didn't change, so the
+    // 60 Hz loop doesn't re-render the panel on every frame of a still drag.
+    let lastLo = -1;
+    let lastHi = -1;
 
     const onMove = (e: MouseEvent) => {
       point.x = e.clientX;
@@ -406,19 +512,25 @@ export default function TranscriptPanel({
       } else if (point.y > rect.bottom - EDGE) {
         speed = Math.ceil(((point.y - (rect.bottom - EDGE)) / EDGE) * MAX_SPEED);
       }
-      if (speed === 0) return;
-      const before = container.scrollTop;
-      container.scrollTop = before + speed;
-      if (container.scrollTop === before) return; // already at a scroll limit
-      const target = document.elementFromPoint(point.x, point.y);
-      const wordEl = target?.closest<HTMLElement>("[data-word-index]");
-      if (wordEl && downIndexRef.current !== null) {
-        const idx = Number(wordEl.dataset.wordIndex);
-        if (!Number.isNaN(idx)) {
-          didDragRef.current = true;
-          selectRange(downIndexRef.current, idx);
-        }
-      }
+      if (speed !== 0) container.scrollTop += speed;
+      const down = downIndexRef.current;
+      if (down === null) return;
+      // Clamp the probe point into the panel so a drag that wanders outside
+      // it keeps selecting the nearest row instead of freezing.
+      const x = Math.min(Math.max(point.x, rect.left + 1), rect.right - 1);
+      const y = Math.min(Math.max(point.y, rect.top + 1), rect.bottom - 1);
+      const idx = wordIndexAtPoint(x, y);
+      if (idx === null) return;
+      if (idx !== down) didDragRef.current = true;
+      // Until a real drag is detected, keep the selection invisible — a
+      // click-hold on one word must not flash the selection bar.
+      if (!didDragRef.current) return;
+      const lo = Math.min(down, idx);
+      const hi = Math.max(down, idx);
+      if (lo === lastLo && hi === lastHi) return;
+      lastLo = lo;
+      lastHi = hi;
+      selectRange(down, idx);
     };
 
     window.addEventListener("mousemove", onMove);
@@ -444,15 +556,25 @@ export default function TranscriptPanel({
     []
   );
 
-  // Close the menu on any outside interaction.
+  // Close the menu on any outside interaction. When the menu was opened by a
+  // left-click on a cut word (the mouseup handler), the same gesture's trailing
+  // `click` event would otherwise close it in the same breath — the ref flag
+  // swallows exactly that one click.
   useEffect(() => {
     if (!menu) return;
+    const closeOnClick = () => {
+      if (menuOpenedByClickRef.current) {
+        menuOpenedByClickRef.current = false;
+        return;
+      }
+      setMenu(null);
+    };
     const close = () => setMenu(null);
-    window.addEventListener("click", close);
+    window.addEventListener("click", closeOnClick);
     window.addEventListener("scroll", close, true);
     window.addEventListener("resize", close);
     return () => {
-      window.removeEventListener("click", close);
+      window.removeEventListener("click", closeOnClick);
       window.removeEventListener("scroll", close, true);
       window.removeEventListener("resize", close);
     };
@@ -520,33 +642,122 @@ export default function TranscriptPanel({
         </div>
       </div>
 
-      {/* Transcript body */}
+      {/* Cut-reason legend — decodes the strikethrough colors at a glance. */}
+      {(silenceCount > 0 || retakeCount > 0 || aiCount > 0 || repetitionCount > 0) && (
+        <div className="flex flex-wrap items-center gap-1.5 px-5 pb-3">
+          {silenceCount > 0 && (
+            <span
+              title="Red strikethrough — silence removed. Click a struck word to restore it."
+              className="inline-flex items-center gap-1.5 rounded-full bg-red-500/10 px-2 py-0.5 text-[10px] font-medium text-red-300"
+            >
+              <span className="h-1.5 w-1.5 rounded-full bg-red-400" />
+              {silenceCount} silence{silenceCount === 1 ? "" : "s"}
+            </span>
+          )}
+          {retakeCount > 0 && (
+            <span
+              title="Amber strikethrough — retake removed, the last delivery was kept. Click a struck word to restore it."
+              className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-300"
+            >
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+              {retakeCount} retake{retakeCount === 1 ? "" : "s"}
+            </span>
+          )}
+          {aiCount > 0 && (
+            <span
+              title="Blue strikethrough — the AI pass removed a speech mistake. Click a struck word to restore it."
+              className="inline-flex items-center gap-1.5 rounded-full bg-sky-500/10 px-2 py-0.5 text-[10px] font-medium text-sky-300"
+            >
+              <span className="h-1.5 w-1.5 rounded-full bg-sky-400" />
+              {aiCount} AI cut{aiCount === 1 ? "" : "s"}
+            </span>
+          )}
+          {repetitionCount > 0 && (
+            <span
+              title="Teal strikethrough — repeated words removed, the last delivery was kept. Click a struck word to restore it."
+              className="inline-flex items-center gap-1.5 rounded-full bg-teal-500/10 px-2 py-0.5 text-[10px] font-medium text-teal-300"
+            >
+              <span className="h-1.5 w-1.5 rounded-full bg-teal-400" />
+              {repetitionCount} repeat{repetitionCount === 1 ? "" : "s"}
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* One-time gesture hints — dismiss persists per browser. */}
+      {!hintDismissed && (
+        <div className="mx-5 mb-3 flex items-start justify-between gap-2 rounded-lg border border-foreground/10 bg-foreground/[0.04] px-3 py-2">
+          <p className="text-xs leading-relaxed text-foreground/60">
+            <span className="font-medium text-foreground/80">Click</span> a word to jump
+            {" · "}
+            <span className="font-medium text-foreground/80">drag</span> to select
+            {" · "}
+            <span className="font-medium text-foreground/80">Shift/Ctrl-click</span> a second
+            word to select the range{" · "}
+            <span className="font-medium text-foreground/80">Delete</span> key cuts the
+            selection{" · "}click struck-through text to restore it
+          </p>
+          <button
+            type="button"
+            onClick={dismissHint}
+            aria-label="Dismiss hints"
+            className="rounded p-0.5 text-foreground/40 hover:bg-foreground/10 hover:text-foreground/70"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
+
+      {/* Transcript body. translate="no" + notranslate: Chrome's auto-translate
+          (and similar extensions) rewrites text nodes in place — wrapping each
+          word in <font> tags — which desyncs React's DOM and crashes the next
+          word update with insertBefore NotFoundError. Translated words would
+          also no longer match their timestamps, so translation is wrong here
+          even when it doesn't crash. */}
       <div
         ref={containerRef}
         tabIndex={0}
+        translate="no"
         onKeyDown={handleKeyDown}
-        className="transcript-scroll relative flex-1 select-none overflow-y-auto px-5 outline-none"
+        className="notranslate transcript-scroll relative flex-1 select-none overflow-y-auto px-5 outline-none"
       >
         {/* Selection action bar */}
         {selection.size > 0 && (
           <div className="sticky top-0 z-10 -mx-5 mb-2 flex items-center justify-between border-b border-foreground/10 bg-background/95 px-5 py-2 backdrop-blur">
             <span className="text-xs text-foreground/60">
               {selection.size} word{selection.size === 1 ? "" : "s"} selected
+              <span className="ml-2 hidden text-[10px] text-foreground/35 min-[380px]:inline">
+                Delete key cuts · Esc deselects
+              </span>
             </span>
             <div className="flex items-center gap-2">
               <button
                 type="button"
+                onClick={() => {
+                  const starts = Array.from(selection).map((i) => words[i].start);
+                  (onPlayFrom ?? onSeek)(Math.min(...starts));
+                }}
+                title="Play from the start of the selection"
+                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-foreground/60 hover:bg-foreground/10 hover:text-foreground/90"
+              >
+                <Play className="h-3 w-3" />
+                Play selection
+              </button>
+              <button
+                type="button"
                 onClick={clearSelection}
+                title="Keep everything — just remove the highlight"
                 className="rounded-md px-2 py-1 text-xs text-foreground/50 hover:bg-foreground/10 hover:text-foreground/80"
               >
-                Clear
+                Deselect
               </button>
               <button
                 type="button"
                 onClick={() => cutWords(Array.from(selection))}
-                className="rounded-md bg-red-500/15 px-3 py-1 text-xs font-medium text-red-300 hover:bg-red-500/25"
+                className="inline-flex items-center gap-1 rounded-md bg-red-500/15 px-3 py-1 text-xs font-medium text-red-300 hover:bg-red-500/25"
               >
-                Cut
+                <Scissors className="h-3 w-3" />
+                Cut {selection.size} word{selection.size === 1 ? "" : "s"}
               </button>
             </div>
           </div>
@@ -578,20 +789,44 @@ export default function TranscriptPanel({
                   const count = runEnd - index + 1;
                   const start = words[index].start;
                   const end = words[runEnd].end;
+                  // Preview the hidden text in the tooltip so restoring isn't
+                  // a blind gamble.
+                  const previewWords = words
+                    .slice(index, runEnd + 1)
+                    .map((w) => w.word)
+                    .join(" ");
+                  const preview =
+                    previewWords.length > 90
+                      ? `${previewWords.slice(0, 90)}…`
+                      : previewWords;
+                  // Keyed wrapper holds the pill AND its trailing space —
+                  // every child of the <p> stays a keyed element, no bare
+                  // text-node siblings for reconciliation to trip over.
                   nodes.push(
-                    <button
-                      key={`hidden-${index}`}
-                      type="button"
-                      onClick={() =>
-                        onRestoreSegment({ start, end, status: "cut", reason: null })
-                      }
-                      title={`${count} removed word${count === 1 ? "" : "s"} — click to restore`}
-                      className="mx-0.5 inline-flex translate-y-px items-center rounded-md bg-foreground/[0.07] px-1.5 text-xs leading-5 text-foreground/40 transition-colors hover:bg-emerald-500/20 hover:text-emerald-300"
-                    >
-                      ···
-                    </button>
+                    <span key={`hidden-${index}`}>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          // Select the hidden run and open the anchored menu —
+                          // its multi-word Restore branch then restores the
+                          // full span, with the menu as the validation step.
+                          setAnchorIndex(index);
+                          const range = new Set<number>();
+                          for (let w = index; w <= runEnd; w++) range.add(w);
+                          setSelection(range);
+                          setMenu({
+                            x: Math.min(e.clientX, window.innerWidth - 180),
+                            y: Math.min(e.clientY, window.innerHeight - 100),
+                            index,
+                          });
+                        }}
+                        title={`${count} removed word${count === 1 ? "" : "s"}: “${preview}” — click to restore`}
+                        className="mx-0.5 inline-flex translate-y-px items-center rounded-md bg-foreground/[0.07] px-1.5 text-xs leading-5 text-foreground/40 transition-colors hover:bg-emerald-500/20 hover:text-emerald-300 motion-safe:animate-[rc-pill-in_150ms_ease-out]"
+                      >
+                        ···
+                      </button>{" "}
+                    </span>
                   );
-                  nodes.push(" ");
                   continue;
                 }
 
@@ -784,7 +1019,7 @@ export default function TranscriptPanel({
               Restore{" "}
               {selection.has(menu.index) && selection.size > 1
                 ? `${selection.size} words`
-                : ""}
+                : "1 word"}
               <RotateCcw className="h-3.5 w-3.5 text-foreground/30" />
             </button>
           ) : (
@@ -803,14 +1038,14 @@ export default function TranscriptPanel({
               Cut{" "}
               {selection.has(menu.index) && selection.size > 1
                 ? `${selection.size} words`
-                : ""}
+                : "1 word"}
               <Scissors className="h-3.5 w-3.5 text-foreground/30" />
             </button>
           )}
           <button
             type="button"
             onClick={() => {
-              onSeek(words[menu.index].start);
+              (onPlayFrom ?? onSeek)(words[menu.index].start);
               setMenu(null);
             }}
             role="menuitem"
@@ -818,6 +1053,19 @@ export default function TranscriptPanel({
           >
             Play from here <Play className="h-3.5 w-3.5 text-foreground/30" />
           </button>
+          {selection.size > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                clearSelection();
+                setMenu(null);
+              }}
+              role="menuitem"
+              className={menuItem}
+            >
+              Deselect <X className="h-3.5 w-3.5 text-foreground/30" />
+            </button>
+          )}
         </div>
       )}
     </div>

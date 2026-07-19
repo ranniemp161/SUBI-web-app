@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { render, screen, cleanup } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import TranscriptPanel from "./transcript-panel";
@@ -67,7 +67,7 @@ describe("TranscriptPanel", () => {
     const wordEl = screen.getByText("world");
     await user.pointer([{ target: wordEl, keys: "[MouseRight]" }]);
     
-    const cutBtn = await screen.findByRole("menuitem", { name: /cut/i });
+    const cutBtn = await screen.findByRole("menuitem", { name: /cut 1 word/i });
     await user.click(cutBtn);
     
     expect(defaultProps.onCutWords).toHaveBeenCalledWith([{ word: "world", start: 1, end: 2, confidence: 0.9 }]);
@@ -154,18 +154,21 @@ describe("TranscriptPanel", () => {
         { start: 1, end: 2, status: "keep", reason: null },
       ]
     };
-    render(<TranscriptPanel {...defaultProps} edl={cutEdl} />);
-    
+    const onRestoreSegment = vi.fn();
+    render(<TranscriptPanel {...defaultProps} edl={cutEdl} onRestoreSegment={onRestoreSegment} />);
+
     const toggleBtn = screen.getByTitle("Hide removed text");
     await user.click(toggleBtn);
-    
+
     // The cut word should be replaced with a pill
     const pill = await screen.findByTitle(/1 removed word/i);
     expect(pill).toBeVisible();
-    
-    // Restores when pill is clicked
+
+    // Clicking the pill opens the anchored menu — restore happens only from it.
     await user.click(pill);
-    expect(defaultProps.onRestoreSegment).toHaveBeenCalledWith(expect.objectContaining({
+    expect(onRestoreSegment).not.toHaveBeenCalled();
+    await user.click(await screen.findByRole("menuitem", { name: /restore/i }));
+    expect(onRestoreSegment).toHaveBeenCalledWith(expect.objectContaining({
       start: 0, end: 1
     }));
   });
@@ -175,8 +178,200 @@ describe("TranscriptPanel", () => {
     render(<TranscriptPanel {...defaultProps} />);
     const toggleBtn = screen.getByTitle("Hide removed text");
     expect(toggleBtn).toHaveAttribute("aria-pressed", "false");
-    
+
     await user.click(toggleBtn);
     expect(screen.getByTitle("Show removed text")).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("plain click sets the anchor so a Ctrl+click on another word selects the range", async () => {
+    const user = userEvent.setup();
+    const onSeek = vi.fn();
+    render(<TranscriptPanel {...defaultProps} onSeek={onSeek} />);
+
+    // Plain click seeks AND anchors the range at "Hello".
+    await user.click(screen.getByText("Hello"));
+    expect(onSeek).toHaveBeenCalledWith(0);
+
+    await user.keyboard("{Control>}");
+    await user.click(screen.getByText("world"));
+    await user.keyboard("{/Control}");
+
+    expect(screen.getByText(/2 words selected/i)).toBeVisible();
+    // The modifier click extends the selection; it must not seek again.
+    expect(onSeek).toHaveBeenCalledTimes(1);
+  });
+
+  it("Shift+click also extends the range from the last plain-clicked word", async () => {
+    const user = userEvent.setup();
+    const onSeek = vi.fn();
+    render(<TranscriptPanel {...defaultProps} onSeek={onSeek} />);
+
+    await user.click(screen.getByText("Hello"));
+    await user.keyboard("{Shift>}");
+    await user.click(screen.getByText("world"));
+    await user.keyboard("{/Shift}");
+
+    expect(screen.getByText(/2 words selected/i)).toBeVisible();
+  });
+
+  it("selection bar 'Play selection' plays from the earliest selected word", async () => {
+    const user = userEvent.setup();
+    const onSeek = vi.fn();
+    const onPlayFrom = vi.fn();
+    render(<TranscriptPanel {...defaultProps} onSeek={onSeek} onPlayFrom={onPlayFrom} />);
+
+    await user.click(screen.getByText("Hello"));
+    await user.keyboard("{Control>}");
+    await user.click(screen.getByText("world"));
+    await user.keyboard("{/Control}");
+
+    await user.click(screen.getByRole("button", { name: /play selection/i }));
+    expect(onPlayFrom).toHaveBeenCalledWith(0);
+  });
+
+  it("a plain click never shows the selection bar — not even mid-click", () => {
+    const onSeek = vi.fn();
+    render(<TranscriptPanel {...defaultProps} onSeek={onSeek} />);
+    const word = screen.getByText("Hello");
+
+    // Mid-click (button held down on a word): no "N words selected" bar.
+    fireEvent.mouseDown(word);
+    expect(screen.queryByText(/selected/i)).toBeNull();
+
+    fireEvent.mouseUp(word);
+    expect(screen.queryByText(/selected/i)).toBeNull();
+    // Click semantics kept: releasing on the word still seeks.
+    expect(onSeek).toHaveBeenCalledWith(0);
+  });
+
+  it("context-menu Deselect only clears the highlight — no cut, no restore", async () => {
+    const user = userEvent.setup();
+    const onCutWords = vi.fn();
+    const onRestoreSegment = vi.fn();
+    render(
+      <TranscriptPanel
+        {...defaultProps}
+        onCutWords={onCutWords}
+        onRestoreSegment={onRestoreSegment}
+      />
+    );
+
+    await user.click(screen.getByText("Hello"));
+    await user.keyboard("{Control>}");
+    await user.click(screen.getByText("world"));
+    await user.keyboard("{/Control}");
+    expect(screen.getByText(/2 words selected/i)).toBeVisible();
+
+    await user.pointer([{ target: screen.getByText("world"), keys: "[MouseRight]" }]);
+    await user.click(await screen.findByRole("menuitem", { name: /deselect/i }));
+
+    expect(screen.queryByText(/2 words selected/i)).toBeNull();
+    expect(onCutWords).not.toHaveBeenCalled();
+    expect(onRestoreSegment).not.toHaveBeenCalled();
+  });
+
+  it("shows the gesture hint strip until dismissed, then persists the dismissal", async () => {
+    const user = userEvent.setup();
+    const { unmount } = render(<TranscriptPanel {...defaultProps} />);
+
+    expect(screen.getByText(/a word to jump/i)).toBeVisible();
+    await user.click(screen.getByRole("button", { name: /dismiss hints/i }));
+    expect(screen.queryByText(/a word to jump/i)).toBeNull();
+
+    // A fresh mount respects the stored dismissal.
+    unmount();
+    render(<TranscriptPanel {...defaultProps} />);
+    expect(screen.queryByText(/a word to jump/i)).toBeNull();
+  });
+
+  it("renders legend chips for the cut reasons present in the EDL", () => {
+    const cutEdl: EDL = {
+      segments: [
+        { start: 0, end: 0.5, status: "cut", reason: "silence" },
+        { start: 0.5, end: 1, status: "cut", reason: "retake" },
+        { start: 1, end: 1.5, status: "cut", reason: "ai" },
+        { start: 1.5, end: 2, status: "keep", reason: null },
+      ],
+    };
+    render(<TranscriptPanel {...defaultProps} edl={cutEdl} />);
+
+    expect(screen.getByText(/1 silence/i)).toBeVisible();
+    expect(screen.getByText(/1 retake/i)).toBeVisible();
+    expect(screen.getByText(/1 AI cut/i)).toBeVisible();
+    expect(screen.queryByText(/repeat/i)).toBeNull();
+  });
+
+  it("left-clicking a struck-through word opens the anchored menu, not an instant restore", async () => {
+    const user = userEvent.setup();
+    const onRestoreSegment = vi.fn();
+    const cutEdl: EDL = {
+      segments: [
+        { start: 0, end: 1, status: "cut", reason: "manual" },
+        { start: 1, end: 2, status: "keep", reason: null },
+      ],
+    };
+    render(<TranscriptPanel {...defaultProps} edl={cutEdl} onRestoreSegment={onRestoreSegment} />);
+
+    await user.click(screen.getByText("Hello"));
+    // Menu opens; nothing restored yet.
+    const restoreItem = await screen.findByRole("menuitem", { name: /restore/i });
+    expect(restoreItem).toBeVisible();
+    expect(onRestoreSegment).not.toHaveBeenCalled();
+
+    await user.click(restoreItem);
+    expect(onRestoreSegment).toHaveBeenCalledWith(
+      expect.objectContaining({ start: 0, end: 1, status: "cut" })
+    );
+  });
+
+  it("clicking elsewhere closes the restore menu and keeps the word removed", async () => {
+    const user = userEvent.setup();
+    const onRestoreSegment = vi.fn();
+    const cutEdl: EDL = {
+      segments: [
+        { start: 0, end: 1, status: "cut", reason: "manual" },
+        { start: 1, end: 2, status: "keep", reason: null },
+      ],
+    };
+    render(<TranscriptPanel {...defaultProps} edl={cutEdl} onRestoreSegment={onRestoreSegment} />);
+
+    await user.click(screen.getByText("Hello"));
+    expect(await screen.findByRole("menuitem", { name: /restore/i })).toBeVisible();
+
+    await user.click(document.body);
+    expect(screen.queryByRole("menuitem", { name: /restore/i })).toBeNull();
+    expect(onRestoreSegment).not.toHaveBeenCalled();
+  });
+
+  it("right-click Restore on a cut word still works in one step", async () => {
+    const user = userEvent.setup();
+    const onRestoreSegment = vi.fn();
+    const cutEdl: EDL = {
+      segments: [
+        { start: 0, end: 1, status: "cut", reason: "manual" },
+        { start: 1, end: 2, status: "keep", reason: null },
+      ],
+    };
+    render(<TranscriptPanel {...defaultProps} edl={cutEdl} onRestoreSegment={onRestoreSegment} />);
+
+    await user.pointer([{ target: screen.getByText("Hello"), keys: "[MouseRight]" }]);
+    await user.click(await screen.findByRole("menuitem", { name: /restore/i }));
+
+    expect(onRestoreSegment).toHaveBeenCalledTimes(1);
+  });
+
+  it("previews the hidden words in the collapsed pill's tooltip", async () => {
+    const user = userEvent.setup();
+    const cutEdl: EDL = {
+      segments: [
+        { start: 0, end: 1, status: "cut", reason: "manual" },
+        { start: 1, end: 2, status: "keep", reason: null },
+      ],
+    };
+    render(<TranscriptPanel {...defaultProps} edl={cutEdl} />);
+
+    await user.click(screen.getByTitle("Hide removed text"));
+    const pill = await screen.findByTitle(/1 removed word.*Hello/i);
+    expect(pill).toBeVisible();
   });
 });
