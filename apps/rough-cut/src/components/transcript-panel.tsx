@@ -299,11 +299,26 @@ export default function TranscriptPanel({
     const timer = setTimeout(() => setDismissedAt(cutEvent.at), 10_000);
     return () => clearTimeout(timer);
   }, [cutEvent, aiBusy]);
-  // Re-open (or stay open) whenever the user is diverged from the AI's
-  // suggestions, so the "Restore AI suggestions" button remains reachable even
-  // after the auto-collapse timer has fired.
+  // Explicit X-button dismissal. Separate from `dismissedAt` (the auto-collapse
+  // timer) so the two don't fight: closing the card should always win over the
+  // "reopen while diverged" behavior below, until something new happens.
+  const [manuallyDismissed, setManuallyDismissed] = useState(false);
+  const wasDivergedRef = useRef(hasDiverged);
+  useEffect(() => {
+    // A *new* divergence (false -> true) re-arms the card even if the user
+    // dismissed it earlier — that's what keeps "Restore AI suggestions"
+    // reachable. Re-checking the same still-diverged state must not.
+    if (hasDiverged && !wasDivergedRef.current) setManuallyDismissed(false);
+    wasDivergedRef.current = hasDiverged;
+  }, [hasDiverged]);
+  useEffect(() => {
+    // A fresh cut event (new AI/rough-cut run) always gets its own card.
+    setManuallyDismissed(false);
+  }, [cutEvent?.at]);
   const showCard =
-    cutEvent !== null && (cutEvent.at !== dismissedAt || hasDiverged);
+    cutEvent !== null &&
+    !manuallyDismissed &&
+    (cutEvent.at !== dismissedAt || hasDiverged);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const activeWordRef = useRef<HTMLSpanElement>(null);
@@ -912,7 +927,10 @@ export default function TranscriptPanel({
             </div>
             <button
               type="button"
-              onClick={() => setDismissedAt(cutEvent.at)}
+              onClick={() => {
+                setDismissedAt(cutEvent.at);
+                setManuallyDismissed(true);
+              }}
               aria-label="Dismiss"
               className="rounded-md p-1 text-foreground/40 hover:bg-foreground/10 hover:text-foreground/80"
             >
