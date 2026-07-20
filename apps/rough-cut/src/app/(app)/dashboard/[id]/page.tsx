@@ -47,7 +47,7 @@ import {
 import { buildFcpxml } from "@/lib/export/fcpxml";
 import { buildCmx3600Edl } from "@/lib/export/cmx3600";
 import { buildXmeml } from "@/lib/export/xmeml";
-import { sanitizeFilename } from "@/lib/export/filename";
+import { sanitizeFilename, stripExtension } from "@/lib/export/filename";
 import { hasExportableRanges } from "@/lib/export/plan";
 import { DEFAULT_FPS, type VideoFps } from "@/lib/export/timebase";
 import { detectVideoFps } from "@/lib/detect-frame-rate";
@@ -1134,7 +1134,7 @@ export default function EditorPage() {
       exportFps,
       sourceTimecodeOffset
     );
-    downloadTextFile(xml, `${sanitizeFilename(project.fileName)}.fcpxml`, "application/xml");
+    downloadTextFile(xml, `${sanitizeFilename(stripExtension(project.fileName))}.fcpxml`, "application/xml");
     toast.success("FCPXML exported", {
       description: "Open it in Final Cut Pro or DaVinci Resolve and relink your source file.",
     });
@@ -1154,7 +1154,7 @@ export default function EditorPage() {
       exportFps,
       sourceTimecodeOffset
     );
-    downloadTextFile(doc, `${sanitizeFilename(project.fileName)}.edl`, "text/plain");
+    downloadTextFile(doc, `${sanitizeFilename(stripExtension(project.fileName))}.edl`, "text/plain");
     toast.success("CMX 3600 EDL exported", {
       description: "Open it in DaVinci Resolve and relink your source file.",
     });
@@ -1177,7 +1177,7 @@ export default function EditorPage() {
         : undefined,
       sourceTimecodeOffset
     );
-    downloadTextFile(xml, `${sanitizeFilename(project.fileName)}.xml`, "application/xml");
+    downloadTextFile(xml, `${sanitizeFilename(stripExtension(project.fileName))}.xml`, "application/xml");
     toast.success("Premiere Pro XML exported", {
       description: "Import it in Premiere Pro and relink your source file.",
     });

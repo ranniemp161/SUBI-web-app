@@ -173,6 +173,39 @@ describe("TranscriptPanel", () => {
     }));
   });
   
+  it("restores only the clicked word's own span, not the whole merged segment it shares with other cut words", async () => {
+    const user = userEvent.setup();
+    // Two independently-cut words that now share one merged EDL segment
+    // (mergeAdjacent fuses adjacent same-status/reason segments) — mirrors
+    // what happens in the app after cutting adjacent words one at a time.
+    const words: TranscriptWord[] = [
+      { word: "one", start: 0, end: 1, confidence: 0.9 },
+      { word: "two", start: 1, end: 2, confidence: 0.9 },
+      { word: "three", start: 2, end: 3, confidence: 0.9 },
+    ];
+    const mergedCutEdl: EDL = {
+      segments: [{ start: 0, end: 2, status: "cut", reason: "manual" }, { start: 2, end: 3, status: "keep", reason: null }],
+    };
+    const onRestoreSegment = vi.fn();
+    render(
+      <TranscriptPanel {...defaultProps} words={words} edl={mergedCutEdl} onRestoreSegment={onRestoreSegment} />
+    );
+
+    const wordEl = screen.getByText("one");
+    await user.pointer([{ target: wordEl, keys: "[MouseRight]" }]);
+
+    const restoreBtn = await screen.findByRole("menuitem", { name: /restore 1 word/i });
+    await user.click(restoreBtn);
+
+    // Only "one"'s own [0, 1) span should be restored, not the merged [0, 2) segment.
+    expect(onRestoreSegment).toHaveBeenCalledWith(
+      expect.objectContaining({ start: 0, end: 1 })
+    );
+    expect(onRestoreSegment).not.toHaveBeenCalledWith(
+      expect.objectContaining({ start: 0, end: 2 })
+    );
+  });
+
   it("accessible name for hide cut toggle updates", async () => {
     const user = userEvent.setup();
     render(<TranscriptPanel {...defaultProps} />);
