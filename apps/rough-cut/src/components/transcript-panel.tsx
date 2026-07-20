@@ -1027,7 +1027,12 @@ export default function TranscriptPanel({
                   const end = Math.max(...sel.map((w) => w.end));
                   onRestoreSegment({ start, end, status: "cut", reason: null });
                 } else {
-                  onRestoreSegment(menuSegment);
+                  // Restore only this word's own span, not the underlying EDL
+                  // segment — adjacent independently-cut words can share one
+                  // merged segment (mergeAdjacent), and menuSegment is that
+                  // merged range, not something scoped to the clicked word.
+                  const word = words[menu.index];
+                  onRestoreSegment({ start: word.start, end: word.end, status: "cut", reason: null });
                 }
                 clearSelection();
                 setMenu(null);

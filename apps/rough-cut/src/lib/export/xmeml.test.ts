@@ -122,6 +122,30 @@ describe("buildXmeml", () => {
     });
   });
 
+  it("gives every clipitem its own <duration>, a required xmeml field Premiere needs to respect in/out trim points", () => {
+    const edl: EDL = {
+      segments: [
+        { start: 0, end: 5, status: "keep", reason: null },
+        { start: 5, end: 8, status: "cut", reason: "silence" },
+        { start: 8, end: 12, status: "keep", reason: null },
+      ],
+    };
+    const xml = buildXmeml(edl, "My Project", "source.mov");
+    // sourceDurationFrames = max(range.end) * fps = 12s * 30fps = 360, shared by
+    // the file element and every clipitem (2 video + 2 audio) = 5 occurrences.
+    expect(xml.match(/<duration>360<\/duration>/g)?.length).toBe(5);
+  });
+
+  it("declares audio sample rate/depth and an output channel index, so Premiere routes the track to an audible output", () => {
+    const edl: EDL = { segments: [{ start: 0, end: 3, status: "keep", reason: null }] };
+    const xml = buildXmeml(edl, "My Project", "source.mov");
+    // File-level audio format (mirrors the video block's samplecharacteristics).
+    expect(xml).toContain("<audio>\n                  <samplecharacteristics>\n                    <depth>16</depth>\n                    <samplerate>48000</samplerate>\n                  </samplecharacteristics>\n                  <channelcount>2</channelcount>\n                </audio>");
+    // Sequence-level audio format block, matching <video><format> shape.
+    expect(xml).toContain("<audio>\n        <format>\n          <samplecharacteristics>\n            <depth>16</depth>\n            <samplerate>48000</samplerate>\n          </samplecharacteristics>\n        </format>");
+    expect(xml).toContain("<outputchannelindex>1</outputchannelindex>");
+  });
+
   it("uses the provided source resolution", () => {
     const edl: EDL = { segments: [{ start: 0, end: 1, status: "keep", reason: null }] };
     const xml = buildXmeml(edl, "My Project", "source.mov", undefined, {

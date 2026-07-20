@@ -76,6 +76,10 @@ export function buildXmeml(
                   </samplecharacteristics>
                 </video>
                 <audio>
+                  <samplecharacteristics>
+                    <depth>16</depth>
+                    <samplerate>48000</samplerate>
+                  </samplecharacteristics>
                   <channelcount>2</channelcount>
                 </audio>
               </media>
@@ -119,6 +123,7 @@ export function buildXmeml(
     // which is how FCP7 XML expresses A/V-linked clips.
     return `          <clipitem id="${idPrefix}-${c.index}">
             <name>${safeSourceFilename}</name>
+            <duration>${sourceDurationFrames}</duration>
             ${rate}
             <start>${c.startFrames}</start>
             <end>${c.endFrames}</end>
@@ -154,8 +159,15 @@ ${videoClips}
         </track>
       </video>
       <audio>
+        <format>
+          <samplecharacteristics>
+            <depth>16</depth>
+            <samplerate>48000</samplerate>
+          </samplecharacteristics>
+        </format>
         <track>
 ${audioClips}
+          <outputchannelindex>1</outputchannelindex>
         </track>
       </audio>
     </media>

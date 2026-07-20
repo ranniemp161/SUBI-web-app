@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { sanitizeFilename } from "./filename";
+import { sanitizeFilename, stripExtension } from "./filename";
 
 describe("sanitizeFilename", () => {
   it("returns an already-safe name unchanged", () => {
@@ -32,5 +32,19 @@ describe("sanitizeFilename", () => {
 
   it("preserves unicode characters that are not filesystem-unsafe", () => {
     expect(sanitizeFilename("Café Project 日本語")).toBe("Café Project 日本語");
+  });
+});
+
+describe("stripExtension", () => {
+  it("drops the source file's extension so an export extension can be appended cleanly", () => {
+    expect(stripExtension("sample-video.mp4")).toBe("sample-video");
+  });
+
+  it("drops only the final extension", () => {
+    expect(stripExtension("archive.tar.gz")).toBe("archive.tar");
+  });
+
+  it("leaves a name with no extension unchanged", () => {
+    expect(stripExtension("sample-video")).toBe("sample-video");
   });
 });
