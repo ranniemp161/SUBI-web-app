@@ -113,15 +113,20 @@ export function useEdlAutosave({
   const pendingRef = useRef(false);
   /** How many times the current save has already been retried. */
   const retryAttemptRef = useRef(0);
+  /** Holds the latest `flush`, so the retry timer can call it recursively
+   *  without referencing the `const` being defined below. */
+  const flushRef = useRef<(keepalive?: boolean) => void>(() => {});
 
   // Callers pass inline closures; hold them in refs so the scheduling effect
   // below doesn't re-run (and reset the debounce) on every parent render.
   const onSaveStateChangeRef = useRef(onSaveStateChange);
-  onSaveStateChangeRef.current = onSaveStateChange;
   const onErrorRef = useRef(onError);
-  onErrorRef.current = onError;
   const isEnabledRef = useRef(isEnabled);
-  isEnabledRef.current = isEnabled;
+  useEffect(() => {
+    onSaveStateChangeRef.current = onSaveStateChange;
+    onErrorRef.current = onError;
+    isEnabledRef.current = isEnabled;
+  });
 
   useEffect(() => {
     if (serverEdl && !baselineRef.current) baselineRef.current = serverEdl;
@@ -231,7 +236,7 @@ export function useEdlAutosave({
           // still working on it.
           if (timerRef.current) clearTimeout(timerRef.current);
           timerRef.current = setTimeout(
-            () => flush(),
+            () => flushRef.current(),
             AUTOSAVE_RETRY_DELAYS_MS[attempt]
           );
           return;
@@ -250,10 +255,14 @@ export function useEdlAutosave({
           pendingRef.current = false;
           // A scheduled retry will pick up the newer target itself (flush
           // always reads the latest) — don't race it with a second request.
-          if (!retryScheduled) flush();
+          if (!retryScheduled) flushRef.current();
         }
       });
   }, [projectId]);
+
+  useEffect(() => {
+    flushRef.current = flush;
+  }, [flush]);
 
   useEffect(() => {
     if (!edl || !isEnabledRef.current()) return;
