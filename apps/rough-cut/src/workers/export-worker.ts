@@ -1,5 +1,6 @@
 import {
   ALL_FORMATS,
+  AudioSample,
   BlobSource,
   canEncodeVideo,
   Conversion,
@@ -8,12 +9,11 @@ import {
   Mp4OutputFormat,
   Output,
   StreamTarget,
-  type AudioSample,
   type ConversionVideoOptions,
   type StreamTargetChunk,
   type VideoSample,
 } from "mediabunny";
-import { createTimeRemapper, getKeepRanges, totalKeptSeconds } from "@/lib/export/plan";
+import { createGainEnvelope, createTimeRemapper, getKeepRanges, totalKeptSeconds } from "@/lib/export/plan";
 import type { ExportErrorCode, ExportRequestMessage, ExportResponseMessage } from "@/lib/export/types";
 import type { EDL } from "@/lib/edl";
 
@@ -80,17 +80,31 @@ async function runExport(
   }
 
   const remap = createTimeRemapper(keepRanges);
+  const gainAt = createGainEnvelope(keepRanges);
 
   // Frames/samples outside every kept range are decoded (Conversion walks the
   // source sequentially) but never forwarded to the encoder — this drops the
   // encode cost for cut spans while accepting the decode cost for the whole
   // source. A follow-up could skip decode entirely via lower-level seeking if
   // this proves too slow on long, heavily-cut sources.
-  const remapProcess = <S extends VideoSample | AudioSample>(sample: S): S | null => {
+  const remapVideoProcess = (sample: VideoSample): VideoSample | null => {
     const t = remap(sample.timestamp);
     if (t === null) return null;
     sample.setTimestamp(t);
     return sample;
+  };
+
+  // Same timestamp remap as video, plus a short fade to silence at every cut
+  // edge (see AUDIO_FADE_SECONDS / createGainEnvelope): a manual, silence, or
+  // retake cut lands at a transcript word's timestamp, which is the ASR's
+  // best guess at the boundary, not the true acoustic edge — the fade masks
+  // the sliver of the "deleted" word's onset/tail that guess leaves behind.
+  const remapAudioProcess = (sample: AudioSample): AudioSample | null => {
+    const t = remap(sample.timestamp);
+    if (t === null) return null;
+    const faded = applyAudioFade(sample, gainAt);
+    faded.setTimestamp(t);
+    return faded;
   };
 
   // Wrap the FileSystemWritableFileStream in a plain WritableStream that only
@@ -110,7 +124,7 @@ async function runExport(
   // Resolve output video sizing and verify the device can actually encode it,
   // before committing to the (expensive) conversion. Skipped for audio-only
   // sources, which have no primary video track.
-  const videoOptions: ConversionVideoOptions = { process: remapProcess };
+  const videoOptions: ConversionVideoOptions = { process: remapVideoProcess };
   const videoTrack = await input.getPrimaryVideoTrack();
   if (videoTrack) {
     const srcW = videoTrack.displayWidth;
@@ -142,7 +156,7 @@ async function runExport(
       input,
       output,
       video: videoOptions,
-      audio: { process: remapProcess },
+      audio: { process: remapAudioProcess },
     });
   } catch (error) {
     throw new ExportError("unsupported-codec", describeError(error));
@@ -179,6 +193,41 @@ async function runExport(
   };
 
   await conversion.execute();
+}
+
+/**
+ * Scale an audio sample's amplitude by `gainAt` evaluated at each frame's own
+ * source-timeline timestamp (not the sample's single header timestamp — a
+ * ~20ms decoded chunk can itself straddle a cut edge, and the fade needs to
+ * land on the real per-frame position). Returns the original sample
+ * untouched when every frame in it is at full volume, which is the common
+ * case away from any cut.
+ */
+function applyAudioFade(sample: AudioSample, gainAt: (t: number) => number): AudioSample {
+  const { numberOfFrames, numberOfChannels, sampleRate, timestamp } = sample;
+
+  // A range's gain profile is flat 1 in its interior and only ever ramps
+  // down approaching an edge — it cannot dip below 1 and climb back to 1
+  // within a single sample's short span, so both endpoints reading 1 proves
+  // the whole sample does.
+  const startGain = gainAt(timestamp);
+  const endGain = gainAt(timestamp + (numberOfFrames - 1) / sampleRate);
+  if (startGain === 1 && endGain === 1) return sample;
+
+  const data = new Float32Array(numberOfFrames * numberOfChannels);
+  sample.copyTo(data, { planeIndex: 0, format: "f32" });
+
+  for (let frame = 0; frame < numberOfFrames; frame++) {
+    const g = gainAt(timestamp + frame / sampleRate);
+    if (g === 1) continue;
+    const base = frame * numberOfChannels;
+    for (let ch = 0; ch < numberOfChannels; ch++) {
+      data[base + ch] *= g;
+    }
+  }
+
+  sample.close();
+  return new AudioSample({ data, format: "f32", numberOfChannels, sampleRate, timestamp });
 }
 
 class ExportError extends Error {

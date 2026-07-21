@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import TranscriptPanel from "./transcript-panel";
 import type { TranscriptWord, EDL } from "@/lib/edl";
+import { SYNC_HOVER_RING_CLASS, SYNC_SELECTION_RING_CLASS } from "@/lib/sync-colors";
 
 afterEach(() => {
   cleanup();
@@ -406,5 +407,108 @@ describe("TranscriptPanel", () => {
     await user.click(screen.getByTitle("Hide removed text"));
     const pill = await screen.findByTitle(/1 removed word.*Hello/i);
     expect(pill).toBeVisible();
+  });
+});
+
+// spec 0002 (transcript/timeline live sync): the transcript's own hover and
+// drag-selection gestures publish outward (AC-5, AC-3), and it renders an
+// externally-driven hover/selection from the timeline (AC-6, AC-4) — but only
+// while it has no local selection of its own (a local gesture always wins).
+describe("TranscriptPanel — cross-panel sync (spec 0002)", () => {
+  it("publishes the hovered word's start time on mouse enter, and null on leave", () => {
+    const onWordHover = vi.fn();
+    const { container } = render(<TranscriptPanel {...defaultProps} onWordHover={onWordHover} />);
+
+    fireEvent.mouseEnter(screen.getByText("world"));
+    expect(onWordHover).toHaveBeenCalledWith(1);
+
+    // Leaving the panel entirely clears the preview.
+    const panel = container.querySelector(".transcript-scroll") as HTMLElement;
+    fireEvent.mouseLeave(panel);
+    expect(onWordHover).toHaveBeenLastCalledWith(null);
+  });
+
+  // Regression: a self-published hover echoes back down as the `hoveredTime`
+  // prop (it's the same shared state the timeline also reads), which must not
+  // redundantly re-highlight the very word the mouse is already sitting on.
+  it("does not apply the cross-panel hover-preview ring to a word it is itself hovering", () => {
+    const { rerender } = render(
+      <TranscriptPanel {...defaultProps} currentTime={5} hoveredTime={null} />
+    );
+
+    fireEvent.mouseEnter(screen.getByText("world"));
+    // Simulates the round trip: this panel's own hover comes back as the prop.
+    rerender(<TranscriptPanel {...defaultProps} currentTime={5} hoveredTime={1.2} />);
+
+    expect(screen.getByText("world")).not.toHaveClass(...SYNC_HOVER_RING_CLASS.split(" "));
+  });
+
+  it("renders a hover-preview ring on the word matching an externally-driven hoveredTime (AC-6)", () => {
+    // currentTime=5 keeps both words inactive, so the active-word style (which
+    // also happens to include a "ring-1" utility) can't be mistaken for the
+    // hover-preview ring.
+    render(<TranscriptPanel {...defaultProps} currentTime={5} hoveredTime={1.2} />);
+    const wordSpan = screen.getByText("world");
+    expect(wordSpan).toHaveClass(...SYNC_HOVER_RING_CLASS.split(" "));
+    // The non-hovered word gets no preview ring.
+    expect(screen.getByText("Hello")).not.toHaveClass(...SYNC_HOVER_RING_CLASS.split(" "));
+  });
+
+  it("hovering a silence gap (no word at that time) previews nothing", () => {
+    render(<TranscriptPanel {...defaultProps} currentTime={5} hoveredTime={50} />);
+    expect(screen.getByText("Hello")).not.toHaveClass(...SYNC_HOVER_RING_CLASS.split(" "));
+    expect(screen.getByText("world")).not.toHaveClass(...SYNC_HOVER_RING_CLASS.split(" "));
+  });
+
+  it("publishes the selected word range on a drag-select (Ctrl+click extend)", async () => {
+    const user = userEvent.setup();
+    const onSelectionRangeChange = vi.fn();
+    render(
+      <TranscriptPanel {...defaultProps} onSelectionRangeChange={onSelectionRangeChange} />
+    );
+
+    await user.click(screen.getByText("Hello"));
+    await user.keyboard("{Control>}");
+    await user.click(screen.getByText("world"));
+    await user.keyboard("{/Control}");
+
+    expect(onSelectionRangeChange).toHaveBeenLastCalledWith({ start: 0, end: 2 });
+  });
+
+  it("publishes null when the selection clears (Deselect)", async () => {
+    const user = userEvent.setup();
+    const onSelectionRangeChange = vi.fn();
+    render(
+      <TranscriptPanel {...defaultProps} onSelectionRangeChange={onSelectionRangeChange} />
+    );
+
+    await user.click(screen.getByText("Hello"));
+    await user.keyboard("{Control>}");
+    await user.click(screen.getByText("world"));
+    await user.keyboard("{/Control}");
+    onSelectionRangeChange.mockClear();
+
+    await user.pointer([{ target: screen.getByText("world"), keys: "[MouseRight]" }]);
+    await user.click(await screen.findByRole("menuitem", { name: /deselect/i }));
+
+    expect(onSelectionRangeChange).toHaveBeenCalledWith(null);
+  });
+
+  it("renders an externally-driven selectedRange (from the timeline) only while there is no local selection (AC-4)", async () => {
+    const user = userEvent.setup();
+    render(
+      <TranscriptPanel {...defaultProps} currentTime={5} selectedRange={{ start: 0, end: 1 }} />
+    );
+    // No local selection — the cross-panel range highlights "Hello" ([0,1)).
+    expect(screen.getByText("Hello")).toHaveClass(...SYNC_SELECTION_RING_CLASS.split(" "));
+    expect(screen.getByText("world")).not.toHaveClass(...SYNC_SELECTION_RING_CLASS.split(" "));
+
+    // Once the panel makes its own local selection (over "world"), a stale
+    // external range for "Hello" must stop rendering — the local gesture wins.
+    await user.click(screen.getByText("world"));
+    await user.keyboard("{Control>}");
+    await user.click(screen.getByText("world"));
+    await user.keyboard("{/Control}");
+    expect(screen.getByText("Hello")).not.toHaveClass(...SYNC_SELECTION_RING_CLASS.split(" "));
   });
 });

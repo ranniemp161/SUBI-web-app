@@ -13,7 +13,7 @@
 // VideoPlayer, TranscriptPanel, TimelineBar and FilePicker are mocked as
 // boundary stubs (each has its own dedicated test file).
 import "@testing-library/jest-dom/vitest";
-import { render, screen, cleanup, waitFor, fireEvent } from "@testing-library/react";
+import { render, screen, cleanup, waitFor, fireEvent, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vitest";
 import { forwardRef, useImperativeHandle } from "react";
@@ -69,20 +69,61 @@ const togglePlayMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/components/video-player", () => ({
   __esModule: true,
-  default: forwardRef(function VideoPlayerStub(_props, ref) {
+  default: forwardRef(function VideoPlayerStub(
+    props: { onPlayingChange?: (p: boolean) => void; onTimeUpdate?: (seconds: number) => void },
+    ref
+  ) {
     useImperativeHandle(ref, () => ({ togglePlay: togglePlayMock }));
-    return <div data-testid="video-player-stub" />;
+    return (
+      <div data-testid="video-player-stub">
+        {/* spec 0002 AC-8: lets a test simulate the player's own "playing" event. */}
+        <button type="button" onClick={() => props.onPlayingChange?.(true)}>
+          simulate-play
+        </button>
+        {/* lets a test park the playhead at a specific time, e.g. to exercise
+            cutToPlayhead's word-edge snap. */}
+        <input
+          type="text"
+          aria-label="simulate-time-input"
+          onChange={(e) => props.onTimeUpdate?.(Number(e.target.value))}
+        />
+      </div>
+    );
   }),
 }));
 
 vi.mock("@/components/transcript-panel", () => ({
-  default: () => <div data-testid="transcript-panel-stub" />,
+  default: (props: { selectedRange?: { start: number; end: number } | null }) => (
+    <div
+      data-testid="transcript-panel-stub"
+      data-selected-range={JSON.stringify(props.selectedRange ?? null)}
+    />
+  ),
 }));
 
 vi.mock("@/components/timeline-bar", () => ({
   __esModule: true,
-  default: forwardRef(function TimelineBarStub() {
-    return <div data-testid="timeline-bar-stub" />;
+  default: forwardRef(function TimelineBarStub(props: {
+    selectedRange?: { start: number; end: number } | null;
+    onRangeSelect?: (r: { start: number; end: number } | null) => void;
+    edl?: EDL;
+  }) {
+    return (
+      <div
+        data-testid="timeline-bar-stub"
+        data-selected-range={JSON.stringify(props.selectedRange ?? null)}
+        data-edl={JSON.stringify(props.edl ?? null)}
+      >
+        {/* spec 0002 AC-3/AC-4: lets a test simulate the timeline publishing a
+            cross-panel selection, as if a clip select or trim drag fired it. */}
+        <button
+          type="button"
+          onClick={() => props.onRangeSelect?.({ start: 1, end: 2 })}
+        >
+          simulate-range-select
+        </button>
+      </div>
+    );
   }),
 }));
 
@@ -652,6 +693,120 @@ describe("EditorPage — sensitivity picker in the status bar (AC-9)", () => {
       "aria-pressed",
       "false"
     );
+  });
+});
+
+// spec 0002 (transcript/timeline live sync): the studio page lifts
+// `selectedRange` and threads it to both panels. This only checks the page's
+// own wiring (props in, callback out, cleared on play) — the panels' own
+// hover/selection gestures are covered in transcript-panel.test.tsx and
+// timeline-bar.test.tsx.
+describe("EditorPage — cross-panel selectedRange sync (spec 0002)", () => {
+  it("threads a range published by the timeline into the transcript panel", async () => {
+    stubFetchForProject(READY_PROJECT);
+    render(<EditorPage />);
+    await userEvent.click(await screen.findByRole("button", { name: "pick-file" }));
+    const timelineStub = await screen.findByTestId("timeline-bar-stub");
+    const transcriptStub = await screen.findByTestId("transcript-panel-stub");
+
+    expect(transcriptStub).toHaveAttribute("data-selected-range", "null");
+
+    await userEvent.click(
+      within(timelineStub).getByRole("button", { name: "simulate-range-select" })
+    );
+
+    expect(transcriptStub).toHaveAttribute(
+      "data-selected-range",
+      JSON.stringify({ start: 1, end: 2 })
+    );
+  });
+
+  // AC-8: any active cross-panel selection clears the moment playback starts.
+  it("clears the shared selection the moment the player reports playing", async () => {
+    stubFetchForProject(READY_PROJECT);
+    render(<EditorPage />);
+    await userEvent.click(await screen.findByRole("button", { name: "pick-file" }));
+    const timelineStub = await screen.findByTestId("timeline-bar-stub");
+    const videoStub = await screen.findByTestId("video-player-stub");
+
+    await userEvent.click(
+      within(timelineStub).getByRole("button", { name: "simulate-range-select" })
+    );
+    expect(timelineStub).toHaveAttribute(
+      "data-selected-range",
+      JSON.stringify({ start: 1, end: 2 })
+    );
+
+    await userEvent.click(within(videoStub).getByRole("button", { name: "simulate-play" }));
+
+    expect(timelineStub).toHaveAttribute("data-selected-range", "null");
+    expect(screen.getByTestId("transcript-panel-stub")).toHaveAttribute(
+      "data-selected-range",
+      "null"
+    );
+  });
+});
+
+// Bug report: cutting a word from the timeline via Cut left/right (Q/W) cut
+// from wherever the playhead happened to sit, not the word's own timestamp —
+// so a playhead parked a few frames early/late left the target word's own
+// `start` just outside the cut, and it kept showing as un-cut in the
+// transcript even though the timeline showed a gap right next to it. Fixed
+// by snapping cutToPlayhead's boundary to the nearest word edge, same as the
+// timeline's own trim-drag already does.
+describe("EditorPage — cutToPlayhead snaps to the nearest word edge", () => {
+  const WORDS_WITH_GAP = {
+    ...READY_PROJECT,
+    transcript: {
+      words: [
+        { word: "even", start: 0, end: 0.4, confidence: 0.9 },
+        { word: "MAGA", start: 2.0, end: 2.5, confidence: 0.9 },
+      ],
+      text: "even MAGA",
+      duration: 5,
+    },
+    edl: { segments: [{ start: 0, end: 5, status: "keep" as const, reason: null }] },
+  };
+
+  it("cuts from the exact word edge, not the raw playhead position, when close enough to snap", async () => {
+    stubFetchForProject(WORDS_WITH_GAP);
+    render(<EditorPage />);
+    await userEvent.click(await screen.findByRole("button", { name: "pick-file" }));
+    const videoStub = await screen.findByTestId("video-player-stub");
+    const timelineStub = await screen.findByTestId("timeline-bar-stub");
+
+    // Park the playhead 50ms early — close to "MAGA" (2.0) but not on it.
+    await userEvent.type(
+      within(videoStub).getByRole("textbox", { name: "simulate-time-input" }),
+      "1.95"
+    );
+    fireEvent.keyDown(window, { key: "w", code: "KeyW" }); // Cut right
+
+    const edl = JSON.parse(timelineStub.getAttribute("data-edl") ?? "null");
+    const cutSegment = edl.segments.find((s: { status: string }) => s.status === "cut");
+    expect(cutSegment).toBeTruthy();
+    // Snapped to MAGA's own start (2.0), not the raw playhead (1.95) — so
+    // MAGA's timestamp now falls inside the cut, and it correctly shows cut.
+    expect(cutSegment.start).toBe(2);
+  });
+
+  it("does not snap when the playhead is too far from any word edge", async () => {
+    stubFetchForProject(WORDS_WITH_GAP);
+    render(<EditorPage />);
+    await userEvent.click(await screen.findByRole("button", { name: "pick-file" }));
+    const videoStub = await screen.findByTestId("video-player-stub");
+    const timelineStub = await screen.findByTestId("timeline-bar-stub");
+
+    // 1.0s away from any word edge — well outside the snap window.
+    await userEvent.type(
+      within(videoStub).getByRole("textbox", { name: "simulate-time-input" }),
+      "1.0"
+    );
+    fireEvent.keyDown(window, { key: "w", code: "KeyW" });
+
+    const edl = JSON.parse(timelineStub.getAttribute("data-edl") ?? "null");
+    const cutSegment = edl.segments.find((s: { status: string }) => s.status === "cut");
+    expect(cutSegment.start).toBe(1);
   });
 });
 

@@ -127,6 +127,15 @@ export const projects = pgTable("projects", {
    * OR stale is the atomic claim, same shape as `holdMicros` above.
    */
   aiCutClaimAt: timestamp("ai_cut_claim_at", { withTimezone: true }),
+  /**
+   * Whether the client-side word boundary refinement pass (spec
+   * 0003-word-boundary-timestamp-refinement) has completed once for this
+   * project. Set true by the client after the pass finishes (successfully or
+   * with some words falling back to their raw Deepgram timestamp) so it never
+   * re-runs on a later reselect. Defaults false so every pre-existing row
+   * picks up refinement on its next reselect.
+   */
+  wordsAligned: boolean("words_aligned").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
     .notNull(),

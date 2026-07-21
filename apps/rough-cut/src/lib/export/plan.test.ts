@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { getKeepRanges, totalKeptSeconds, createTimeRemapper, hasExportableRanges } from "./plan";
+import {
+  getKeepRanges,
+  totalKeptSeconds,
+  createTimeRemapper,
+  createGainEnvelope,
+  hasExportableRanges,
+} from "./plan";
 import type { EDL } from "@/lib/edl";
 
 describe("getKeepRanges", () => {
@@ -112,6 +118,46 @@ describe("createTimeRemapper", () => {
     const remap = createTimeRemapper([]);
     expect(remap(0)).toBeNull();
     expect(remap(100)).toBeNull();
+  });
+});
+
+describe("createGainEnvelope", () => {
+  it("is full volume in a range's interior", () => {
+    const gainAt = createGainEnvelope([{ start: 0, end: 10 }], 0.02);
+    expect(gainAt(5)).toBe(1);
+  });
+
+  it("ramps from 0 to 1 over the fade window at a range's start", () => {
+    const gainAt = createGainEnvelope([{ start: 5, end: 15 }], 0.02);
+    expect(gainAt(5)).toBe(0);
+    expect(gainAt(5.01)).toBeCloseTo(0.5, 5);
+    expect(gainAt(5.02)).toBeCloseTo(1, 5);
+  });
+
+  it("ramps from 1 to 0 over the fade window at a range's end", () => {
+    const gainAt = createGainEnvelope([{ start: 5, end: 15 }], 0.02);
+    expect(gainAt(14.98)).toBeCloseTo(1, 5);
+    expect(gainAt(14.99)).toBeCloseTo(0.5, 5);
+    expect(gainAt(15)).toBe(0); // exclusive end — findRange no longer matches
+  });
+
+  it("is 0 in the gap between two kept ranges", () => {
+    const gainAt = createGainEnvelope([{ start: 0, end: 5 }, { start: 10, end: 15 }], 0.02);
+    expect(gainAt(7)).toBe(0);
+  });
+
+  it("halves the fade window for a range shorter than 2x the fade seconds, so it never reaches full volume", () => {
+    // A 0.02s range with a 0.02s fade would otherwise want a 0.02s ramp on
+    // each side of a 0.02s span — impossible, so each side gets half instead.
+    const gainAt = createGainEnvelope([{ start: 0, end: 0.02 }], 0.02);
+    expect(gainAt(0.01)).toBeCloseTo(1, 5); // the midpoint, as high as it gets
+    expect(gainAt(0)).toBe(0);
+  });
+
+  it("recovers after a timestamp past the last range (same interleaving concern as createTimeRemapper)", () => {
+    const gainAt = createGainEnvelope([{ start: 0, end: 10 }], 0.02);
+    expect(gainAt(10.5)).toBe(0);
+    expect(gainAt(9.99)).toBeCloseTo(0.5, 5);
   });
 });
 
