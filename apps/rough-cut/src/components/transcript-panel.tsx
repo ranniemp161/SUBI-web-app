@@ -22,9 +22,20 @@ import {
   Loader2,
   X,
 } from "lucide-react";
-import type { EDLSegment, TranscriptWord } from "@/lib/edl";
-import { findSegmentAt, groupWordsIntoParagraphs, type EDL } from "@/lib/edl";
+import type { EDLSegment, TimeRange, TranscriptWord } from "@/lib/edl";
+import {
+  findActiveWordIndex,
+  findSegmentAt,
+  groupWordsIntoParagraphs,
+  type EDL,
+} from "@/lib/edl";
 import { formatDuration } from "@/lib/utils";
+import {
+  SYNC_HOVER_BG_CLASS,
+  SYNC_HOVER_RING_CLASS,
+  SYNC_SELECTION_BG_CLASS,
+  SYNC_SELECTION_RING_CLASS,
+} from "@/lib/sync-colors";
 
 interface TranscriptPanelProps {
   words: TranscriptWord[];
@@ -56,6 +67,20 @@ interface TranscriptPanelProps {
   onRestoreAiSuggestions: () => void;
   /** When the currently active AI cut run was generated. */
   lastAiCutTime?: string | null;
+  /** A time to preview-highlight, published by the timeline's own hover
+   *  (AC-6). Null when nothing is hovered there. */
+  hoveredTime?: number | null;
+  /** Publish this panel's own word hover so the timeline can show a preview
+   *  marker at that time (AC-5). Fired with null on mouse leave. */
+  onWordHover?: (seconds: number | null) => void;
+  /** The shared cross-panel selection (AC-3/AC-4), highlighted here only when
+   *  this panel has no local drag-selection of its own (its local selection
+   *  already shows via `isSelected`). */
+  selectedRange?: TimeRange | null;
+  /** Publish this panel's own drag-selection as a time range (AC-3) so the
+   *  timeline can highlight the matching span. Fired with null when the
+   *  selection clears. */
+  onSelectionRangeChange?: (range: TimeRange | null) => void;
 }
 
 interface ContextMenuState {
@@ -74,6 +99,11 @@ interface WordSpanProps {
   isSelected: boolean;
   isActive: boolean;
   isMatch: boolean;
+  /** Externally-driven hover preview (from the timeline) or cross-panel
+   *  selection (from a timeline clip select/trim) — never true for this
+   *  panel's own local hover/selection, which use their own styling. */
+  isHoverPreview: boolean;
+  isCrossSelected: boolean;
   innerRef?: React.Ref<HTMLSpanElement>;
   onMouseDown: (index: number, e: React.MouseEvent) => void;
   onMouseEnter: (index: number) => void;
@@ -95,6 +125,8 @@ const WordSpan = memo(function WordSpan({
   isSelected,
   isActive,
   isMatch,
+  isHoverPreview,
+  isCrossSelected,
   innerRef,
   onMouseDown,
   onMouseEnter,
@@ -130,6 +162,14 @@ const WordSpan = memo(function WordSpan({
                 : "text-foreground/90 hover:bg-foreground/10"
         } ${isCut && isSelected ? "bg-blue-500/35" : ""} ${
           isMatch && !isSelected && !isActive ? "bg-amber-400/25" : ""
+        } ${
+          isCrossSelected && !isSelected && !isActive
+            ? `${SYNC_SELECTION_BG_CLASS} ${SYNC_SELECTION_RING_CLASS}`
+            : ""
+        } ${
+          isHoverPreview && !isSelected && !isActive && !isCrossSelected
+            ? `${SYNC_HOVER_BG_CLASS} ${SYNC_HOVER_RING_CLASS}`
+            : ""
         }`}
         title={
           isCut
@@ -247,6 +287,10 @@ export default function TranscriptPanel({
   hasDiverged,
   onRestoreAiSuggestions,
   lastAiCutTime,
+  hoveredTime,
+  onWordHover,
+  selectedRange,
+  onSelectionRangeChange,
 }: TranscriptPanelProps) {
   const [now, setNow] = useState<number | null>(() => (lastAiCutTime ? Date.now() : null));
   const isInitialAiCutTime = useRef(true);
@@ -267,6 +311,9 @@ export default function TranscriptPanel({
     return () => clearInterval(timer);
   }, [lastAiCutTime]);
 
+  // Whether the pointer is currently hovering a word in this panel — see the
+  // self-echo note on hoverPreviewIndex above.
+  const [isSelfHovering, setIsSelfHovering] = useState(false);
   const [anchorIndex, setAnchorIndex] = useState<number | null>(null);
   const [selection, setSelection] = useState<Set<number>>(new Set());
   const [query, setQuery] = useState("");
@@ -348,9 +395,26 @@ export default function TranscriptPanel({
   const paragraphs = useMemo(() => groupWordsIntoParagraphs(words), [words]);
 
   const activeIndex = useMemo(
-    () => words.findIndex((w) => currentTime >= w.start && currentTime < w.end),
+    () => findActiveWordIndex(words, currentTime),
     [words, currentTime]
   );
+
+  // Externally-driven hover preview (AC-6): the timeline's own hover,
+  // resolved to the word it lands on. -1 (no word) when hovering a silence
+  // gap — spec 0002's Value sourcing table specifies findActiveWordIndex here.
+  // Suppressed while this panel is itself being hovered (isSelfHovering) —
+  // otherwise a word hover this panel just published echoes back down as the
+  // same `hoveredTime` prop and redundantly re-highlights the word the mouse
+  // is already sitting on.
+  const hoverPreviewIndex = useMemo(
+    () => (hoveredTime == null || isSelfHovering ? -1 : findActiveWordIndex(words, hoveredTime)),
+    [words, hoveredTime, isSelfHovering]
+  );
+
+  // Cross-panel selection (AC-4): only rendered while this panel has no local
+  // drag-selection of its own — a local selection already renders via
+  // isSelected, and must win over a stale externally-driven range.
+  const crossSelectedRange = selection.size === 0 ? (selectedRange ?? null) : null;
 
   const normalizedQuery = query.trim().toLowerCase();
   const matches = useMemo(() => {
@@ -402,15 +466,20 @@ export default function TranscriptPanel({
   const clearSelection = useCallback(() => {
     setAnchorIndex(null);
     setSelection(new Set());
-  }, []);
+    onSelectionRangeChange?.(null);
+  }, [onSelectionRangeChange]);
 
-  const selectRange = useCallback((a: number, b: number) => {
-    const lo = Math.min(a, b);
-    const hi = Math.max(a, b);
-    const next = new Set<number>();
-    for (let i = lo; i <= hi; i++) next.add(i);
-    setSelection(next);
-  }, []);
+  const selectRange = useCallback(
+    (a: number, b: number) => {
+      const lo = Math.min(a, b);
+      const hi = Math.max(a, b);
+      const next = new Set<number>();
+      for (let i = lo; i <= hi; i++) next.add(i);
+      setSelection(next);
+      onSelectionRangeChange?.({ start: words[lo].start, end: words[hi].end });
+    },
+    [words, onSelectionRangeChange]
+  );
 
   const cutWords = useCallback(
     (indices: number[]) => {
@@ -435,6 +504,7 @@ export default function TranscriptPanel({
         } else {
           setAnchorIndex(index);
           setSelection(new Set([index]));
+          onSelectionRangeChange?.({ start: words[index].start, end: words[index].end });
         }
         return;
       }
@@ -448,17 +518,21 @@ export default function TranscriptPanel({
       setDragging(true);
       setAnchorIndex(index);
     },
-    [selectRange]
+    [selectRange, words, onSelectionRangeChange]
   );
 
   const handleWordMouseEnter = useCallback(
     (index: number) => {
+      // Hover preview (AC-5): fires regardless of an in-progress drag-select —
+      // it's a read-only overlay (Key invariant) and never gates on it.
+      onWordHover?.(words[index].start);
+      setIsSelfHovering((prev) => (prev ? prev : true));
       const down = downIndexRef.current;
       if (!selectingRef.current || down === null) return;
       if (index !== down) didDragRef.current = true;
       if (didDragRef.current) selectRange(down, index);
     },
-    [selectRange]
+    [selectRange, words, onWordHover]
   );
 
   // End-of-drag: a click with no drag seeks (or, on a cut word, opens the
@@ -489,10 +563,11 @@ export default function TranscriptPanel({
       // Ctrl-click extends from here); only the visible selection clears.
       setAnchorIndex(i);
       setSelection(new Set());
+      onSelectionRangeChange?.(null);
     }
     window.addEventListener("mouseup", onUp);
     return () => window.removeEventListener("mouseup", onUp);
-  }, [segmentForWord, words, onSeek]);
+  }, [segmentForWord, words, onSeek, onSelectionRangeChange]);
 
   // While drag-selecting: every frame, extend the selection to the word under
   // (or nearest) the pointer via geometric hit-testing, and auto-scroll past
@@ -566,12 +641,13 @@ export default function TranscriptPanel({
       if (!selectionRef.current.has(index)) {
         setAnchorIndex(index);
         setSelection(new Set([index]));
+        onSelectionRangeChange?.({ start: words[index].start, end: words[index].end });
       }
       const x = Math.min(e.clientX, window.innerWidth - 180);
       const y = Math.min(e.clientY, window.innerHeight - 100);
       setMenu({ x, y, index });
     },
-    []
+    [words, onSelectionRangeChange]
   );
 
   // Close the menu on any outside interaction. When the menu was opened by a
@@ -737,6 +813,10 @@ export default function TranscriptPanel({
         tabIndex={0}
         translate="no"
         onKeyDown={handleKeyDown}
+        onMouseLeave={() => {
+          setIsSelfHovering(false);
+          onWordHover?.(null);
+        }}
         className="notranslate transcript-scroll relative flex-1 select-none overflow-y-auto px-5 outline-none"
       >
         {/* Selection action bar */}
@@ -852,6 +932,11 @@ export default function TranscriptPanel({
                 const isSelected = selection.has(index);
                 const isActive = index === activeIndex;
                 const isMatch = matches.has(index);
+                const isHoverPreview = index === hoverPreviewIndex;
+                const isCrossSelected =
+                  crossSelectedRange !== null &&
+                  words[index].start < crossSelectedRange.end &&
+                  words[index].end > crossSelectedRange.start;
                 nodes.push(
                   <WordSpan
                     key={`${words[index].start}-${index}`}
@@ -864,6 +949,8 @@ export default function TranscriptPanel({
                     isSelected={isSelected}
                     isActive={isActive}
                     isMatch={isMatch}
+                    isHoverPreview={isHoverPreview}
+                    isCrossSelected={isCrossSelected}
                     innerRef={
                       isActive
                         ? activeWordRef

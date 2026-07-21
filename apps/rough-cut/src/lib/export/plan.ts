@@ -44,6 +44,61 @@ export function hasExportableRanges(edl: EDL, fps: VideoFps = DEFAULT_FPS): bool
  * that falls inside a cut (or outside every kept range) — the caller
  * should drop that sample rather than encode it.
  */
+/**
+ * Outward fade applied at every kept range's edges in the exported audio.
+ * Deepgram's word boundaries (and therefore every manual/silence/retake cut
+ * derived from them) mark the ASR's best-guess timestamp, not the true
+ * acoustic edge — a leading glide or trailing consonant can bleed a few
+ * milliseconds past it. A hard splice at the exact cut point can leave an
+ * audible fragment of "deleted" speech; a short fade to silence masks it,
+ * the same way an NLE would rather than chase sample-perfect cut points.
+ */
+export const AUDIO_FADE_SECONDS = 0.02;
+
+/**
+ * Builds a function mapping a source-timeline timestamp (seconds) to a gain
+ * in [0, 1]: 1 in the interior of a kept range, ramping down to 0 over the
+ * last `fadeSeconds` before its end and up from 0 over the first
+ * `fadeSeconds` after its start, and 0 outside every kept range entirely (a
+ * cut — silent regardless of fade, and normally never reached since the
+ * caller drops those samples via `createTimeRemapper` first). A range
+ * shorter than `2 * fadeSeconds` uses half its length on each side instead,
+ * so a very short surviving clip fades in and back out rather than briefly
+ * reaching full volume.
+ *
+ * Stateful in the same way as `createTimeRemapper` (a forward-marching cursor
+ * with a rescan fallback) — safe as long as one instance is only ever queried
+ * with one track's timestamps (unlike the remapper, this is never shared
+ * between video and audio, so the interleaving concern that motivated the
+ * remapper's fallback doesn't apply here, but the fallback costs nothing and
+ * keeps the two functions symmetric).
+ */
+export function createGainEnvelope(
+  ranges: KeepRange[],
+  fadeSeconds: number = AUDIO_FADE_SECONDS
+): (t: number) => number {
+  let lastIdx = 0;
+
+  const findRange = (t: number): KeepRange | undefined => {
+    while (lastIdx < ranges.length && t >= ranges[lastIdx].end) lastIdx++;
+    if (lastIdx >= ranges.length || t < ranges[lastIdx].start) {
+      lastIdx = 0;
+      while (lastIdx < ranges.length && t >= ranges[lastIdx].end) lastIdx++;
+    }
+    return ranges[lastIdx];
+  };
+
+  return function gainAt(t: number): number {
+    const r = findRange(t);
+    if (!r || t < r.start || t >= r.end) return 0;
+    const fade = Math.min(fadeSeconds, (r.end - r.start) / 2);
+    if (fade <= 0) return 1;
+    const distIn = t - r.start;
+    const distOut = r.end - t;
+    return Math.max(0, Math.min(1, Math.min(distIn, distOut, fade) / fade));
+  };
+}
+
 export function createTimeRemapper(ranges: KeepRange[]): (t: number) => number | null {
   let cumulative = 0;
   const withOffset = ranges.map((r) => {

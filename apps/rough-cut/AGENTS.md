@@ -26,6 +26,8 @@ spends tokens and deep-links to Wallet to buy more.
 | `src/components/export-modal.tsx` | The single Export dialog (MP4, FCPXML, CMX 3600 EDL, FCP7 XML, plus MP4 resolution) that the export cluster in `dashboard/[id]/page.tsx` now opens; replaced the old inline `StyledSelect`/`ExportFormatMenu` dropdown pair |
 | `src/lib/authz.ts` | Write-route authorization — the `users` row (provisioned by the Clerk webhook or its fallback) IS the authorization; there is no separate access-code verify route (`src/lib/access-codes.ts` no longer exists) |
 | `src/app/api/webhooks/clerk/route.ts` | Clerk user-sync webhook (svix-verified) |
+| `src/lib/sync-colors.ts` | Shared visual tokens (Tailwind classes + hex) for cross-panel sync between the transcript panel and the timeline bar — playhead, selection, and hover each have one constant pair, so the two panels can never drift onto different colors for the same concept (spec `0002`) |
+| `src/lib/word-alignment.ts` | Client-side word-boundary refinement (spec `0003`): decodes the reselected source into a 5ms RMS energy envelope (mirrors `waveform.ts`'s streaming mediabunny pattern) and snaps each transcript word's `start`/`end` to the nearest real speech boundary within a small search window, once per project. Never a network call — the audio never leaves the browser |
 | `LIMITATIONS.md` (repo root) | Deliberate constraints — export browser support, no server-side video storage, rate-limit tuning, Sentry env-gating |
 
 ## Commands
@@ -111,6 +113,39 @@ npm -w @repo/rough-cut typecheck
   `fast-json-patch` is still an unremoved dependency in `package.json` but nothing imports it anymore.
 - `PATCH /api/projects/:id` returns `{ success: true, updatedAt }`, not the full updated project —
   don't add code that expects the response body to contain project fields.
+- **EDL autosave is optimistically versioned.** The client (`src/lib/edl-autosave.ts`) sends
+  `baseUpdatedAt` — the `updatedAt` its patch was diffed from — and the route gates the UPDATE on
+  `date_trunc('milliseconds', updated_at)` matching it (truncated because only milliseconds survive
+  the JSON round-trip, while Postgres' `now()` default stores microseconds). Zero rows matched means
+  another writer moved the row, and the route answers **409** with `{ error, edl, updatedAt }` so the
+  client can re-baseline and re-diff without a second request — a patch applied to a diverged base
+  yields a structurally valid but semantically wrong EDL, which is worse than a rejected save.
+  Anything else that writes `projects.updated_at` (`createAiCutRun`, `setActiveAiCutRun`) will make
+  the next autosave 409 once and self-correct; that's expected, not a bug.
+- The autosave hook owns four behaviors that are easy to regress: a max-wait ceiling so continuous
+  editing can't starve the debounce, a `pagehide`/`visibilitychange`/unmount flush via
+  `keepalive: true` (which is why saves must stay patch-sized — keepalive bodies cap at 64KB), a
+  bounded backoff retry that doesn't wait for the user's next edit, and one save in flight at a time.
+  See `src/lib/edl-autosave.test.ts` before changing any of them.
+- **Deepgram word timestamps are millisecond-rounded only, never frame-grid snapped** (`lib/deepgram.ts`).
+  A former `snapToFrame` (fixed 30fps grid) was removed: the transcript highlight compares against
+  the video element's continuous `currentTime`, so a fixed-fps snap upstream would offset the
+  active-word boundary from the real audio on any non-30fps source. Frame alignment where it
+  actually matters — EDL cut boundaries and NLE-interchange export — is owned downstream by the
+  *detected* source fps (`detectVideoFps` + `export/timebase.ts`), not by a heuristic at ingestion.
+  Don't reintroduce grid-snapping at the Deepgram normalize step.
+- **Exported audio fades a short `AUDIO_FADE_SECONDS` (20ms) at every kept range's edges**
+  (`createGainEnvelope`, `lib/export/plan.ts`), applied in `export-worker.ts`. Deepgram's (and
+  therefore every cut's) boundary is the ASR's best-guess timestamp, not the true acoustic edge — a
+  hard splice at the exact cut point can leave an audible fragment of "deleted" speech; the fade
+  masks it, the same way an NLE would. Don't remove this fade to "clean up" the export path.
+- **`words_aligned` (`projects` table) gates the word-boundary refinement pass (spec `0003`) the
+  same "flip once, never revert" way `ai_polish_requested` gates the auto-cut chain** — set `true`
+  by the client only after every word in the transcript has been searched. The pass's mid-pass edit
+  guard reads the EDL fresh via a ref (`edlRef.current` in `[id]/page.tsx`) at write time, not from
+  the effect's closure over `edl` when the pass started — the pass can run for several seconds, and
+  a manual cut made mid-pass must win over whatever the pass computed for that word, or it
+  reintroduces the exact drift bug spec `0003` exists to close.
 
 ## Related ADRs
 - `docs/adr/_root/0001-monorepo-wallet-architecture.md`

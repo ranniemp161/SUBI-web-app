@@ -15,6 +15,14 @@ export interface TranscriptWord {
   start: number;
   end: number;
   confidence: number;
+  /**
+   * True once the word-boundary refinement pass (spec
+   * 0003-word-boundary-timestamp-refinement) has tightened this word's
+   * `start`/`end` against the real decoded audio. Absent or false means
+   * `start`/`end` are still Deepgram's original estimate (either the pass
+   * hasn't run yet, or it ran but found no confident boundary for this word).
+   */
+  aligned?: boolean;
 }
 
 export interface Transcript {
@@ -99,19 +107,52 @@ const DEFAULT_SETTINGS = SENSITIVITY_PRESETS[DEFAULT_SENSITIVITY];
 export const MIN_INITIAL_KEEP_FRACTION = 0.1;
 
 /**
- * Drop transcript words with unusable timing before they reach the EDL math.
- * ASR output can contain null/NaN word timestamps; those
- * coerce to 0 in arithmetic, which collapses every gap check and leaves
- * `prevEnd` stuck at 0 — so the trailing-gap branch marks the entire clip as
- * one giant "silence" cut. Keep only finite, forward-ordered words.
+ * Drop transcript words with unusable timing before they reach the EDL math,
+ * and clip each word's end so it never runs past the next word's start.
+ * ASR output can contain null/NaN word timestamps; those coerce to 0 in
+ * arithmetic, which collapses every gap check and leaves `prevEnd` stuck at
+ * 0 — so the trailing-gap branch marks the entire clip as one giant
+ * "silence" cut. Keep only finite, forward-ordered words.
+ *
+ * Deepgram's per-word timestamps also aren't guaranteed non-overlapping — a
+ * fast compound proper noun ("Donald Trump") routinely reports the first
+ * word's end a beat past the second word's own start. Left uncorrected, a
+ * cut aimed at one word bleeds into its neighbour (and, if the *previous*
+ * word overlaps forward instead, the clamp meant to protect that neighbour
+ * can push the cut's start past the target word's own `start` entirely —
+ * leaving a segment that's genuinely "cut" but no longer contains the word
+ * whose deletion created it, desyncing the transcript's strikethrough from
+ * the timeline). Clipping here, once, is what every downstream consumer
+ * (cutting, silence-gap detection, restore) relies on to see clean,
+ * non-overlapping words.
  */
 export function sanitizeWords(words: TranscriptWord[]): TranscriptWord[] {
-  return words
+  const clean = words
     .filter(
       (w) =>
         Number.isFinite(w.start) && Number.isFinite(w.end) && w.end > w.start
     )
     .sort((a, b) => a.start - b.start);
+
+  for (let i = 0; i < clean.length - 1; i++) {
+    const next = clean[i + 1];
+    if (clean[i].end > next.start && next.start > clean[i].start) {
+      clean[i] = { ...clean[i], end: next.start };
+    }
+  }
+
+  return clean;
+}
+
+/**
+ * Round a time (seconds) to the millisecond grid word timestamps already
+ * live on (see deepgram.ts's `roundMs`). Every cut/restore/trim/split path
+ * that computes a new boundary funnels through this, so the playhead, the
+ * active word highlight, and the cut boundary agree at the millisecond
+ * (AC-9) instead of drifting from unrounded floating-point arithmetic.
+ */
+export function roundMs(seconds: number): number {
+  return Math.round(seconds * 1000) / 1000;
 }
 
 /** A single "keep" segment spanning the whole clip — the safe fallback. */
@@ -305,15 +346,6 @@ export function setRangeStatus(
 }
 
 /**
- * Longest a kept segment may be and still count as cut residue. Word-boundary
- * cuts (transcript, AI, retake) end exactly at word edges while silence cuts
- * are padded inward by silencePadSeconds — when the two land side by side they
- * trap a pad-width "keep" sliver that's invisible at normal zoom and useless
- * on playback.
- */
-export const MAX_RESIDUE_SECONDS = 0.3;
-
-/**
  * Span covering every segment of `next` that isn't present verbatim in
  * `prev` — a tight bound on where an edit actually landed. Null when the two
  * EDLs are segment-identical.
@@ -333,10 +365,16 @@ export function changedSpan(prev: EDL, next: EDL): TimeRange | null {
 }
 
 /**
- * Sweep out cut residue: kept slivers shorter than MAX_RESIDUE_SECONDS that sit
- * between two cuts, contain no transcript word (a genuine short word — "yes" —
- * is never absorbed), and aren't protected by a user restore. Each sliver takes
- * its left neighbour's status/reason so mergeAdjacent heals it into that cut.
+ * Sweep out cut residue: kept segments sitting between two cuts that contain
+ * no transcript word (a genuine word — even a short one like "yes" — is never
+ * absorbed) and aren't protected by a user restore, regardless of duration.
+ * A wordless gap flanked by two cuts has nothing spoken left in it, whether
+ * it's a pad-width sliver (silence cuts are padded inward by
+ * silencePadSeconds, which traps a pad-width "keep" next to an adjacent
+ * word-boundary cut) or a natural pause the user just cut both flanking words
+ * around — either way there's no content left to justify keeping it playable.
+ * Each sliver takes its left neighbour's status/reason so mergeAdjacent heals
+ * it into that cut.
  *
  * `span` bounds the sweep to where the triggering edit landed (see
  * changedSpan): only slivers overlapping it are touched, so a tiny keep the
@@ -355,11 +393,14 @@ export function absorbCutResidue(
 
   const result = segs.map((seg, i) => {
     if (seg.status !== "keep") return seg;
-    if (seg.end - seg.start >= MAX_RESIDUE_SECONDS) return seg;
     if (span && (seg.end <= span.start || seg.start >= span.end)) return seg;
     const left = segs[i - 1];
     const right = segs[i + 1];
     if (left?.status !== "cut" || right?.status !== "cut") return seg;
+    // A sliver with real speech in it is never absorbed, at any duration —
+    // only a wordless gap flanked by two cuts (nothing spoken left in it once
+    // both neighbors are cut) is unambiguous residue, so MAX_RESIDUE_SECONDS
+    // doesn't gate that case either.
     const hasWord = clean.some((w) => w.start < seg.end && w.end > seg.start);
     if (hasWord) return seg;
     const isProtected = (edl.protectedKeeps ?? []).some(
@@ -373,14 +414,124 @@ export function absorbCutResidue(
   return changed ? { ...edl, segments: mergeAdjacent(result) } : edl;
 }
 
-/** Cut the time range spanned by the given words (manual cut, e.g. via Delete key). */
-export function cutWords(edl: EDL, words: TranscriptWord[]): EDL {
+/**
+ * Outward pad applied to a manual word cut. Deepgram's word boundaries mark
+ * the ASR's best-guess timestamp, not the true acoustic edge — a leading
+ * glide ("w-") or trailing consonant release ("-ld") routinely bleeds a few
+ * tens of milliseconds past `start`/`end`, so cutting exactly at the
+ * timestamp leaves an audible fragment of the "deleted" word on either side.
+ * Padding outward (the opposite direction from `silencePadSeconds`, which
+ * pads a silence cut inward to protect adjacent speech) swallows that slop.
+ * Clamped per-cut against the nearest surviving word so it can never bite
+ * into a neighbour, including in fast, back-to-back speech.
+ */
+export const WORD_CUT_PAD_SECONDS = 0.05;
+
+/**
+ * Widen [start, end) by `pad` on each side, then pull back in wherever that
+ * would cross into a neighbouring word from `allWords` (every word being cut
+ * in this same operation is passed in `excluded` so it's never mistaken for
+ * a neighbour of itself). The padding must never eat real speech, only the
+ * ASR slop right at the cut's own edges.
+ *
+ * A neighbour is assigned to the "before" or "after" side by which half of
+ * [start, end)'s own midpoint it falls on, not by whether it's cleanly
+ * outside [start, end) — Deepgram's word timestamps aren't guaranteed
+ * non-overlapping, especially for a fast compound proper noun ("Donald
+ * Trump"), so a neighbour's start can land *before* this word's own
+ * (mis-measured) end. Clamping only against neighbours strictly outside
+ * [start, end) would miss exactly that case and let the cut bleed into the
+ * next word entirely — not just its padding.
+ */
+function clampWordCutRange(
+  allWords: TranscriptWord[],
+  excluded: TranscriptWord[],
+  start: number,
+  end: number,
+  pad: number
+): TimeRange {
+  const isExcluded = new Set(excluded);
+  const selectionMid = (start + end) / 2;
+  let prevBoundary = -Infinity;
+  let nextBoundary = Infinity;
+  for (const w of allWords) {
+    if (isExcluded.has(w)) continue;
+    if ((w.start + w.end) / 2 <= selectionMid) {
+      prevBoundary = Math.max(prevBoundary, w.end);
+    } else {
+      nextBoundary = Math.min(nextBoundary, w.start);
+    }
+  }
+  const clampedStart = Math.max(start - pad, prevBoundary);
+  // clampedEnd can land below the raw (unpadded) `end` when a neighbour's
+  // own timestamp already overlapped it — shrinking to the true boundary,
+  // not just refusing to extend further into it.
+  const clampedEnd = Math.max(Math.min(end + pad, nextBoundary), clampedStart);
+
+  // Hard invariant, enforced last: whatever the neighbour math above worked
+  // out, the cut must never end up narrower than [start, end) — the exact
+  // span of the word(s) the user selected. `sanitizeWords` already resolves
+  // genuine overlap with a real neighbour at the source (clipping each
+  // word's own `end`/`start` against its adjacent word before this function
+  // ever runs), so shrinking past the selection's own edges here should
+  // never be *necessary* for that reason. Enforcing it directly closes the
+  // whole bug class regardless of the exact path that could otherwise defeat
+  // it — a cut is worthless if it doesn't cover the word it was aimed at.
+  const safeStart = Math.min(clampedStart, start);
+  const safeEnd = Math.max(clampedEnd, end);
+
+  // This invariant should be unreachable given a complete, sanitized
+  // `allWords` — if it ever fires, the neighbour-clamp math above was wrong
+  // for real data we haven't seen in testing, not just a theoretical case.
+  // Logging the actual inputs here is the only way to get real numbers to
+  // debug it with, rather than guessing again from a screenshot.
+  if (safeStart !== clampedStart || safeEnd !== clampedEnd) {
+    console.warn(
+      "clampWordCutRange: neighbour clamp would have cut narrower than the selected word(s) — widened back out.",
+      { start, end, pad, clampedStart, clampedEnd, safeStart, safeEnd }
+    );
+  }
+
+  // Round to the millisecond grid word timestamps already live on —
+  // floating-point addition/subtraction here would otherwise introduce
+  // sub-millisecond drift that compounds across repeated cuts, undo/redo,
+  // and re-runs.
+  return { start: roundMs(safeStart), end: roundMs(safeEnd) };
+}
+
+/**
+ * Look up each of `words`' counterpart in `clean` (a `sanitizeWords` result)
+ * by `start` — the one field clipping never touches — so a word whose `end`
+ * got clipped for overlapping its neighbour is matched to that corrected
+ * copy rather than its original (unclipped, reference-stale) self.
+ */
+function toCleanWords(clean: TranscriptWord[], words: TranscriptWord[]): TranscriptWord[] {
+  const byStart = new Map(clean.map((w) => [w.start, w]));
+  return words.map((w) => byStart.get(w.start) ?? w);
+}
+
+/**
+ * Cut the time range spanned by the given words (manual cut, e.g. via Delete
+ * key). `allWords` is the full transcript, used to clamp the outward pad
+ * against real neighbouring speech and to correct for any overlap between
+ * the selected words' own timestamps and an adjacent word's (see
+ * `sanitizeWords`) — using the selected words' raw, uncorrected span here
+ * would reintroduce exactly the bleed that correction fixes.
+ */
+export function cutWords(
+  edl: EDL,
+  words: TranscriptWord[],
+  allWords: TranscriptWord[]
+): EDL {
   if (words.length === 0) return edl;
 
-  const start = Math.min(...words.map((w) => w.start));
-  const end = Math.max(...words.map((w) => w.end));
+  const clean = sanitizeWords(allWords);
+  const cleanWords = toCleanWords(clean, words);
+  const start = Math.min(...cleanWords.map((w) => w.start));
+  const end = Math.max(...cleanWords.map((w) => w.end));
+  const clamped = clampWordCutRange(clean, cleanWords, start, end, WORD_CUT_PAD_SECONDS);
 
-  return setRangeStatus(edl, start, end, "cut", "manual");
+  return setRangeStatus(edl, clamped.start, clamped.end, "cut", "manual");
 }
 
 /**
@@ -388,11 +539,21 @@ export function cutWords(edl: EDL, words: TranscriptWord[]): EDL {
  * untouched. `cutWords` cuts one span from the first word to the last — right
  * for a contiguous transcript selection, catastrophic for scattered words
  * (fillers dotted through a video would take all the speech between them).
+ * `allWords` is the full transcript, used to clamp each word's outward pad
+ * against its real neighbours and to correct each word's own span for
+ * overlap with a neighbour (see `sanitizeWords`).
  */
-export function cutEachWord(edl: EDL, words: TranscriptWord[]): EDL {
+export function cutEachWord(
+  edl: EDL,
+  words: TranscriptWord[],
+  allWords: TranscriptWord[]
+): EDL {
+  const clean = sanitizeWords(allWords);
+  const cleanWords = toCleanWords(clean, words);
   let next = edl;
-  for (const w of words) {
-    next = setRangeStatus(next, w.start, w.end, "cut", "manual");
+  for (const w of cleanWords) {
+    const clamped = clampWordCutRange(clean, [w], w.start, w.end, WORD_CUT_PAD_SECONDS);
+    next = setRangeStatus(next, clamped.start, clamped.end, "cut", "manual");
   }
   return next;
 }
@@ -557,6 +718,7 @@ export function reRoughCut(
  * within EPS of) an existing boundary, or outside every kept clip.
  */
 export function splitAt(edl: EDL, timeSec: number): EDL {
+  const time = roundMs(timeSec);
   const EPS = 1e-4;
   const segments: EDLSegment[] = [];
   let didSplit = false;
@@ -564,11 +726,11 @@ export function splitAt(edl: EDL, timeSec: number): EDL {
   for (const seg of edl.segments) {
     if (
       seg.status === "keep" &&
-      timeSec > seg.start + EPS &&
-      timeSec < seg.end - EPS
+      time > seg.start + EPS &&
+      time < seg.end - EPS
     ) {
-      segments.push({ ...seg, end: timeSec });
-      segments.push({ ...seg, start: timeSec, split: true });
+      segments.push({ ...seg, end: time });
+      segments.push({ ...seg, start: time, split: true });
       didSplit = true;
     } else {
       segments.push(seg);
@@ -593,7 +755,7 @@ export function trimBoundary(edl: EDL, leftIndex: number, newBoundaryTime: numbe
 
   const min = left.start + MIN_SEGMENT_SECONDS;
   const max = right.end - MIN_SEGMENT_SECONDS;
-  const clamped = Math.min(Math.max(newBoundaryTime, min), max);
+  const clamped = roundMs(Math.min(Math.max(newBoundaryTime, min), max));
 
   const segments = edl.segments.map((seg, i) => {
     if (i === leftIndex) return { ...seg, end: clamped };
@@ -684,6 +846,35 @@ export function groupWordsIntoParagraphs(words: TranscriptWord[]): WordParagraph
 
 export function findSegmentAt(edl: EDL, timeSec: number): EDLSegment | undefined {
   return edl.segments.find((seg) => timeSec >= seg.start && timeSec < seg.end);
+}
+
+/**
+ * Index of the word being spoken at `timeSec`, or -1 when the playhead sits in
+ * an inter-word gap (silence). `words` are ascending by `start`, so this binary
+ * searches instead of scanning — it runs on every rAF frame while playing, and
+ * an O(n) scan let the highlight visibly trail the O(1) timeline playhead on
+ * long transcripts. Semantics match the previous `findIndex`: a word is active
+ * for `start <= timeSec < end`.
+ */
+export function findActiveWordIndex(
+  words: TranscriptWord[],
+  timeSec: number
+): number {
+  let lo = 0;
+  let hi = words.length - 1;
+  let candidate = -1;
+  // Find the last word whose start <= timeSec.
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (words[mid].start <= timeSec) {
+      candidate = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  // Active only if the playhead is still inside that word (not past its end).
+  return candidate >= 0 && timeSec < words[candidate].end ? candidate : -1;
 }
 
 /**

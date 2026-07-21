@@ -2,7 +2,7 @@ import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import { db } from "@repo/db";
 import { projects } from "@repo/db/schema";
-import { eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { getOwnedProject, listAiCutRuns } from "@/lib/projects";
 import { settleHold } from "@/lib/credits";
 import { patchProjectSchema } from "@/lib/validation";
@@ -98,7 +98,17 @@ export async function PATCH(
     }
 
     // Only apply the fields that were actually provided.
-    const { edl, edlPatch, transcript, durationMs, fileName, fileSize, fileType } = parsed.data;
+    const {
+      edl,
+      edlPatch,
+      baseUpdatedAt,
+      transcript,
+      wordsAligned,
+      durationMs,
+      fileName,
+      fileSize,
+      fileType,
+    } = parsed.data;
     const updateData: Record<string, unknown> = {
       updatedAt: new Date(),
     };
@@ -124,16 +134,50 @@ export async function PATCH(
       updateData.edl = edl;
     }
     if (transcript !== undefined) updateData.transcript = transcript;
+    if (wordsAligned !== undefined) updateData.wordsAligned = wordsAligned;
     if (durationMs !== undefined) updateData.durationMs = durationMs;
     if (fileName !== undefined) updateData.fileName = fileName;
     if (fileSize !== undefined) updateData.fileSize = fileSize;
     if (fileType !== undefined) updateData.fileType = fileType;
 
+    // Optimistic concurrency. `edlPatch` is only meaningful against the exact
+    // EDL it was diffed from: applied to a row some other writer has already
+    // moved on (a second tab, a retry racing the request it duplicates, an AI
+    // Cut run), rfc6902 happily produces a structurally valid but semantically
+    // wrong EDL — silent corruption of the user's cut. Gate the write on the
+    // caller's base version so a diverged patch is rejected instead, and hand
+    // back the current state so the client can re-diff against it.
+    //
+    // Truncated to milliseconds because that's the precision that survives the
+    // JSON round-trip (`Date#toISOString`); the stored value can carry
+    // microseconds from Postgres' `now()` default.
+    const versioned = baseUpdatedAt !== undefined;
     const [updated] = await db
       .update(projects)
       .set(updateData)
-      .where(eq(projects.id, id))
+      .where(
+        versioned
+          ? and(
+              eq(projects.id, id),
+              sql`date_trunc('milliseconds', ${projects.updatedAt}) = ${baseUpdatedAt}::timestamptz`
+            )
+          : eq(projects.id, id)
+      )
       .returning();
+
+    if (!updated) {
+      // Zero rows matched: the row exists (ownership was checked above), so
+      // the version guard is what rejected this.
+      const current = await getOwnedProject(id, clerkId);
+      return NextResponse.json(
+        {
+          error: "Project changed since your last save.",
+          edl: current?.edl ?? null,
+          updatedAt: current?.updatedAt ?? null,
+        },
+        { status: 409 }
+      );
+    }
 
     return NextResponse.json({ success: true, updatedAt: updated.updatedAt });
   } catch (error) {

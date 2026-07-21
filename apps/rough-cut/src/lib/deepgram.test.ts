@@ -80,8 +80,10 @@ describe("normalizeDeepgram", () => {
     expect(normalizeDeepgram(payload).words[0].word).toBe("hi");
   });
 
-  // covers AC-2 (child 4): every word start/end is snapped to the 1/30s grid.
-  it("snaps word start/end to the nearest 1/30s frame boundary", () => {
+  // Word start/end keep Deepgram's native precision, rounded only to the
+  // millisecond (no fixed-fps quantization) so the highlight tracks the video's
+  // continuous currentTime instead of a 30fps grid.
+  it("rounds word start/end to the millisecond, preserving sub-frame precision", () => {
     const payload: DeepgramResponse = {
       results: {
         channels: [
@@ -89,8 +91,8 @@ describe("normalizeDeepgram", () => {
             alternatives: [
               {
                 transcript: "hi",
-                // 0.5183s * 30 = 15.549 -> rounds to 16 -> 16/30 = 0.53333...
-                // 1.0 is already exactly on a frame (30/30).
+                // 0.5183s -> 0.518 (kept, not snapped up to 16/30 = 0.5333...)
+                // 1.0 stays exactly 1.0.
                 words: [{ word: "hi", start: 0.5183, end: 1.0, confidence: 0.9 }],
               },
             ],
@@ -100,13 +102,13 @@ describe("normalizeDeepgram", () => {
     };
 
     const result = normalizeDeepgram(payload);
-    expect(result.words[0].start).toBeCloseTo(16 / 30, 10);
+    expect(result.words[0].start).toBeCloseTo(0.518, 10);
     expect(result.words[0].end).toBeCloseTo(1.0, 10);
   });
 
-  // covers AC-4 (child 4): the snap is idempotent — re-normalizing an
-  // already-snapped value must yield the same value.
-  it("is idempotent: re-normalizing an already-snapped value is a no-op", () => {
+  // Millisecond rounding is idempotent — re-normalizing an already-rounded
+  // value must yield the same value.
+  it("is idempotent: re-normalizing an already-rounded value is a no-op", () => {
     const once = normalizeDeepgram({
       results: {
         channels: [
@@ -159,34 +161,35 @@ describe("normalizeDeepgram", () => {
   });
 
   // covers AC-1/AC-3 (child 4): utterances requested from Deepgram actually
-  // flow through as frame-snapped, ascending boundary end-times, so
-  // retake-detection.ts has real acoustic boundaries to consume.
+  // flow through as millisecond-rounded, ascending boundary end-times, so
+  // retake-detection.ts has real acoustic boundaries to consume — in the same
+  // timebase as the words.
   describe("utteranceEnds", () => {
-    it("carries utterance end times through, frame-snapped and ascending", () => {
+    it("carries utterance end times through, millisecond-rounded and ascending", () => {
       const payload: DeepgramResponse = {
         results: {
           channels: [{ alternatives: [{ transcript: "a b c d", words: [] }] }],
-          // Out of order and off-grid on purpose — the normalizer must sort
-          // and snap, not just pass through.
+          // Out of order on purpose — the normalizer must sort and round, not
+          // just pass through.
           utterances: [
-            { start: 2.0, end: 3.5183 }, // 105.549 -> rounds to 106 -> 106/30
-            { start: 0, end: 1.0 }, // already on-grid
+            { start: 2.0, end: 3.5183 }, // -> 3.518
+            { start: 0, end: 1.0 },
           ],
         },
       };
 
       const result = normalizeDeepgram(payload);
-      expect(result.utteranceEnds).toEqual([1.0, 106 / 30]);
+      expect(result.utteranceEnds).toEqual([1.0, 3.518]);
     });
 
-    it("snaps each utterance end to the 1/30s grid", () => {
+    it("rounds each utterance end to the millisecond", () => {
       const payload: DeepgramResponse = {
         results: {
           channels: [{ alternatives: [{ transcript: "a", words: [] }] }],
           utterances: [{ start: 0, end: 0.5183 }],
         },
       };
-      expect(normalizeDeepgram(payload).utteranceEnds).toEqual([16 / 30]);
+      expect(normalizeDeepgram(payload).utteranceEnds).toEqual([0.518]);
     });
 
     it("sorts multiple utterance ends ascending regardless of input order", () => {
