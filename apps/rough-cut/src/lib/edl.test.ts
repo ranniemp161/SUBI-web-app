@@ -11,6 +11,7 @@ import {
   pinTrimmedBoundary,
   trimBoundary,
   keptDuration,
+  cutWords,
   cutEachWord,
   extendToMediaDuration,
   nextPlaybackTime,
@@ -19,6 +20,9 @@ import {
   isFillerWord,
   findFillerWords,
   groupWordsIntoParagraphs,
+  findActiveWordIndex,
+  findSegmentAt,
+  sanitizeWords,
   type EDL,
   type TranscriptWord,
 } from "./edl";
@@ -35,6 +39,36 @@ function keep(durationSeconds: number): EDL {
 function word(start: number, end: number): TranscriptWord {
   return { word: "x", start, end, confidence: 1 };
 }
+
+describe("sanitizeWords", () => {
+  it("clips a word's end back to the next word's start when they overlap", () => {
+    // Regression shape: a fast compound proper noun ("Donald Trump") where
+    // Deepgram's word boundary for the first word lands past the second
+    // word's own start.
+    const donald = { word: "Donald", start: 10.0, end: 10.62, confidence: 1 };
+    const trump = { word: "Trump", start: 10.55, end: 10.9, confidence: 1 };
+    const result = sanitizeWords([donald, trump]);
+    expect(result).toEqual([
+      { word: "Donald", start: 10.0, end: 10.55, confidence: 1 },
+      { word: "Trump", start: 10.55, end: 10.9, confidence: 1 },
+    ]);
+  });
+
+  it("leaves non-overlapping words untouched", () => {
+    const words = [word(0, 0.3), word(0.5, 0.8)];
+    expect(sanitizeWords(words)).toEqual(words);
+  });
+
+  it("doesn't clip a word to a zero or negative duration when overlap is severe", () => {
+    // Pathological: the next word's reported start is at or before this
+    // word's own start. Clipping here would produce a degenerate span, so
+    // this word is left as-is rather than collapsed.
+    const a = { word: "a", start: 5.0, end: 5.5, confidence: 1 };
+    const b = { word: "b", start: 5.0, end: 5.3, confidence: 1 };
+    const result = sanitizeWords([a, b]);
+    expect(result[0].end).toBe(5.5);
+  });
+});
 
 describe("buildInitialEDL — repetition pass integration", () => {
   it("labels a stutter cut with reason \"repetition\", keeping the last instance", () => {
@@ -373,28 +407,150 @@ describe("groupWordsIntoParagraphs", () => {
 });
 
 describe("cutEachWord", () => {
-  it("cuts only each word's own range, not the span between scattered words", () => {
+  it("cuts only each word's own range (plus outward pad), not the span between scattered words", () => {
     // Regression: an "um" at 5s and an "uh" at 50s must NOT take the 45s of
     // speech between them (cutWords' span semantics would).
     const fillers = [
       { word: "um", start: 5, end: 5.3, confidence: 1 },
       { word: "uh", start: 50, end: 50.2, confidence: 1 },
     ];
-    const result = cutEachWord(keep(60), fillers);
+    const result = cutEachWord(keep(60), fillers, fillers);
     expect(result.segments).toEqual([
-      { start: 0, end: 5, status: "keep", reason: null },
-      { start: 5, end: 5.3, status: "cut", reason: "manual" },
-      { start: 5.3, end: 50, status: "keep", reason: null },
-      { start: 50, end: 50.2, status: "cut", reason: "manual" },
-      { start: 50.2, end: 60, status: "keep", reason: null },
+      { start: 0, end: 4.95, status: "keep", reason: null },
+      { start: 4.95, end: 5.35, status: "cut", reason: "manual" },
+      { start: 5.35, end: 49.95, status: "keep", reason: null },
+      { start: 49.95, end: 50.25, status: "cut", reason: "manual" },
+      { start: 50.25, end: 60, status: "keep", reason: null },
     ]);
     // The overwhelming majority of the video survives.
-    expect(keptDuration(result)).toBeCloseTo(59.5, 5);
+    expect(keptDuration(result)).toBeCloseTo(59.3, 5);
+  });
+
+  it("clamps the outward pad against a close neighbouring word instead of biting it", () => {
+    // "world" ends at 5.3, and the very next word starts just 0.02s later —
+    // well inside the 0.05s pad. The pad on that side must stop at 5.32, not
+    // reach into "next"'s own timestamp range.
+    const allWords = [
+      { word: "world", start: 5.0, end: 5.3, confidence: 1 },
+      { word: "next", start: 5.32, end: 5.6, confidence: 1 },
+    ];
+    const result = cutEachWord(keep(10), [allWords[0]], allWords);
+    expect(result.segments).toEqual([
+      { start: 0, end: 4.95, status: "keep", reason: null },
+      { start: 4.95, end: 5.32, status: "cut", reason: "manual" },
+      { start: 5.32, end: 10, status: "keep", reason: null },
+    ]);
+  });
+
+  it("regression: doesn't bleed into the next word when Deepgram reports overlapping timestamps", () => {
+    const donald = { word: "Donald", start: 10.0, end: 10.62, confidence: 1 };
+    const trump = { word: "Trump", start: 10.55, end: 10.9, confidence: 1 };
+    const allWords = [donald, trump];
+
+    const result = cutEachWord(keep(20), [donald], allWords);
+
+    const cutSeg = result.segments.find((s) => s.status === "cut");
+    expect(cutSeg).toBeDefined();
+    expect(cutSeg!.end).toBeLessThanOrEqual(trump.start);
+    expect(findSegmentAt(result, trump.start)?.status).toBe("keep");
   });
 
   it("is a no-op for an empty word list", () => {
     const edl = keep(10);
-    expect(cutEachWord(edl, [])).toBe(edl);
+    expect(cutEachWord(edl, [], [])).toBe(edl);
+  });
+});
+
+describe("cutWords", () => {
+  it("pads the cut outward past the selected span's own edges", () => {
+    const allWords = [
+      { word: "the", start: 1.0, end: 1.3, confidence: 1 },
+      { word: "world", start: 2.0, end: 2.4, confidence: 1 },
+    ];
+    const result = cutWords(keep(10), allWords, allWords);
+    expect(result.segments).toEqual([
+      { start: 0, end: 0.95, status: "keep", reason: null },
+      { start: 0.95, end: 2.45, status: "cut", reason: "manual" },
+      { start: 2.45, end: 10, status: "keep", reason: null },
+    ]);
+  });
+
+  it("clamps the outward pad against a close neighbouring word instead of biting it", () => {
+    const allWords = [
+      { word: "before", start: 0.9, end: 0.98, confidence: 1 },
+      { word: "world", start: 1.0, end: 1.3, confidence: 1 },
+    ];
+    const result = cutWords(keep(10), [allWords[1]], allWords);
+    expect(result.segments).toEqual([
+      { start: 0, end: 0.98, status: "keep", reason: null },
+      { start: 0.98, end: 1.35, status: "cut", reason: "manual" },
+      { start: 1.35, end: 10, status: "keep", reason: null },
+    ]);
+  });
+
+  it("is a no-op for an empty word list", () => {
+    const edl = keep(10);
+    expect(cutWords(edl, [], [])).toBe(edl);
+  });
+
+  it("regression: doesn't bleed into the next word when Deepgram reports overlapping timestamps", () => {
+    // Real-world shape: a fast compound proper noun ("Donald Trump") where
+    // Deepgram's word boundary for the first word lands past the second
+    // word's own start. The old clamp only recognized a neighbour that was
+    // cleanly outside [start, end) — "Trump" here fails that test (its start
+    // is inside "Donald"'s reported end), so it was invisible to the clamp
+    // and got partly struck through by a cut aimed only at "Donald".
+    const donald = { word: "Donald", start: 10.0, end: 10.62, confidence: 1 };
+    const trump = { word: "Trump", start: 10.55, end: 10.9, confidence: 1 };
+    const allWords = [donald, trump];
+
+    const result = cutWords(keep(20), [donald], allWords);
+
+    // The cut must stop at (or before) "Trump"'s own start — never past it.
+    const cutSeg = result.segments.find((s) => s.status === "cut");
+    expect(cutSeg).toBeDefined();
+    expect(cutSeg!.end).toBeLessThanOrEqual(trump.start);
+    // "Trump" itself must read as kept, not cut.
+    expect(findSegmentAt(result, trump.start)?.status).toBe("keep");
+  });
+
+  it("regression: stays aligned with the target word's own start when the PREVIOUS word overlaps forward too", () => {
+    // Real-world shape: "about Donald Trump" spoken fast — both neighbours'
+    // timestamps intrude into "Donald"'s own reported span. A clamp that
+    // only widens the cut to protect a neighbour (never narrows it) could
+    // previously push the cut's start past "Donald"'s own start entirely —
+    // the timeline would show a real cut, but the transcript's per-word
+    // check (keyed on the word's own `start`) would miss it, since the cut
+    // no longer contained that timestamp at all.
+    const about = { word: "about", start: 9.6, end: 10.05, confidence: 1 };
+    const donald = { word: "Donald", start: 10.0, end: 10.62, confidence: 1 };
+    const trump = { word: "Trump", start: 10.55, end: 10.9, confidence: 1 };
+    const allWords = [about, donald, trump];
+
+    const result = cutWords(keep(20), [donald], allWords);
+
+    expect(findSegmentAt(result, donald.start)?.status).toBe("cut");
+    expect(findSegmentAt(result, trump.start)?.status).toBe("keep");
+  });
+
+  it("hard invariant: the cut always covers every selected word's own span, even if allWords is missing an intermediate neighbour", () => {
+    // sanitizeWords resolves overlap by clipping each word against its
+    // immediate neighbour *in allWords* — if the caller ever hands cutWords
+    // an incomplete transcript (missing the word that actually sits between
+    // a distant "before" word and the selection), that distant word's own
+    // overlap into the selection never gets clipped, and the neighbour-clamp
+    // alone could shrink the cut past the selected word's own start. This is
+    // the belt-and-suspenders check that the final result never does that,
+    // regardless of how it would have gotten there.
+    const distantBefore = { word: "distant", start: 2.0, end: 10.4, confidence: 1 };
+    const donald = { word: "Donald", start: 10.0, end: 10.62, confidence: 1 };
+    // "distant" is passed as if it were adjacent — the true intermediate
+    // word ("about", say) is missing from this list entirely.
+    const allWords = [distantBefore, donald];
+
+    const result = cutWords(keep(20), [donald], allWords);
+
+    expect(findSegmentAt(result, donald.start)?.status).toBe("cut");
   });
 });
 
@@ -429,9 +585,23 @@ describe("absorbCutResidue", () => {
     expect(result).toBe(edl);
   });
 
-  it("leaves keeps at or above the threshold alone", () => {
-    const edl = edlWithSliver({ start: 4, end: 4.5 });
-    expect(absorbCutResidue(edl, [])).toBe(edl);
+  it("absorbs a wordless keep between two cuts regardless of duration", () => {
+    // A natural spoken pause (e.g. deleting two words that flank it in
+    // separate edits) can be much longer than a pad-width sliver — still
+    // nothing left to keep once both neighbors are cut.
+    const result = absorbCutResidue(edlWithSliver({ start: 4, end: 4.9 }), []);
+    expect(result.segments).toEqual([
+      { start: 0, end: 2, status: "keep", reason: null },
+      { start: 2, end: 4.9, status: "cut", reason: "manual" },
+      { start: 4.9, end: 6, status: "cut", reason: "silence" },
+      { start: 6, end: 10, status: "keep", reason: null },
+    ]);
+  });
+
+  it("leaves a keep alone at any duration when a transcript word overlaps it", () => {
+    const edl = edlWithSliver({ start: 4, end: 4.9 });
+    const result = absorbCutResidue(edl, [word(4.3, 4.6)]);
+    expect(result).toBe(edl);
   });
 
   it("never absorbs a protected (user-restored) sliver", () => {
@@ -595,5 +765,51 @@ describe("extendToMediaDuration — transcript-vs-media duration gap", () => {
     expect(extendToMediaDuration(edl, Infinity)).toBe(edl);
     const empty: EDL = { segments: [] };
     expect(extendToMediaDuration(empty, 10)).toBe(empty);
+  });
+});
+
+describe("findActiveWordIndex", () => {
+  // Words with gaps: [0,0.5) "a", [0.6,1.0) "b", [2.0,2.4) "c".
+  const words: TranscriptWord[] = [
+    word(0, 0.5),
+    word(0.6, 1.0),
+    word(2.0, 2.4),
+  ];
+
+  it("returns the word containing the time", () => {
+    expect(findActiveWordIndex(words, 0.25)).toBe(0);
+    expect(findActiveWordIndex(words, 0.7)).toBe(1);
+    expect(findActiveWordIndex(words, 2.399)).toBe(2);
+  });
+
+  it("is inclusive of a word's start and exclusive of its end", () => {
+    expect(findActiveWordIndex(words, 0)).toBe(0); // exactly at start
+    expect(findActiveWordIndex(words, 0.5)).toBe(-1); // exactly at end -> gap
+    expect(findActiveWordIndex(words, 0.6)).toBe(1);
+  });
+
+  it("returns -1 in inter-word gaps (silence)", () => {
+    expect(findActiveWordIndex(words, 0.55)).toBe(-1); // between a and b
+    expect(findActiveWordIndex(words, 1.5)).toBe(-1); // between b and c
+  });
+
+  it("returns -1 before the first word and after the last", () => {
+    expect(findActiveWordIndex(words, -1)).toBe(-1);
+    expect(findActiveWordIndex(words, 2.4)).toBe(-1);
+    expect(findActiveWordIndex(words, 99)).toBe(-1);
+  });
+
+  it("returns -1 for an empty transcript", () => {
+    expect(findActiveWordIndex([], 1)).toBe(-1);
+  });
+
+  it("matches a linear scan across a dense sequence", () => {
+    const dense: TranscriptWord[] = Array.from({ length: 500 }, (_, i) =>
+      word(i * 0.1, i * 0.1 + 0.08)
+    );
+    for (const t of [0, 0.05, 0.09, 12.34, 25.0, 49.98, 50]) {
+      const expected = dense.findIndex((w) => t >= w.start && t < w.end);
+      expect(findActiveWordIndex(dense, t)).toBe(expected);
+    }
   });
 });

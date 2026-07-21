@@ -58,13 +58,16 @@ export interface NormalizedTranscript {
   utteranceEnds?: number[];
 }
 
-// Word timestamps are snapped to a 30fps grid here, at the one chokepoint both
-// transcription paths flow through, so seek, EDL cut boundaries, and export all
-// inherit frame-aligned values — no per-consumer rounding. 30fps is a heuristic
-// (most consumer video is 24/25/30fps); a non-30fps source can be off by up to
-// ~one real frame. Changing the grid means re-normalizing stored transcripts.
-const SNAP_FPS = 30;
-const snapToFrame = (seconds: number) => Math.round(seconds * SNAP_FPS) / SNAP_FPS;
+// Word timestamps keep Deepgram's native precision (rounded to the millisecond
+// here at the one chokepoint both transcription paths flow through, only to keep
+// floats clean). We deliberately do NOT quantize to a fixed frame grid: the
+// transcript highlight is compared against the video element's continuous
+// `currentTime`, so any fixed-fps snap would offset the active-word boundary
+// from the real audio by up to ~one frame on non-30fps sources. Frame-alignment
+// where it actually matters — EDL cut boundaries and NLE-interchange export — is
+// owned downstream by the *detected* source fps (`detectVideoFps` +
+// `timebase.ts`), not by a heuristic at ingestion.
+const roundMs = (seconds: number) => Math.round(seconds * 1000) / 1000;
 
 /**
  * Flatten Deepgram's nested response into the flat {words, text, duration}
@@ -77,16 +80,16 @@ export function normalizeDeepgram(payload: DeepgramResponse): NormalizedTranscri
   const alt = channel?.alternatives?.[0];
   const words = (alt?.words ?? []).map((w) => ({
     word: w.punctuated_word ?? w.word,
-    start: snapToFrame(w.start),
-    end: snapToFrame(w.end),
+    start: roundMs(w.start),
+    end: roundMs(w.end),
     confidence: w.confidence,
   }));
   const utterances = payload?.results?.utterances;
   // Ends only, ascending — that's all retake-detection needs to mark a
-  // boundary. Snapped through the same 1/30s grid as words so a boundary and
-  // an adjacent word's `end` compare cleanly.
+  // boundary. Rounded through the same millisecond grid as words so a boundary
+  // and an adjacent word's `end` compare cleanly in one consistent timebase.
   const utteranceEnds = utterances?.length
-    ? utterances.map((u) => snapToFrame(u.end)).sort((a, b) => a - b)
+    ? utterances.map((u) => roundMs(u.end)).sort((a, b) => a - b)
     : undefined;
   return {
     words,

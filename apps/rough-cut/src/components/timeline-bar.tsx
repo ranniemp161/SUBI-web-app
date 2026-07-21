@@ -23,12 +23,21 @@ import {
 } from "lucide-react";
 import {
   totalDuration,
+  roundMs,
+  MIN_SEGMENT_SECONDS,
   type EDL,
   type EDLSegment,
+  type TimeRange,
 } from "@/lib/edl";
 import { extractWaveform, type Waveform } from "@/lib/waveform";
 import { extractFilmstrip, type Filmstrip } from "@/lib/thumbnails";
-import { formatDuration } from "@/lib/utils";
+import { formatDuration, nearestSorted } from "@/lib/utils";
+import {
+  SYNC_HOVER_LINE_CLASS,
+  SYNC_PLAYHEAD_CLASS,
+  SYNC_SELECTION_BG_CLASS,
+  SYNC_SELECTION_RING_CLASS,
+} from "@/lib/sync-colors";
 
 export interface TimelineHandle {
   zoomIn: () => void;
@@ -63,6 +72,18 @@ interface TimelineBarProps {
   onSelectSegment: (segment: EDLSegment | null) => void;
   /** Delete the selected clip (mirrors the Delete key). */
   onDeleteSelected: () => void;
+  /** A time to show a lightweight preview marker at, published by the
+   *  transcript's own word hover (AC-5). Null when nothing is hovered there. */
+  hoveredTime?: number | null;
+  /** Publish this timeline's own pointer hover (word-granularity, throttled) so
+   *  the transcript can preview the matching word (AC-6). */
+  onHoverTimeChange?: (seconds: number | null) => void;
+  /** The shared cross-panel selection (AC-3/AC-4), rendered as a highlight band
+   *  regardless of which panel it originated in. */
+  selectedRange?: TimeRange | null;
+  /** Publish this timeline's own clip selection / trim drag as a time range
+   *  (AC-4) so the transcript can highlight the matching words. */
+  onRangeSelect?: (range: TimeRange | null) => void;
 }
 
 const MIN_PX_PER_SEC = 5;
@@ -84,21 +105,6 @@ const WAVE_GAIN = 2.2;
 
 function niceRulerStep(targetSeconds: number): number {
   return RULER_STEPS.find((step) => step >= targetSeconds) ?? RULER_STEPS[RULER_STEPS.length - 1];
-}
-
-/** Nearest value in a sorted array to `target` (binary search). */
-function nearestSorted(sorted: number[], target: number): number | null {
-  if (sorted.length === 0) return null;
-  let lo = 0;
-  let hi = sorted.length - 1;
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1;
-    if (sorted[mid] < target) lo = mid + 1;
-    else hi = mid;
-  }
-  const candidate = sorted[lo];
-  const prev = lo > 0 ? sorted[lo - 1] : candidate;
-  return Math.abs(prev - target) <= Math.abs(candidate - target) ? prev : candidate;
 }
 
 /**
@@ -124,6 +130,10 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
     selectedStart,
     onSelectSegment,
     onDeleteSelected,
+    hoveredTime,
+    onHoverTimeChange,
+    selectedRange,
+    onRangeSelect,
   },
   ref
 ) {
@@ -479,6 +489,19 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
   // re-render every clip block just to move a 1px line.
   const hoverRef = useRef<HTMLDivElement>(null);
   const hoverTimeRef = useRef<HTMLSpanElement>(null);
+  // Throttles the outward hover publish to word-ish granularity (50ms
+  // buckets) — the ghost playhead above stays imperative/per-pixel for smooth
+  // visuals, but re-rendering the transcript panel on every pixel of mouse
+  // movement would reintroduce the perf problem WordSpan's memoization exists
+  // to avoid, for a preview that only ever needs to resolve to a word anyway.
+  const lastHoverBucketRef = useRef<number | null>(null);
+  // Whether the pointer is currently over this timeline's own hover surface.
+  // While true, the local ghost line above already shows the hover — the
+  // cross-panel `hoveredTime` prop must not also render its own marker, or a
+  // self-published hover echoes back down as a second, redundant line at the
+  // same position. Only flips on a genuine true/false change, so it doesn't
+  // re-render on every pixel of mouse movement.
+  const [isSelfHovering, setIsSelfHovering] = useState(false);
   const handleHoverMove = useCallback(
     (e: React.PointerEvent) => {
       const ghost = hoverRef.current;
@@ -489,12 +512,23 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
       if (hoverTimeRef.current) {
         hoverTimeRef.current.textContent = formatDuration(t * 1000);
       }
+      setIsSelfHovering((prev) => (prev ? prev : true));
+      if (onHoverTimeChange) {
+        const bucket = Math.round(t * 20);
+        if (bucket !== lastHoverBucketRef.current) {
+          lastHoverBucketRef.current = bucket;
+          onHoverTimeChange(t);
+        }
+      }
     },
-    [timeFromClientX, pxPerSec]
+    [timeFromClientX, pxPerSec, onHoverTimeChange]
   );
   const handleHoverLeave = useCallback(() => {
     if (hoverRef.current) hoverRef.current.style.opacity = "0";
-  }, []);
+    setIsSelfHovering(false);
+    lastHoverBucketRef.current = null;
+    onHoverTimeChange?.(null);
+  }, [onHoverTimeChange]);
   // A zoom under a resting cursor would leave the ghost at a stale time —
   // hide it until the next mouse move recomputes the position.
   useEffect(() => {
@@ -509,9 +543,10 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
       // Scrubbing empty timeline / ruler clears any clip selection.
       onSelectSegment(null);
       setSelectedCutStart(null);
+      onRangeSelect?.(null);
       onSeek(timeFromClientX(e.clientX));
     },
-    [onSelectSegment, onSeek, timeFromClientX]
+    [onSelectSegment, onSeek, timeFromClientX, onRangeSelect]
   );
   const handleScrubPointerMove = useCallback(
     (e: React.PointerEvent) => {
@@ -539,8 +574,9 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
         onSelectSegment(segment);
         onSeek(timeFromClientX(e.clientX));
       }
+      onRangeSelect?.({ start: segment.start, end: segment.end });
     },
-    [onSelectSegment, onSeek, timeFromClientX]
+    [onSelectSegment, onSeek, timeFromClientX, onRangeSelect]
   );
 
   const handleConfirmRestore = useCallback(
@@ -576,9 +612,29 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
         const snapped = nearestSorted(snapTimes, t);
         if (snapped !== null && Math.abs(snapped - t) * pxPerSec <= SNAP_PX) t = snapped;
       }
-      onTrimBoundary(dragLeftIndexRef.current, t);
+      const leftIndex = dragLeftIndexRef.current;
+      onTrimBoundary(leftIndex, t);
+      // Live-preview the trim's effect on whichever adjacent segment is kept
+      // (a cut segment has no words worth highlighting in the transcript).
+      // Mirrors trimBoundary's own clamp (edl.ts) exactly: publishing the raw
+      // drag position here let the preview claim a wider range than what
+      // actually gets cut whenever a drag overshoots past the neighbouring
+      // segment's edge, leaving a stale, too-wide highlight in the transcript
+      // that made an uncut word look like it had been selected for deletion.
+      const left = edl.segments[leftIndex];
+      const right = edl.segments[leftIndex + 1];
+      if (left && right) {
+        const min = left.start + MIN_SEGMENT_SECONDS;
+        const max = right.end - MIN_SEGMENT_SECONDS;
+        const clampedBoundary = roundMs(Math.min(Math.max(t, min), max));
+        if (left.status === "keep") {
+          onRangeSelect?.({ start: left.start, end: clampedBoundary });
+        } else if (right.status === "keep") {
+          onRangeSelect?.({ start: clampedBoundary, end: right.end });
+        }
+      }
     },
-    [onTrimBoundary, onTrimStart, timeFromClientX, snapEnabled, snapTimes, pxPerSec]
+    [onTrimBoundary, onTrimStart, timeFromClientX, snapEnabled, snapTimes, pxPerSec, edl, onRangeSelect]
   );
   const handleBoundaryPointerUp = useCallback((e: React.PointerEvent) => {
     e.currentTarget.releasePointerCapture(e.pointerId);
@@ -857,7 +913,7 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
                               // them visible while marking the region active.
                               "border-accent/50 bg-accent/15 hover:bg-accent/20"
                             : "border-accent/40 bg-accent/85 hover:bg-accent/95"
-                    } ${isSelected || isSelectedCut ? "ring-2 ring-inset ring-white/90" : ""}`}
+                    } ${isSelected || isSelectedCut ? SYNC_SELECTION_RING_CLASS : ""}`}
                   >
                     {!isCut && index === firstKeepIndex && (
                       <span
@@ -943,12 +999,37 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
               style={{ height: TOTAL_H, opacity: 0 }}
               className="pointer-events-none absolute left-0 top-0 z-10 motion-safe:transition-opacity motion-safe:duration-100"
             >
-              <div className="w-px bg-foreground/30" style={{ height: TOTAL_H }} />
+              <div className={`w-px ${SYNC_HOVER_LINE_CLASS}`} style={{ height: TOTAL_H }} />
               <span
                 ref={hoverTimeRef}
                 className="absolute left-1.5 top-0.5 whitespace-nowrap rounded bg-background/95 px-1 py-px font-mono text-[10px] text-foreground/70 shadow-sm"
               />
             </div>
+
+            {/* Cross-panel hover preview (AC-5) — published by the transcript's
+                own word hover; a lightweight marker, never touches playback.
+                Suppressed while this timeline is itself being hovered — the
+                ghost line above already shows it, and hoveredTime would
+                otherwise be this same hover echoed back down as a prop. */}
+            {hoveredTime != null && !isSelfHovering && (
+              <div
+                style={{ left: hoveredTime * pxPerSec, height: TOTAL_H }}
+                className={`pointer-events-none absolute top-0 z-10 w-px ${SYNC_HOVER_LINE_CLASS}`}
+              />
+            )}
+
+            {/* Cross-panel selection highlight (AC-3/AC-4) — a shared time
+                range from either panel's own selection gesture. */}
+            {selectedRange && (
+              <div
+                style={{
+                  left: selectedRange.start * pxPerSec,
+                  width: Math.max(1, (selectedRange.end - selectedRange.start) * pxPerSec),
+                  height: TOTAL_H,
+                }}
+                className={`pointer-events-none absolute top-0 z-[5] ${SYNC_SELECTION_BG_CLASS}`}
+              />
+            )}
 
             {/* Playhead */}
             <div
@@ -958,8 +1039,8 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
               style={{ left: playheadLeft }}
               className="absolute top-0 z-20 -ml-1.5 w-3 cursor-ew-resize"
             >
-              <div className="mx-auto w-px bg-red-500" style={{ height: TOTAL_H }} />
-              <div className="absolute top-0 left-1/2 h-2.5 w-2.5 -translate-x-1/2 rotate-45 rounded-[2px] bg-red-500" />
+              <div className={`mx-auto w-px ${SYNC_PLAYHEAD_CLASS}`} style={{ height: TOTAL_H }} />
+              <div className={`absolute top-0 left-1/2 h-2.5 w-2.5 -translate-x-1/2 rotate-45 rounded-[2px] ${SYNC_PLAYHEAD_CLASS}`} />
             </div>
           </div>
         </div>

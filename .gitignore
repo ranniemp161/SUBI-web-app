@@ -57,3 +57,7 @@ packages/db/scripts/topup-demo-account.ts
 
 #project design files
 .ui-design/
+
+#docs
+docs/
+docs/.vitepress/dist/

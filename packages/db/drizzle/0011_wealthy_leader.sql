@@ -1,0 +1,1 @@
+ALTER TABLE "projects" ADD COLUMN "words_aligned" boolean DEFAULT false NOT NULL;

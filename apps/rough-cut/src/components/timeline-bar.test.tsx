@@ -67,6 +67,8 @@ function makeProps(overrides: Partial<React.ComponentProps<typeof TimelineBar>> 
     selectedStart: null,
     onSelectSegment: vi.fn(),
     onDeleteSelected: vi.fn(),
+    onHoverTimeChange: vi.fn(),
+    onRangeSelect: vi.fn(),
     ...overrides,
   };
 }
@@ -193,6 +195,123 @@ describe("TimelineBar — cut-clip restore confirmation", () => {
     fireEvent.keyDown(cutClip, { key: " " });
     expect(screen.getByRole("button", { name: /restore cut/i })).toBeVisible();
     expect(props.onRestoreSegment).not.toHaveBeenCalled();
+  });
+});
+
+// spec 0002 (transcript/timeline live sync): the timeline's own hover and
+// selection/trim gestures publish outward (AC-5/AC-6, AC-3/AC-4), throttled
+// to word-ish granularity for hover so it doesn't re-render the transcript on
+// every pixel of pointer movement.
+describe("TimelineBar — cross-panel sync (spec 0002)", () => {
+  it("publishes the hovered time (throttled) on pointer move, and null on leave", () => {
+    const props = makeProps();
+    const { container } = render(<TimelineBar {...props} />);
+    // The hover/pointer handlers live on contentRef, the direct child of the
+    // scrollable `.timeline-scroll` container.
+    const content = getScroller(container).firstElementChild as HTMLElement;
+
+    fireEvent.pointerMove(content, { clientX: 80, pointerType: "mouse" });
+    expect(props.onHoverTimeChange).toHaveBeenCalledWith(2); // 80 / DEFAULT_PX_PER_SEC(40)
+
+    fireEvent.pointerLeave(content);
+    expect(props.onHoverTimeChange).toHaveBeenLastCalledWith(null);
+  });
+
+  // Regression: a self-published hover echoes back down as the `hoveredTime`
+  // prop (it's the same shared state the transcript panel also reads), which
+  // must not render a second marker on top of the local ghost line.
+  it("does not render a duplicate cross-panel marker while hovering itself", () => {
+    const props = makeProps({ hoveredTime: 2 });
+    const { container } = render(<TimelineBar {...props} />);
+
+    // Not self-hovering yet — the cross-panel marker (a thin pointer-events-none
+    // line positioned via inline `left`, unlike the ghost which uses
+    // `transform`, and unlike the ruler's tick marks which use `w-px bg-foreground/15`
+    // rather than the shared hover-line token) renders.
+    const findMarker = () =>
+      Array.from(container.querySelectorAll<HTMLDivElement>("div")).find(
+        (el) => el.style.left === "80px" && el.className.includes("pointer-events-none")
+      );
+    expect(findMarker()).toBeTruthy();
+
+    const content = getScroller(container).firstElementChild as HTMLElement;
+    fireEvent.pointerMove(content, { clientX: 10, pointerType: "mouse" });
+
+    expect(findMarker()).toBeUndefined();
+  });
+
+  it("does not publish a hover time for a non-mouse pointer (e.g. touch)", () => {
+    const props = makeProps();
+    const { container } = render(<TimelineBar {...props} />);
+    const content = getScroller(container).firstElementChild as HTMLElement;
+
+    fireEvent.pointerMove(content, { clientX: 80, pointerType: "touch" });
+    expect(props.onHoverTimeChange).not.toHaveBeenCalled();
+  });
+
+  it("publishes the clicked clip's time range when a kept clip is selected (AC-4)", () => {
+    const props = makeProps();
+    render(<TimelineBar {...props} />);
+
+    fireEvent.click(screen.getByTitle(/keep — click to select/i));
+    expect(props.onRangeSelect).toHaveBeenCalledWith({ start: 0, end: 5 });
+  });
+
+  it("publishes null when scrubbing (the ruler) clears the selection", () => {
+    const props = makeProps();
+    const { container } = render(<TimelineBar {...props} />);
+    const ruler = container.querySelector(".cursor-text") as HTMLElement;
+    expect(ruler).toBeTruthy();
+
+    fireEvent.pointerDown(ruler, { clientX: 10, pointerId: 1 });
+    expect(props.onRangeSelect).toHaveBeenCalledWith(null);
+  });
+
+  it("live-previews the kept segment's shrinking range while dragging its trim boundary (AC-4)", () => {
+    const props = makeProps();
+    const { container } = render(<TimelineBar {...props} />);
+    const handle = container.querySelector(".cursor-col-resize") as HTMLElement;
+    expect(handle).toBeTruthy();
+
+    fireEvent.pointerDown(handle, { clientX: 200, pointerId: 1 });
+    fireEvent.pointerMove(handle, { clientX: 120, pointerId: 1 }); // 120/40 = 3s
+
+    expect(props.onTrimBoundary).toHaveBeenCalledWith(0, 3);
+    // segments[0] (index 0) is the "keep" side of this boundary.
+    expect(props.onRangeSelect).toHaveBeenCalledWith({ start: 0, end: 3 });
+  });
+
+  // Regression: a bug report ("I deleted a word but it's still there, with a
+  // stray highlight box around it") traced to this — the live-preview range
+  // published mid-drag used the raw, unclamped pointer position, while the
+  // boundary actually applied to the EDL (trimBoundary, edl.ts) clamps to
+  // MIN_SEGMENT_SECONDS short of the neighbouring segment's own edge. A fast
+  // or edge-reaching drag let the transcript's cross-panel highlight claim a
+  // wider range than what was really cut, and it never got cleared afterward
+  // (selectedRange only clears when playback starts), so the stale, too-wide
+  // highlight persisted and made an uncut word look selected for deletion.
+  it("live-previews the SAME clamped boundary trimBoundary will actually apply, not the raw drag position", () => {
+    const props = makeProps();
+    const { container } = render(<TimelineBar {...props} />);
+    const handle = container.querySelector(".cursor-col-resize") as HTMLElement;
+
+    // Drag far past the right segment's own end (8s); timeFromClientX caps at
+    // `total` (8s), but trimBoundary itself clamps further, to
+    // right.end - MIN_SEGMENT_SECONDS (7.95s) — the real boundary that lands.
+    fireEvent.pointerDown(handle, { clientX: 200, pointerId: 1 });
+    fireEvent.pointerMove(handle, { clientX: 10_000, pointerId: 1 });
+
+    expect(props.onRangeSelect).toHaveBeenCalledWith({ start: 0, end: 7.95 });
+  });
+
+  it("renders the cross-panel selection highlight band at the shared range", () => {
+    const props = makeProps({ selectedRange: { start: 1, end: 3 } });
+    const { container } = render(<TimelineBar {...props} />);
+
+    const band = container.querySelector(".bg-blue-500\\/20") as HTMLElement;
+    expect(band).toBeTruthy();
+    expect(band.style.left).toBe("40px"); // 1s * 40px/s
+    expect(band.style.width).toBe("80px"); // (3-1)s * 40px/s
   });
 });
 

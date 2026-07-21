@@ -37,7 +37,7 @@ import VideoPlayer, {
 import TranscriptPanel from "@/components/transcript-panel";
 import TimelineBar, { type TimelineHandle } from "@/components/timeline-bar";
 import { WALLET_DASHBOARD_URL } from "@/lib/env";
-import { formatDuration } from "@/lib/utils";
+import { formatDuration, nearestSorted } from "@/lib/utils";
 import {
   isExportSupported,
   startExport,
@@ -62,6 +62,7 @@ import {
   trimBoundary as trimBoundaryInEdl,
   setRangeStatus as setRangeStatusInEdl,
   splitAt as splitAtInEdl,
+  roundMs,
   reRoughCut as reRoughCutInEdl,
   buildInitialEDL,
   pinTrimmedBoundary as pinTrimmedBoundaryInEdl,
@@ -78,13 +79,26 @@ import {
   type TranscriptWord,
 } from "@/lib/edl";
 import { applyAiCuts, type AiCutRun } from "@/lib/ai-cuts";
+import { refineTranscriptWords, applyManualEditGuard } from "@/lib/word-alignment";
 import { ConfirmDialog } from "@repo/ui";
 import { FeedbackButton } from "@/components/feedback-button";
 import { getPusherClient, projectChannel } from "@/lib/pusher";
-import { createPatch } from "rfc6902";
+import { useEdlAutosave } from "@/lib/edl-autosave";
 
 // A project holds at most this many stored AI Cut runs at once (ADR 0002-ai-cut-paid-rerun).
 const AI_CUT_RUN_LIMIT = 3;
+
+// How close (seconds) the playhead must be to a word edge before Cut
+// left/right snaps to it instead of cutting exactly where the playhead sits.
+// Unlike the timeline's own drag-to-trim Snap toggle (a pixel distance,
+// stylistic), this is unconditional: cutting from the raw, unsnapped
+// playhead position routinely landed a few frames before or after the word
+// the user was actually aiming at, leaving that word's own `start` just
+// outside the cut — so the transcript correctly, but misleadingly, kept
+// showing it as un-cut while the timeline showed a gap right next to it.
+// ~4 frames at 24fps; generous enough to absorb eyeballing the playhead,
+// tight enough to never jump to the wrong word.
+const PLAYHEAD_CUT_SNAP_SECONDS = 0.15;
 
 interface Project {
   id: string;
@@ -95,13 +109,16 @@ interface Project {
   transcript: Transcript | null;
   transcriptStatus: "idle" | "processing" | "ready" | "failed";
   edl: EDL | null;
+  /** Row version, ISO 8601 — the autosave's optimistic-concurrency token. */
+  updatedAt: string;
   /** Whether AI polish was requested (and paid-consented) at upload (ADR 0003). */
   aiPolishRequested: boolean;
   activeAiCutRunId: string | null;
   aiCutRuns: AiCutRun[];
+  /** Whether the word-boundary refinement pass has completed once (spec 0003). */
+  wordsAligned: boolean;
 }
 
-const AUTOSAVE_DELAY_MS = 800;
 const MIN_TRANSCRIPT_W = 300;
 const MAX_TRANSCRIPT_W = 640;
 // Open wide by default — the transcript is the primary editing surface. A
@@ -176,6 +193,10 @@ export default function EditorPage() {
   const [autoCutBusy, setAutoCutBusy] = useState(false);
   const autoChainedRef = useRef(false);
   const freshOnLoadRef = useRef(false);
+  // Word boundary refinement pass (spec 0003): fire-once-per-mount guard,
+  // independent of the auto-cut chain above — this runs for every project
+  // (fresh or returning), not just a fresh one.
+  const wordAlignRef = useRef(false);
   // ADR 0004 AC-12: from the moment the source video is reselected on a fresh
   // project until the gated auto-chain settles, the studio shows ONLY a
   // full-page loading state — no transcript panel, timeline, or rail mount
@@ -205,6 +226,15 @@ export default function EditorPage() {
   // The timeline clip the user has selected, identified by its start time
   // (segment starts are unique). null = nothing selected.
   const [selectedStart, setSelectedStart] = useState<number | null>(null);
+  // Shared cross-panel sync state (spec 0002): a time to preview (published by
+  // either panel's own hover, consumed by the other) and a shared selected
+  // time range (published by either panel's own selection gesture — transcript
+  // drag-select or timeline clip select/trim — consumed by the other). Lifted
+  // here alongside currentTime, the existing pattern this extends.
+  const [hoveredTime, setHoveredTime] = useState<number | null>(null);
+  const [selectedRange, setSelectedRange] = useState<{ start: number; end: number } | null>(
+    null
+  );
   const [playbackRate, setPlaybackRate] = useState(1);
   const [muted, setMuted] = useState(false);
   // Auto-cut aggressiveness. Drives silence + retake thresholds on the next
@@ -240,13 +270,25 @@ export default function EditorPage() {
 
   const undoStack = useRef<EDL[]>([]);
   const redoStack = useRef<EDL[]>([]);
+  // Freshness refs for the word alignment pass below: the pass can run for
+  // several seconds, so its write-time logic (the mid-pass edit guard, and
+  // the transcript it PATCHes) must read whatever the user's EDL/project
+  // state is AT THAT MOMENT, not a stale snapshot captured when the pass
+  // started.
+  const edlRef = useRef(edl);
+  useEffect(() => {
+    edlRef.current = edl;
+  }, [edl]);
+  const projectRef = useRef(project);
+  useEffect(() => {
+    projectRef.current = project;
+  }, [project]);
   // A freshly auto-generated initial EDL must NOT be persisted until the user
   // actually edits — otherwise a bad auto-build saves itself and, because the
   // load path is `data.edl ?? buildInitialEDL(...)`, can never be rebuilt.
   const hasEditedRef = useRef(false);
   const playerRef = useRef<VideoPlayerHandle>(null);
   const timelineRef = useRef<TimelineHandle>(null);
-  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Bumped by the transcription poll below when a processing project reaches
   // a terminal status — re-runs the fetch effect so the editor swaps in.
@@ -285,7 +327,7 @@ export default function EditorPage() {
         // both detect "ready" and both bump reloadNonce). Once this project's
         // EDL has been edited locally — including by the auto-cut chain, which
         // edits it the instant it fires — a later reload must not re-seed it
-        // from the server: the debounced autosave (AUTOSAVE_DELAY_MS) may not
+        // from the server: the debounced autosave (lib/edl-autosave.ts) may not
         // have persisted that edit yet, so the server's `data.edl` here can
         // still be stale/null and would silently wipe out the local cut.
         if (!hasEditedRef.current) {
@@ -354,67 +396,37 @@ export default function EditorPage() {
     return () => URL.revokeObjectURL(sourceUrl);
   }, [sourceUrl]);
 
-  const lastSavedEdlRef = useRef<EDL | null>(null);
-  useEffect(() => {
-    // Only adopt the server's EDL once on load. After that, lastSavedEdlRef
-    // is advanced by successful saves.
-    if (project?.edl && !lastSavedEdlRef.current) {
-      lastSavedEdlRef.current = project.edl;
-    }
-  }, [project?.edl]);
-
   // Debounced auto-save of EDL changes to Postgres. Only runs after a real
   // user edit — the initial auto-built EDL stays unsaved until then.
-  useEffect(() => {
-    if (!edl || !project || !hasEditedRef.current) return;
-
-    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-    saveTimeoutRef.current = setTimeout(() => {
-      setSavedAt("saving");
-      
-      const targetEdl = { ...edl, sensitivity };
-      const body: Record<string, unknown> = {};
-      
-      if (lastSavedEdlRef.current) {
-        // We have a baseline to diff against. Send a patch.
-        const patch = createPatch(lastSavedEdlRef.current, targetEdl);
-        // Only send a request if there is an actual difference.
-        if (patch.length === 0) {
-          setSavedAt("saved");
-          return;
-        }
-        body.edlPatch = patch;
-      } else {
-        // First save for a fresh project (no prior EDL) — send the whole thing.
-        body.edl = targetEdl;
-      }
-
-      fetch(`/api/projects/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      })
-        .then(async (res) => {
-          if (!res.ok) throw new Error("Failed to save");
-          lastSavedEdlRef.current = targetEdl;
-          setSavedAt("saved");
-        })
-        .catch((error) => {
-          // Leave the status on "Saving…" (it genuinely hasn't saved); the next
-          // edit re-triggers this effect and retries. The toast is the signal.
-          console.error("Failed to auto-save EDL:", error);
-          toast.error("Couldn't save your changes", {
-            description: "Your edits are safe here — we'll retry on your next edit.",
-          });
-        });
-    }, AUTOSAVE_DELAY_MS);
-
-    return () => {
-      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-    };
-  }, [edl, project, id, sensitivity]);
+  useEdlAutosave({
+    projectId: id,
+    edl,
+    sensitivity,
+    serverEdl: project?.edl ?? null,
+    serverUpdatedAt: project?.updatedAt ?? null,
+    isEnabled: () => Boolean(project) && hasEditedRef.current,
+    onSaveStateChange: setSavedAt,
+    onError: (error) => {
+      console.error("Failed to auto-save EDL:", error);
+      toast.error("Couldn't save your changes", {
+        description:
+          "We retried a few times and couldn't reach the server. Your edits are still here — we'll try again on your next edit.",
+      });
+    },
+  });
 
   const words = useMemo(() => project?.transcript?.words ?? [], [project]);
+
+  // Sorted, de-duped word edges that timeline trim drags (and cutToPlayhead,
+  // below) snap to.
+  const snapTimes = useMemo(() => {
+    const edges = new Set<number>();
+    for (const w of words) {
+      edges.add(w.start);
+      edges.add(w.end);
+    }
+    return Array.from(edges).sort((a, b) => a - b);
+  }, [words]);
 
   // Apply an edit, returning whether it was accepted. An edit that keeps
   // nothing is refused: the timeline must always retain at least one clip,
@@ -483,14 +495,14 @@ export default function EditorPage() {
   }, []);
 
   const handleCutWords = useCallback(
-    (words: TranscriptWord[]) => {
+    (selected: TranscriptWord[]) => {
       if (!edl) return;
-      if (!applyEdl(cutWordsInEdl(edl, words))) return;
-      toast(`Cut ${words.length} word${words.length === 1 ? "" : "s"}`, {
+      if (!applyEdl(cutWordsInEdl(edl, selected, words))) return;
+      toast(`Cut ${selected.length} word${selected.length === 1 ? "" : "s"}`, {
         action: { label: "Undo", onClick: () => undo() },
       });
     },
-    [edl, applyEdl, undo]
+    [edl, words, applyEdl, undo]
   );
 
   const handleRestoreSegment = useCallback(
@@ -509,7 +521,11 @@ export default function EditorPage() {
   const cutToPlayhead = useCallback(
     (side: "left" | "right") => {
       if (!edl) return;
-      const now = currentTimeRef.current;
+      let now = roundMs(currentTimeRef.current);
+      const snapped = nearestSorted(snapTimes, now);
+      if (snapped !== null && Math.abs(snapped - now) <= PLAYHEAD_CUT_SNAP_SECONDS) {
+        now = snapped;
+      }
       const seg = findSegmentAt(edl, now);
       if (!seg || seg.status === "cut") {
         toast("Nothing to trim here", {
@@ -525,14 +541,14 @@ export default function EditorPage() {
         action: { label: "Undo", onClick: () => undo() },
       });
     },
-    [edl, applyEdl, undo]
+    [edl, applyEdl, undo, snapTimes]
   );
 
   // S — razor: split the clip under the playhead into two independent clips
   // (a persistent boundary, so each half is separately cuttable / trimmable).
   const splitAtPlayhead = useCallback(() => {
     if (!edl) return;
-    const now = currentTimeRef.current;
+    const now = roundMs(currentTimeRef.current);
     const seg = findSegmentAt(edl, now);
     const EPS = 1e-3;
     if (
@@ -556,12 +572,34 @@ export default function EditorPage() {
     setSelectedStart(segment ? segment.start : null);
   }, []);
 
+  // Cross-panel sync callbacks (spec 0002): stable identities so neither
+  // panel's hover/selection effects re-fire just because the other re-rendered.
+  const handleHoverTimeChange = useCallback((seconds: number | null) => {
+    setHoveredTime(seconds);
+  }, []);
+  const handleSelectedRangeChange = useCallback(
+    (range: { start: number; end: number } | null) => {
+      setSelectedRange(range);
+    },
+    []
+  );
+
+  // AC-8: any active cross-panel selection clears the moment playback starts
+  // (play button, spacebar, or a seek that resumes playback) — all of those
+  // land here via the player's own "playing" event, the same signal isPlaying
+  // already tracks.
+  const handlePlayingChange = useCallback((playing: boolean) => {
+    setIsPlaying(playing);
+    if (playing) setSelectedRange(null);
+  }, []);
+
   // Delete the selected clip — mark its whole span as a manual cut (skipped on
   // playback). Only kept clips are deletable; no-op otherwise.
   const deleteSelected = useCallback(() => {
     if (!edl || selectedStart === null) return;
     const seg = edl.segments.find((s) => s.start === selectedStart);
     setSelectedStart(null);
+    setSelectedRange(null);
     if (!seg || seg.status !== "keep") return;
     if (!applyEdl(setRangeStatusInEdl(edl, seg.start, seg.end, "cut", "manual"))) return;
     toast("Clip deleted", { action: { label: "Undo", onClick: () => undo() } });
@@ -732,6 +770,7 @@ export default function EditorPage() {
           setShowShortcuts(false);
           setShowRetakeReview(false);
           setSelectedStart(null);
+          setSelectedRange(null);
           break;
       }
     }
@@ -979,6 +1018,77 @@ export default function EditorPage() {
     queueMicrotask(() => void runAutoChain());
   }, [project, edl, words, durationSeconds, sourceFile, runAutoChain]);
 
+  // Word boundary refinement pass (spec 0003): tightens each transcript
+  // word's start/end against the real decoded audio, once per project, in
+  // the background. Never touches the EDL directly — it only refines the
+  // word timestamps later cuts/trims/highlights read from — so a decode
+  // failure or an interrupted pass is always safe to just retry later.
+  const runWordAlignment = useCallback(async () => {
+    if (!sourceFile) return;
+    const originalWords = words;
+    const refined = await refineTranscriptWords(sourceFile, originalWords);
+    if (!refined) {
+      // Unsupported codec, decode error, or the tab closing mid-pass (AC-7):
+      // leave the project exactly as it was. `wordsAligned` stays false in
+      // the DB, so this retries on the next reselect — no flag flipped here.
+      return;
+    }
+
+    // Mid-pass edit guard: re-read the CURRENT EDL now, at write time, not
+    // the one that existed when the pass started — a manual cut/trim/restore
+    // made while refinement was running must win over this pass for whatever
+    // word it touched, or it would reintroduce the exact drift bug this pass
+    // exists to close.
+    const guardedWords = applyManualEditGuard(refined, originalWords, edlRef.current);
+
+    const currentTranscript = projectRef.current?.transcript ?? null;
+    const nextTranscript = currentTranscript
+      ? { ...currentTranscript, words: guardedWords }
+      : null;
+
+    // Update the open editor immediately (AC-3) — no reload needed.
+    setProject((prev) =>
+      prev
+        ? {
+            ...prev,
+            wordsAligned: true,
+            transcript: prev.transcript ? { ...prev.transcript, words: guardedWords } : prev.transcript,
+          }
+        : prev
+    );
+
+    if (!nextTranscript) return;
+    try {
+      await fetch(`/api/projects/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ transcript: nextTranscript, wordsAligned: true }),
+      });
+    } catch (error) {
+      // Best-effort persistence: a failed PATCH here does not flip
+      // `wordsAligned` server-side, so the pass simply retries on the next
+      // reselect (AC-4's gate is the DB flag, not any in-memory guard).
+      console.warn("Failed to persist word alignment refinement:", error);
+    }
+  }, [sourceFile, words, id]);
+
+  // Fire the refinement pass once per project (AC-1, AC-4): every project,
+  // fresh or returning, the moment its source is reselected and its
+  // transcript is ready — independent of the ADR 0004 auto-chain gate above,
+  // which only applies to a fresh project's first automatic cut.
+  useEffect(() => {
+    if (wordAlignRef.current) return;
+    if (!project || project.transcriptStatus !== "ready") return;
+    if (project.wordsAligned) return;
+    if (sourceFile === null) return;
+    if (words.length === 0) return;
+    wordAlignRef.current = true;
+    // Deferred to a microtask for the same reason as the auto-chain kickoff
+    // above (react-hooks/set-state-in-effect) — nothing here needs to race
+    // anything else, the ref guard already makes this fire at most once.
+    queueMicrotask(() => void runWordAlignment());
+  }, [project, sourceFile, words, runWordAlignment]);
+
   // Divergence check (ADR 0003 child 2): true when the user has drifted from
   // the active AI run's suggestions, i.e. re-applying the run would change the
   // current cut layout. Both the "Restore AI suggestions" affordance and its
@@ -1207,22 +1317,12 @@ export default function EditorPage() {
     if (!edl || fillerWords.length === 0) return;
     // cutEachWord, NOT cutWords: fillers are scattered, and cutWords' span
     // semantics would take every word between the first and last filler too.
-    if (!applyEdl(cutEachWord(edl, fillerWords))) return;
+    if (!applyEdl(cutEachWord(edl, fillerWords, words))) return;
     toast(`Removed ${fillerWords.length} filler word${fillerWords.length === 1 ? "" : "s"}`, {
       description: "Every “um” and “uh” is gone — undo if one carried meaning.",
       action: { label: "Undo", onClick: () => undo() },
     });
-  }, [edl, fillerWords, applyEdl, undo]);
-
-  // Sorted, de-duped word edges that timeline trim drags snap to.
-  const snapTimes = useMemo(() => {
-    const edges = new Set<number>();
-    for (const w of words) {
-      edges.add(w.start);
-      edges.add(w.end);
-    }
-    return Array.from(edges).sort((a, b) => a - b);
-  }, [words]);
+  }, [edl, words, fillerWords, applyEdl, undo]);
 
   // Live status counts derived from the EDL.
   const stats = useMemo(() => {
@@ -1517,7 +1617,7 @@ export default function EditorPage() {
                 src={sourceUrl}
                 edl={edl ?? { segments: [] }}
                 onTimeUpdate={handleTimeUpdate}
-                onPlayingChange={setIsPlaying}
+                onPlayingChange={handlePlayingChange}
                 onLoadedMetadata={handleLoadedMetadata}
                 className="max-h-full max-w-full cursor-pointer rounded-lg bg-black object-contain"
               />
@@ -1641,6 +1741,10 @@ export default function EditorPage() {
             hasDiverged={hasDivergedFromAi}
             onRestoreAiSuggestions={restoreAiSuggestions}
             lastAiCutTime={activeAiCutRun?.createdAt}
+            hoveredTime={hoveredTime}
+            onWordHover={handleHoverTimeChange}
+            selectedRange={selectedRange}
+            onSelectionRangeChange={handleSelectedRangeChange}
           />
         </div>
       </div>
@@ -1664,6 +1768,10 @@ export default function EditorPage() {
         selectedStart={selectedStart}
         onSelectSegment={handleSelectSegment}
         onDeleteSelected={deleteSelected}
+        hoveredTime={hoveredTime}
+        onHoverTimeChange={handleHoverTimeChange}
+        selectedRange={selectedRange}
+        onRangeSelect={handleSelectedRangeChange}
       />
 
       {/* Status bar */}

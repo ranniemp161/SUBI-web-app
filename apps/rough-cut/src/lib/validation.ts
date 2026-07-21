@@ -15,6 +15,7 @@ const transcriptWordSchema = z.object({
   start: z.number(),
   end: z.number(),
   confidence: z.number(),
+  aligned: z.boolean().optional(),
 });
 
 // Full transcript blob. Normally written server-side by the transcription
@@ -81,7 +82,21 @@ const jsonPatchOperationSchema = z.discriminatedUnion("op", [
 export const patchProjectSchema = z.strictObject({
   edl: edlSchema.optional(),
   edlPatch: z.array(jsonPatchOperationSchema).max(10_000).optional(),
+  /**
+   * Optimistic concurrency token: the `updatedAt` the client's EDL (and any
+   * patch diffed from it) is based on. When present, the write only lands if
+   * the row still carries that timestamp — see the route for why a patch
+   * applied to a diverged base is worse than a rejected one.
+   */
+  baseUpdatedAt: z.iso.datetime().optional(),
   transcript: transcriptSchema.optional(),
+  /**
+   * Set true once the word-boundary refinement pass (spec
+   * 0003-word-boundary-timestamp-refinement) has completed for this project,
+   * successfully or with some words falling back to their raw timestamp.
+   * Only ever sent alongside `transcript` carrying the refined words.
+   */
+  wordsAligned: z.boolean().optional(),
   durationMs: durationMsSchema.nullable().optional(),
   fileName: z.string().min(1).max(500).optional(),
   fileSize: z.number().min(0).max(100 * 1024 * 1024 * 1024).nullable().optional(),

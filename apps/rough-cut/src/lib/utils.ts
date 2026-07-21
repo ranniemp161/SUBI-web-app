@@ -33,6 +33,26 @@ export function formatDuration(ms: number): string {
 }
 
 /**
+ * Nearest value in a sorted ascending array to `target` (binary search).
+ * Shared by every place that snaps a raw time to the nearest word edge —
+ * the timeline's boundary-drag snap and the playhead-driven cut snap
+ * (cutToPlayhead) both need the same "closest edge" lookup.
+ */
+export function nearestSorted(sorted: number[], target: number): number | null {
+  if (sorted.length === 0) return null;
+  let lo = 0;
+  let hi = sorted.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (sorted[mid] < target) lo = mid + 1;
+    else hi = mid;
+  }
+  const candidate = sorted[lo];
+  const prev = lo > 0 ? sorted[lo - 1] : candidate;
+  return Math.abs(prev - target) <= Math.abs(candidate - target) ? prev : candidate;
+}
+
+/**
  * Format a date into a human-readable relative or absolute string.
  *
  * @example formatDate(new Date()) → "Just now"
