@@ -29,7 +29,6 @@ import type { ReactNode } from "react";
 import { ExportModal } from "@/components/export-modal";
 import { Toaster, toast } from "sonner";
 import FilePicker from "@/components/file-picker";
-import ProgressRing from "@/components/progress-ring";
 import VideoPlayer, {
   type VideoPlayerHandle,
   type VideoMeta,
@@ -79,6 +78,7 @@ import {
   type TranscriptWord,
 } from "@/lib/edl";
 import { applyAiCuts, type AiCutRun } from "@/lib/ai-cuts";
+import type { AiCutPhase } from "@/lib/ai-rough-cut";
 import { refineTranscriptWords, applyManualEditGuard } from "@/lib/word-alignment";
 import { ConfirmDialog } from "@repo/ui";
 import { FeedbackButton } from "@/components/feedback-button";
@@ -99,6 +99,11 @@ const AI_CUT_RUN_LIMIT = 3;
 // ~4 frames at 24fps; generous enough to absorb eyeballing the playhead,
 // tight enough to never jump to the wrong word.
 const PLAYHEAD_CUT_SNAP_SECONDS = 0.15;
+
+// Backstop only — the route's own maxDuration = 300 (api/projects/[id]/ai-cut/route.ts)
+// is the real ceiling. This exists so a killed function that doesn't cleanly
+// close its connection can't hang the UI indefinitely; 5s past the server cap.
+const AI_CUT_CLIENT_TIMEOUT_MS = 305_000;
 
 interface Project {
   id: string;
@@ -156,6 +161,86 @@ const exportSupportSnapshot = (): ExportSupport =>
 // answer on the client. No effect, no hydration mismatch.
 const exportSupportServerSnapshot = (): ExportSupport | null => null;
 const exportSupportSubscribe = () => () => { };
+
+/** One NDJSON line from the AI Cut stream: a phase update (consumed via
+ * onPhase, returns null) or the terminal payload (returned as-is). */
+function parseAiCutLine(line: string, onPhase: (phase: AiCutPhase) => void): unknown | null {
+  const trimmed = line.trim();
+  if (!trimmed) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    return null;
+  }
+  const phase = (parsed as { phase?: unknown })?.phase;
+  if (phase === "analyzing" || phase === "verifying") {
+    onPhase(phase);
+    return null;
+  }
+  return parsed;
+}
+
+/**
+ * Read the AI Cut route's NDJSON stream incrementally, surfacing each
+ * `{"phase":...}` line to `onPhase` as it arrives and returning the terminal
+ * AiCutRun/`{"error"}` payload once the stream ends. Falls back to a single
+ * buffered read (no live phase updates, still correct) if the environment
+ * doesn't expose a readable body stream.
+ */
+async function readAiCutStream(
+  response: Response,
+  onPhase: (phase: AiCutPhase) => void
+): Promise<unknown> {
+  let result: unknown = null;
+
+  if (!response.body) {
+    const text = await response.text();
+    for (const line of text.split("\n")) {
+      const parsed = parseAiCutLine(line, onPhase);
+      if (parsed !== null) result = parsed;
+    }
+    return result;
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (value) buffer += decoder.decode(value, { stream: true });
+    let newlineIndex: number;
+    while ((newlineIndex = buffer.indexOf("\n")) >= 0) {
+      const parsed = parseAiCutLine(buffer.slice(0, newlineIndex), onPhase);
+      if (parsed !== null) result = parsed;
+      buffer = buffer.slice(newlineIndex + 1);
+    }
+    if (done) break;
+  }
+  if (buffer.trim()) {
+    const parsed = parseAiCutLine(buffer, onPhase);
+    if (parsed !== null) result = parsed;
+  }
+  return result;
+}
+
+/**
+ * Best-effort re-check of a project's stored AI Cut runs — used when the
+ * request that would create one fails ambiguously (network drop, timeout),
+ * since the server may have finished and charged before the response
+ * reached the browser. Returns null on any failure; callers must treat that
+ * as "unknown," never as "confirmed no runs."
+ */
+async function fetchAiCutRunsQuietly(projectId: string): Promise<AiCutRun[] | null> {
+  try {
+    const response = await fetch(`/api/projects/${projectId}`);
+    if (!response.ok) return null;
+    const data = (await response.json()) as { aiCutRuns?: AiCutRun[] };
+    return data.aiCutRuns ?? null;
+  } catch {
+    return null;
+  }
+}
 
 export default function EditorPage() {
   const { id } = useParams<{ id: string }>();
@@ -840,6 +925,26 @@ export default function EditorPage() {
   // transcription time failed, and the only path for older projects.
   const [aiBusy, setAiBusy] = useState(false);
   const aiCutIdempotencyKey = useRef<string | null>(null);
+  // Which Gemini pass is currently running (pushed live from the route's
+  // NDJSON stream — see readAiCutStream) and whether the browser has gone
+  // offline mid-wait. Both drive the overlay's honest, non-percentage UI.
+  const [aiCutPhase, setAiCutPhase] = useState<AiCutPhase>("analyzing");
+  const [aiCutOffline, setAiCutOffline] = useState(false);
+
+  // A dead connection can otherwise sit silent for a long time before fetch
+  // itself notices — this surfaces it immediately instead of leaving the
+  // progress UI looking unchanged while nothing is actually happening.
+  useEffect(() => {
+    if (!aiBusy) return;
+    const handleOffline = () => setAiCutOffline(true);
+    const handleOnline = () => setAiCutOffline(false);
+    window.addEventListener("offline", handleOffline);
+    window.addEventListener("online", handleOnline);
+    return () => {
+      window.removeEventListener("offline", handleOffline);
+      window.removeEventListener("online", handleOnline);
+    };
+  }, [aiBusy]);
 
   // `sourceEdl` lets a caller run the AI pass against a just-built EDL that
   // isn't yet in `edl` state (the auto-chain's mechanical result). Because
@@ -851,6 +956,8 @@ export default function EditorPage() {
     const base = sourceEdl ?? edl;
     if (!base || aiBusy) return;
     setAiBusy(true);
+    setAiCutPhase("analyzing");
+    setAiCutOffline(false);
 
     if (!aiCutIdempotencyKey.current) {
       aiCutIdempotencyKey.current = crypto.randomUUID();
@@ -862,9 +969,12 @@ export default function EditorPage() {
       const response = await fetch(`/api/projects/${id}/ai-cut`, {
         method: "POST",
         headers: { "Idempotency-Key": currentKey },
+        // Backstop only — see AI_CUT_CLIENT_TIMEOUT_MS.
+        signal: AbortSignal.timeout(AI_CUT_CLIENT_TIMEOUT_MS),
       });
-      const data = await response.json().catch(() => null);
+
       if (!response.ok) {
+        const data = await response.json().catch(() => null);
         if (response.status === 402) {
           toast.error("Not enough funds", {
             id: "ai-cut",
@@ -902,8 +1012,11 @@ export default function EditorPage() {
         return;
       }
 
-      // If the Vercel Proxy heartbeat stream started successfully (200 OK) but Gemini failed 
-      // mid-stream, the error is shipped inside the JSON payload.
+      // The route streams NDJSON: `{"phase":...}` lines as Gemini works,
+      // then one terminal line — the AiCutRun or `{"error"}` — even though
+      // the HTTP status is already a 200.
+      const data = await readAiCutStream(response, setAiCutPhase);
+
       const lateError = (data as { error?: string } | null)?.error;
       if (lateError) {
         toast.error("AI cut failed", {
@@ -935,10 +1048,36 @@ export default function EditorPage() {
         `AI cut applied — ${run.ranges.length} mistake${run.ranges.length === 1 ? "" : "s"} removed`,
         { id: "ai-cut", action: { label: "Undo", onClick: () => undo() } }
       );
-    } catch {
-      toast.error("AI cut failed", {
+    } catch (error) {
+      // The connection may have dropped after the server already finished
+      // and charged for a run — re-check before assuming failure, so a flaky
+      // connection never causes a second billed run for the same transcript.
+      const knownRunIds = new Set((projectRef.current?.aiCutRuns ?? []).map((r) => r.id));
+      const reconciledRuns = await fetchAiCutRunsQuietly(id);
+      const orphanedRun = reconciledRuns?.find((r) => !knownRunIds.has(r.id));
+      if (orphanedRun) {
+        setProject((prev) =>
+          prev
+            ? { ...prev, activeAiCutRunId: orphanedRun.id, aiCutRuns: reconciledRuns! }
+            : prev
+        );
+        if (orphanedRun.ranges.length > 0 && applyEdl(applyAiCuts(base, orphanedRun, words))) {
+          setCutEvent({ kind: "ai", at: Date.now() });
+        }
+        toast.success(
+          `Reconnected — AI cut had already finished (${orphanedRun.ranges.length} mistake${orphanedRun.ranges.length === 1 ? "" : "s"} removed)`,
+          { id: "ai-cut", action: { label: "Undo", onClick: () => undo() } }
+        );
+        return;
+      }
+      const isTimeout =
+        error instanceof DOMException &&
+        (error.name === "TimeoutError" || error.name === "AbortError");
+      toast.error(isTimeout ? "AI cut timed out" : "AI cut failed", {
         id: "ai-cut",
-        description: "Check your connection and try again.",
+        description: isTimeout
+          ? "This took longer than expected. Check your connection and try again."
+          : "Check your connection and try again.",
       });
     } finally {
       aiCutIdempotencyKey.current = null;
@@ -1487,12 +1626,15 @@ export default function EditorPage() {
   // instead of an indefinite spinner, since this wait can run to a couple of
   // minutes on a long transcript.
   if (chainPending) {
+    const { title, detail } = aiCutPhaseCopy(aiCutPhase);
     return (
       <StatusScreen
         icon={<Loader2 className="h-7 w-7 motion-safe:animate-spin" />}
-        title="A.I. is doing the rough cut in the background..."
-        message="Finding false starts, stumbles & flubbed takes"
-        progress={<AutoChainProgressBar wordCount={words.length} />}
+        title={aiCutOffline ? "You're offline" : title}
+        message={
+          aiCutOffline ? "We'll keep waiting until your connection is back." : detail
+        }
+        progress={<AutoChainProgressBar />}
       />
     );
   }
@@ -1638,7 +1780,7 @@ export default function EditorPage() {
                 </button>
               )}
             </div>
-            {(aiBusy || autoCutBusy) && <AiCutOverlay wordCount={words.length} />}
+            {(aiBusy || autoCutBusy) && <AiCutOverlay phase={aiCutPhase} isOffline={aiCutOffline} />}
           </div>
 
           {/* Transport bar */}
@@ -1859,41 +2001,37 @@ export default function EditorPage() {
   );
 }
 
-/**
- * Duration-calibrated completion estimate, shared by every "AI is working"
- * loading visual in this file. Gemini gives no real progress signal — it's a
- * single call — so this is a transcript-size-calibrated guess that climbs to
- * 95% and lets the caller's own unmount (once the real work finishes) be
- * what "completes" it, rather than ever claiming 100% before it's true.
- */
-function useEstimatedProgress(wordCount: number): number {
-  const [startedAt] = useState(() => Date.now());
-  const [now, setNow] = useState(startedAt);
-  useEffect(() => {
-    const interval = setInterval(() => setNow(Date.now()), 500);
-    return () => clearInterval(interval);
-  }, []);
-  // Gemini's runtime scales with transcript length (thinking enabled, capped
-  // at 240s server-side) — roughly 40 words/s of review, floored and capped.
-  const expectedSeconds = Math.min(180, Math.max(12, 8 + wordCount / 40));
-  return Math.min(95, ((now - startedAt) / 1000 / expectedSeconds) * 100);
+/** Copy for the current phase — shared so the two loading surfaces below stay in sync. */
+function aiCutPhaseCopy(phase: AiCutPhase): { title: string; detail: string } {
+  return phase === "verifying"
+    ? {
+        title: "Double-checking a few edits…",
+        detail: "Re-reading the borderline calls in context before finalizing",
+      }
+    : {
+        title: "A.I. is doing the rough cut in the background...",
+        detail: "Finding false starts, stumbles & flubbed takes",
+      };
 }
 
 /**
- * Centered progress overlay while the AI pass runs. This overlay unmounts
- * the moment aiBusy clears.
+ * Centered progress overlay while the AI pass runs. Gemini gives no
+ * real-time percentage — the bar is deliberately indeterminate (no number
+ * claimed), and the phase/offline text is the honest signal: it comes from
+ * the route's live NDJSON stream (`readAiCutStream`), not a guess. This
+ * overlay unmounts the moment aiBusy clears.
  */
-function AiCutOverlay({ wordCount }: { wordCount: number }) {
-  const percent = useEstimatedProgress(wordCount);
+function AiCutOverlay({ phase, isOffline }: { phase: AiCutPhase; isOffline: boolean }) {
+  const { title, detail } = aiCutPhaseCopy(phase);
   return (
     <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-black/60 backdrop-blur-sm">
-      <ProgressRing percent={percent} size={96} />
+      <Loader2 className="h-10 w-10 text-white motion-safe:animate-spin" />
       <div className="text-center">
         <p className="text-sm font-semibold text-white">
-          A.I. is doing the rough cut in the background...
+          {isOffline ? "You're offline" : title}
         </p>
         <p className="mt-1 text-xs text-zinc-400">
-          Finding false starts, stumbles & flubbed takes
+          {isOffline ? "We'll keep waiting until your connection is back." : detail}
         </p>
       </div>
     </div>
@@ -1901,34 +2039,22 @@ function AiCutOverlay({ wordCount }: { wordCount: number }) {
 }
 
 /**
- * Linear progress bar for the ADR 0004 AC-12 full-page loading state (added
- * as a follow-up: a visible, steadily-advancing percentage reads as less
- * uncertain than a bare spinner on a wait that can run to a couple of
- * minutes). Same estimate as `AiCutOverlay`, same visual pattern as the
- * dashboard's per-project job-progress bar (`dashboard/page.tsx`), styled
- * for `StatusScreen`'s token palette instead of that page's raw colors.
+ * Indeterminate progress bar for the ADR 0004 AC-12 full-page loading state
+ * — reuses `.animate-indeterminate-progress` (globals.css), the same
+ * pattern already used while transcription is "processing" for the same
+ * reason: no real percentage to report. No caption of its own — the
+ * `StatusScreen` title/message at the call site already carries the live
+ * phase/offline text, driven by the same stream as `AiCutOverlay`.
  */
-function AutoChainProgressBar({ wordCount }: { wordCount: number }) {
-  const percent = useEstimatedProgress(wordCount);
-  const rounded = Math.round(percent);
+function AutoChainProgressBar() {
   return (
     <div className="w-full max-w-xs">
-      <div className="mb-1.5 flex items-center justify-between text-[11px] font-medium text-foreground/50">
-        <span>Working…</span>
-        <span className="tabular-nums font-semibold text-accent">{rounded}%</span>
-      </div>
       <div
         role="progressbar"
         aria-label="A.I. rough cut progress"
-        aria-valuenow={rounded}
-        aria-valuemin={0}
-        aria-valuemax={100}
-        className="h-1.5 w-full overflow-hidden rounded-full bg-foreground/10"
+        className="relative h-1.5 w-full overflow-hidden rounded-full bg-foreground/10"
       >
-        <div
-          className="h-full rounded-full bg-accent transition-all duration-300"
-          style={{ width: `${percent}%` }}
-        />
+        <div className="absolute inset-y-0 w-1/3 rounded-full bg-accent animate-indeterminate-progress" />
       </div>
     </div>
   );
