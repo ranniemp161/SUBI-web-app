@@ -43,6 +43,8 @@ export interface AiCutRange {
   category: AiCutCategory;
   /** Model's one-line justification — surfaced in tooltips, never load-bearing. */
   note?: string;
+  /** Model's own certainty (0-1) that this span is genuinely a mistake. */
+  modelConfidence?: number;
 }
 
 /** The shape produced by one AI Cut pass: validated ranges plus provenance. */
@@ -68,18 +70,41 @@ const aiCutRangeSchema = z.object({
   endWordIndex: z.number().int().min(0),
   category: z.enum(AI_CUT_CATEGORIES),
   note: z.string().max(500).optional(),
+  modelConfidence: z.number().min(0).max(1).optional(),
 });
 
 /** Upper bound on stored ranges — far past any real edit, guards a runaway model. */
 const MAX_AI_RANGES = 2000;
 
 /**
+ * Below this average Deepgram word confidence, a proposed cut is dropped
+ * rather than applied. A garbled ASR read can look like a stumble/retake to
+ * Gemini even when the speaker said nothing wrong — this enforces the same
+ * "if unsure, keep" fallback the model's own rubric states, using a signal
+ * (ASR certainty about what was said) the model never sees.
+ */
+const MIN_CUT_CONFIDENCE = 0.5;
+
+/**
+ * Below this self-rated confidence (the "modelConfidence" field Gemini
+ * returns per cut), a proposed cut is dropped. A different signal from
+ * MIN_CUT_CONFIDENCE: that one catches the ASR mishearing what was said,
+ * this one catches Gemini hearing correctly but misjudging intent on a
+ * genuinely ambiguous span. A range missing the field entirely still
+ * passes — fail toward keeping, same as an absent ASR confidence would.
+ */
+export const MIN_MODEL_CONFIDENCE = 0.5;
+
+/**
  * Turn raw model output (untrusted JSON) into ranges that are safe to store
  * and apply: drop malformed entries, clamp ends to the word count, drop
- * inverted or out-of-range spans, then sort and coalesce overlaps so counts
- * stay honest. Never throws — worthless input just yields [].
+ * inverted or out-of-range spans, drop spans the ASR itself wasn't confident
+ * about, drop spans Gemini itself wasn't confident about, then sort and
+ * coalesce overlaps so counts stay honest. Never throws — worthless input
+ * just yields [].
  */
-export function sanitizeAiRanges(candidates: unknown, wordCount: number): AiCutRange[] {
+export function sanitizeAiRanges(candidates: unknown, words: TranscriptWord[]): AiCutRange[] {
+  const wordCount = words.length;
   if (!Array.isArray(candidates) || wordCount <= 0) return [];
 
   const valid: AiCutRange[] = [];
@@ -107,7 +132,57 @@ export function sanitizeAiRanges(candidates: unknown, wordCount: number): AiCutR
     }
   }
 
-  return merged.slice(0, MAX_AI_RANGES);
+  const confident = merged.filter((range) => {
+    let sum = 0;
+    let count = 0;
+    for (let i = range.startWordIndex; i <= range.endWordIndex; i++) {
+      sum += words[i].confidence;
+      count++;
+    }
+    return count > 0 && sum / count >= MIN_CUT_CONFIDENCE;
+  });
+
+  const modelConfident = confident.filter(
+    (range) => range.modelConfidence === undefined || range.modelConfidence >= MIN_MODEL_CONFIDENCE
+  );
+
+  return modelConfident.slice(0, MAX_AI_RANGES);
+}
+
+/**
+ * Pick ranges worth a second look by the self-verification pass
+ * (`verifyBorderlineCuts`, `ai-rough-cut.ts`): the model rated them above
+ * the drop floor but below `maxConfidence` — confident enough to survive
+ * `sanitizeAiRanges`, not confident enough to trust outright. Ranges with no
+ * `modelConfidence` at all are skipped — there's no score to call borderline.
+ * `limit` bounds how many get sent for verification in one run.
+ */
+export function selectBorderlineRanges(
+  ranges: AiCutRange[],
+  maxConfidence: number,
+  limit: number
+): AiCutRange[] {
+  return ranges
+    .filter(
+      (range) =>
+        range.modelConfidence !== undefined &&
+        range.modelConfidence >= MIN_MODEL_CONFIDENCE &&
+        range.modelConfidence < maxConfidence
+    )
+    .slice(0, limit);
+}
+
+/**
+ * Apply the verification pass's verdicts: drop any range the model flagged
+ * to restore, keep everything else untouched. `startWordIndex` is a safe
+ * key here — ranges are already sorted/coalesced by `sanitizeAiRanges`, so
+ * it's unique per range.
+ */
+export function applyVerifyVerdicts(
+  ranges: AiCutRange[],
+  restoreStartIndices: Set<number>
+): AiCutRange[] {
+  return ranges.filter((range) => !restoreStartIndices.has(range.startWordIndex));
 }
 
 /**

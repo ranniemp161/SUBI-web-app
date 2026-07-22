@@ -85,13 +85,20 @@ npm -w @repo/rough-cut typecheck
   no-op until `SENTRY_DSN`/`NEXT_PUBLIC_SENTRY_DSN` are set. When set, `instrumentation-client.ts`
   also turns on Sentry's feedback widget (`Sentry.feedbackIntegration`), a floating
   "Request a Feature" button letting a signed-in user send free-text feedback straight to Sentry.
-- **AI Cut runs on the Edge runtime and streams its response.** `api/projects/[id]/ai-cut/route.ts`
-  sets `export const runtime = "edge"` and returns a `ReadableStream` that emits a space-character
-  heartbeat every 5 seconds while Gemini thinks, so Vercel's proxy (10s limit on Hobby) doesn't
-  kill the connection before the up-to-300s `maxDuration` completes. Because the HTTP 200 is sent
+- **AI Cut runs on the Edge runtime and streams NDJSON, not a single JSON body.**
+  `api/projects/[id]/ai-cut/route.ts` sets `export const runtime = "edge"` and returns a
+  `ReadableStream` of newline-delimited JSON lines: `{"phase":"analyzing"|"verifying"}` lines
+  (also the heartbeat, re-sent every 5s and immediately on each real phase change, keeping Vercel's
+  proxy — 10s limit on Hobby — from killing the connection before the up-to-300s `maxDuration`
+  completes) and one terminal line — the `AiCutRun` or `{"error"}`. Pusher (used elsewhere for
+  `transcript_status`) was considered for the phase signal and rejected: its server SDK needs
+  Node's `crypto`/`http`, which aren't available on this edge route. Because the HTTP 200 is sent
   before the real result is known, a failure that happens after the stream opens (transcript too
-  long, Gemini error) is reported as `{ error }` inside the 200 JSON body, not an HTTP error status —
-  callers must check the parsed body for an `error` field even on a 200.
+  long, Gemini error) is reported as `{ error }` inside the terminal line, not an HTTP error status.
+  Callers must read the stream incrementally (see the client's `readAiCutStream`,
+  `dashboard/[id]/page.tsx`) and treat the first non-phase line as the result — `res.json()` no
+  longer works against a 200 response from this route (`ai-cut/route.test.ts`'s `readTerminalJson`
+  shows the read-the-last-line pattern for tests that don't need live phase updates).
 - Tests are colocated `*.test.ts(x)` next to source, run with Vitest.
 - **ESLint & Mocking**: When mocking components with `forwardRef` in tests, avoid anonymous arrow functions. Use named function expressions (e.g. `forwardRef(function VideoPlayerStub() {})`) to satisfy `react/display-name`. Do not declare unused arguments in callback parameters (e.g. `props`, `ref`, `url`, `init`) to satisfy `@typescript-eslint/no-unused-vars`.
 - **Dropdowns/menus**: build on Radix (`@radix-ui/react-select` for a value picker, `@radix-ui/react-dropdown-menu` for an action menu), never hand-roll outside-click/Escape/focus logic — the same precedent `packages/ui/src/confirm-dialog.tsx` set for dialogs. The export cluster's old `StyledSelect`/`ExportFormatMenu` Radix pair was consolidated into `src/components/export-modal.tsx` (a plain custom dialog, not Radix); still use Radix for any new standalone dropdown or menu control.

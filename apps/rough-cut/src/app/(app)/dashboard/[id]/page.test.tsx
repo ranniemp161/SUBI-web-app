@@ -127,10 +127,6 @@ vi.mock("@/components/timeline-bar", () => ({
   }),
 }));
 
-vi.mock("@/components/progress-ring", () => ({
-  default: () => <div data-testid="progress-ring-stub" />,
-}));
-
 vi.mock("@/lib/env", () => ({
   WALLET_URL: "https://wallet.test",
   WALLET_DASHBOARD_URL: "https://wallet.test/dashboard",
@@ -182,16 +178,33 @@ const READY_PROJECT = {
   aiCutRuns: [] as AiCutRun[],
 };
 
-function jsonResponse(body: unknown, init?: { ok?: boolean; status?: number }) {
+/** Shape shared by every fake fetch response in this file — annotated explicitly
+ * so branches with different optional fields (json/text/body) don't trip
+ * TypeScript's structural inference into a circular "implicit any" error. */
+interface MockResponse {
+  ok: boolean;
+  status: number;
+  headers: { get: (name: string) => string | null };
+  json?: () => Promise<unknown>;
+  text?: () => Promise<string>;
+  body?: ReadableStream<Uint8Array>;
+}
+
+function jsonResponse(body: unknown, init?: { ok?: boolean; status?: number }): MockResponse {
   return {
     ok: init?.ok ?? true,
     status: init?.status ?? 200,
     headers: { get: () => "application/json" },
     json: async () => body,
+    // No `.body` stream on this mock — readAiCutStream falls back to text(),
+    // parsing this as a single terminal NDJSON line (no phase updates, still
+    // the correct final result). Real ai-cut-phase assertions use
+    // streamResponse below instead.
+    text: async () => JSON.stringify(body),
   };
 }
 
-function notFoundResponse() {
+function notFoundResponse(): MockResponse {
   return { ok: false, status: 404, headers: { get: () => "application/json" }, json: async () => ({}) };
 }
 
@@ -569,7 +582,7 @@ describe("EditorPage — reselect-gated processing (ADR 0004 child 2)", () => {
     expect(screen.getByTestId("transcript-panel-stub")).toBeVisible();
   });
 
-  it("shows a linear progress bar on the full-page loading state, and it's gone once the editor mounts (progress bar follow-up)", async () => {
+  it("shows an indeterminate progress bar (no fake percentage) on the full-page loading state, gone once the editor mounts", async () => {
     let resolveAiCut!: (v: unknown) => void;
     const aiCutResponse = new Promise((resolve) => {
       resolveAiCut = resolve;
@@ -591,10 +604,9 @@ describe("EditorPage — reselect-gated processing (ADR 0004 child 2)", () => {
 
     const bar = screen.getByRole("progressbar", { name: "A.I. rough cut progress" });
     expect(bar).toBeVisible();
-    expect(bar).toHaveAttribute("aria-valuemin", "0");
-    expect(bar).toHaveAttribute("aria-valuemax", "100");
-    // A percentage readout accompanies the bar (ADHD-friendly: visible forward motion, not just a spinner).
-    expect(screen.getByText(/^\d+%$/)).toBeVisible();
+    // Indeterminate: no percentage is ever claimed, unlike the old fake bar.
+    expect(bar).not.toHaveAttribute("aria-valuenow");
+    expect(screen.queryByText(/^\d+%$/)).toBeNull();
 
     resolveAiCut(
       jsonResponse({
@@ -608,6 +620,124 @@ describe("EditorPage — reselect-gated processing (ADR 0004 child 2)", () => {
 
     await screen.findByTestId("timeline-bar-stub");
     expect(screen.queryByRole("progressbar", { name: "A.I. rough cut progress" })).toBeNull();
+  });
+
+  it("streams real phase updates from the route instead of guessing (verifying → the double-check pass copy)", async () => {
+    let enqueueLine!: (line: unknown) => void;
+    let closeStream!: () => void;
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        enqueueLine = (line: unknown) => controller.enqueue(encoder.encode(`${JSON.stringify(line)}\n`));
+        closeStream = () => controller.close();
+      },
+    });
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/projects/proj-1") {
+        return jsonResponse({ ...READY_PROJECT, aiPolishRequested: true });
+      }
+      if (url.endsWith("/ai-cut") && init?.method === "POST") {
+        return { ok: true, status: 200, headers: { get: () => "application/json" }, body };
+      }
+      return jsonResponse({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<EditorPage />);
+
+    await userEvent.click(await screen.findByRole("button", { name: "pick-file" }));
+    await screen.findByText("A.I. is doing the rough cut in the background...");
+
+    enqueueLine({ phase: "verifying" });
+    await screen.findByText("Double-checking a few edits…");
+
+    enqueueLine({ id: "run-auto", runNumber: 1, ranges: [], model: "gemini-2.5-flash", createdAt: "now" });
+    closeStream();
+
+    await screen.findByTestId("timeline-bar-stub");
+  });
+
+  it("shows a distinct offline message during the wait, and clears it once back online", async () => {
+    let resolveAiCut!: (v: unknown) => void;
+    const aiCutResponse = new Promise((resolve) => {
+      resolveAiCut = resolve;
+    });
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/projects/proj-1") {
+        return jsonResponse({ ...READY_PROJECT, aiPolishRequested: true });
+      }
+      if (url.endsWith("/ai-cut") && init?.method === "POST") {
+        return aiCutResponse;
+      }
+      return jsonResponse({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<EditorPage />);
+
+    await userEvent.click(await screen.findByRole("button", { name: "pick-file" }));
+    await screen.findByText("A.I. is doing the rough cut in the background...");
+
+    fireEvent(window, new Event("offline"));
+    await screen.findByText("You're offline");
+
+    fireEvent(window, new Event("online"));
+    await screen.findByText("A.I. is doing the rough cut in the background...");
+
+    resolveAiCut(
+      jsonResponse({
+        id: "run-auto",
+        runNumber: 1,
+        ranges: [],
+        model: "gemini-2.5-flash",
+        createdAt: "now",
+      })
+    );
+    await screen.findByTestId("timeline-bar-stub");
+  });
+
+  it("recovers from a dropped connection by finding the run that already completed, instead of a failure toast that could invite a double-billed retry", async () => {
+    let projectGetCalls = 0;
+    const orphanedRun: AiCutRun = {
+      id: "run-orphaned",
+      runNumber: 1,
+      ranges: [],
+      model: "gemini-2.5-flash",
+      createdAt: "now",
+    };
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/projects/proj-1") {
+        projectGetCalls++;
+        if (projectGetCalls === 1) {
+          return jsonResponse({ ...READY_PROJECT, aiPolishRequested: true });
+        }
+        // Reconciliation fetch after the dropped connection: the run
+        // completed server-side even though the browser never got a response.
+        return jsonResponse({
+          ...READY_PROJECT,
+          aiPolishRequested: true,
+          aiCutRuns: [orphanedRun],
+        });
+      }
+      if (url.endsWith("/ai-cut") && init?.method === "POST") {
+        throw new TypeError("Failed to fetch");
+      }
+      return jsonResponse({});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<EditorPage />);
+
+    await userEvent.click(await screen.findByRole("button", { name: "pick-file" }));
+
+    await screen.findByTestId("timeline-bar-stub");
+    await waitFor(() =>
+      expect(toastMock.success).toHaveBeenCalledWith(
+        expect.stringContaining("Reconnected"),
+        expect.objectContaining({ id: "ai-cut" })
+      )
+    );
+    expect(toastMock.error).not.toHaveBeenCalledWith(
+      "AI cut failed",
+      expect.anything()
+    );
   });
 
   it("swaps to the editor with the mechanical result once the chain settles via an AI failure (AC-12, AC-10)", async () => {
