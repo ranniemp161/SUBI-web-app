@@ -1,0 +1,115 @@
+@import "tailwindcss";
+@import "@repo/ui/styles/theme.css";
+
+/* App-specific theme extension matching Founder's Frame style & typography */
+@theme inline {
+  --color-surface: #0c0c0e;
+  --color-surface-alt: #161619;
+  --color-brand: #ffff00; /* bright yellow accent */
+  --color-brand-muted: rgba(255, 255, 0, 0.2);
+
+  --font-sans: var(--font-dm-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-heading: var(--font-space-grotesk), ui-sans-serif, system-ui, sans-serif;
+
+  --animate-float: float 6s ease-in-out infinite;
+  --animate-float-delayed: float 7s ease-in-out 2s infinite;
+  --animate-float-slow: float 8s ease-in-out 1s infinite;
+  --animate-breathe: breathe 10s ease-in-out infinite;
+  --animate-liquid: liquid-gradient 3s ease infinite;
+
+  @keyframes float {
+    0%, 100% { transform: translateY(0px) rotate(0deg); }
+    50% { transform: translateY(-20px) rotate(5deg); }
+  }
+
+  @keyframes breathe {
+    0%, 100% { opacity: 0.1; }
+    50% { opacity: 0.4; }
+  }
+
+  @keyframes liquid-gradient {
+    0% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+  }
+}
+
+body {
+  background-color: #0c0c0e;
+  color: #f3f4f6;
+  font-family: var(--font-sans);
+  overflow-x: hidden;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-heading);
+}
+
+.font-heading {
+  font-family: var(--font-heading);
+}
+
+.glass-panel {
+  background: rgba(255, 255, 255, 0.02);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.glow-panel {
+  background: rgba(255, 255, 255, 0.02);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--color-brand);
+  box-shadow: 0 0 40px -10px var(--color-brand-muted);
+}
+
+.bg-grid-pattern {
+  background-size: 40px 40px;
+  background-image: linear-gradient(to right, rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+                    linear-gradient(to bottom, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+}
+
+/* Signature Animated Button */
+.btn-animated {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75rem;
+  background-color: transparent;
+  color: #ffff00;
+  font-weight: 700;
+  font-family: var(--font-heading);
+  font-size: 1.25rem;
+  padding: 0.75rem 1.5rem;
+  border-radius: 9999px;
+  text-decoration: none;
+  transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  cursor: pointer;
+  border: 1px solid rgba(255, 255, 0, 0.3);
+  box-shadow: 0 0 20px rgba(255, 255, 0, 0.1);
+}
+
+.btn-animated::before {
+  content: '→';
+  font-weight: 900;
+  transition: transform 0.3s ease;
+}
+
+.btn-animated::after {
+  content: '←';
+  font-weight: 900;
+  transition: transform 0.3s ease;
+}
+
+.btn-animated:hover {
+  transform: scale(1.08);
+  color: #38bdf8;
+  border-color: rgba(56, 189, 248, 0.5);
+  box-shadow: 0 0 25px rgba(56, 189, 248, 0.25);
+}
+
+.btn-animated:hover::before {
+  transform: translateX(4px);
+}
+
+.btn-animated:hover::after {
+  transform: translateX(-4px);
+}
