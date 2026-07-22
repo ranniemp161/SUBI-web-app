@@ -21,14 +21,12 @@ export default function Navbar() {
 
         {/* CTA BUTTON */}
         <div className="flex items-center gap-4">
-          <a
-            href="https://thefoundersframe.com/form/"
-            target="_blank"
-            rel="noopener noreferrer"
+          <Link
+            href="/form"
             className="btn-animated text-sm py-2 px-5 !text-xs sm:!text-sm"
           >
             Schedule a call
-          </a>
+          </Link>
         </div>
       </div>
     </header>

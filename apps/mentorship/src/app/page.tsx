@@ -1,3 +1,4 @@
+import Link from "next/link";
 import WistiaPlayer from "@/components/WistiaPlayer";
 import SpotlightCard from "@/components/SpotlightCard";
 import { 
@@ -41,14 +42,12 @@ export default function MentorshipPage() {
 
         {/* CTA BUTTON */}
         <div className="my-8">
-          <a
-            href="https://thefoundersframe.com/form/"
-            target="_blank"
-            rel="noopener noreferrer"
+          <Link
+            href="/form"
             className="btn-animated text-lg px-8 py-4 shadow-xl"
           >
             Schedule a call
-          </a>
+          </Link>
         </div>
 
         {/* TRUST COPY BLOCK */}
@@ -91,14 +90,12 @@ export default function MentorshipPage() {
           </div>
 
           <div>
-            <a
-              href="https://thefoundersframe.com/form/"
-              target="_blank"
-              rel="noopener noreferrer"
+            <Link
+              href="/form"
               className="btn-animated text-base px-6 py-3"
             >
               Schedule a call
-            </a>
+            </Link>
           </div>
         </div>
       </section>
@@ -234,14 +231,12 @@ export default function MentorshipPage() {
             Book an exploratory call to see if your business qualifies for 1-on-1 founder mentorship.
           </p>
           <div className="pt-4">
-            <a
-              href="https://thefoundersframe.com/form/"
-              target="_blank"
-              rel="noopener noreferrer"
+            <Link
+              href="/form"
               className="btn-animated text-xl px-10 py-5 shadow-[0_0_40px_rgba(255,255,0,0.2)]"
             >
               Schedule a call <ArrowRight className="w-5 h-5 hidden" />
-            </a>
+            </Link>
           </div>
         </div>
       </section>

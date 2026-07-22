@@ -32,14 +32,12 @@ export default function Footer() {
           <Link href="/terms" className="hover:text-yellow-400 transition-colors">
             Terms & Conditions
           </Link>
-          <a
-            href="https://thefoundersframe.com/form/"
-            target="_blank"
-            rel="noopener noreferrer"
+          <Link
+            href="/form"
             className="hover:text-yellow-400 transition-colors font-medium text-yellow-400"
           >
             Apply Now →
-          </a>
+          </Link>
         </div>
 
         <div className="text-xs text-gray-500 text-center md:text-right">
