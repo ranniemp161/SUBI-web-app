@@ -1,12 +1,18 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { DM_Sans, Space_Grotesk } from "next/font/google";
 import "./globals.css";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 
-const inter = Inter({
+const dmSans = DM_Sans({
+  variable: "--font-dm-sans",
   subsets: ["latin"],
-  variable: "--font-inter",
+  display: "swap",
+});
+
+const spaceGrotesk = Space_Grotesk({
+  variable: "--font-space-grotesk",
+  subsets: ["latin"],
   display: "swap",
 });
 
@@ -28,8 +34,16 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${inter.variable} scroll-smooth`}>
-      <body className="bg-[#0c0c0e] text-gray-100 antialiased min-h-screen flex flex-col justify-between selection:bg-yellow-400 selection:text-black">
+    <html 
+      lang="en" 
+      suppressHydrationWarning
+      className={`${dmSans.variable} ${spaceGrotesk.variable} h-full antialiased dark scroll-smooth`}
+    >
+      <body className="min-h-full flex flex-col font-sans relative selection:bg-yellow-400 selection:text-black" suppressHydrationWarning>
+        {/* Subtle breathing grid background */}
+        <div className="fixed inset-0 pointer-events-none z-[-10] flex items-center justify-center overflow-hidden">
+          <div className="absolute inset-0 bg-grid-pattern opacity-10 animate-breathe mix-blend-overlay [mask-image:radial-gradient(ellipse_at_center,black,transparent_70%)]" />
+        </div>
         <Navbar />
         <main className="flex-grow pt-24 pb-16">
           {children}

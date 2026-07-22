@@ -1,12 +1,15 @@
 @import "tailwindcss";
 @import "@repo/ui/styles/theme.css";
 
-/* App-specific theme extension matching Founder's Frame style */
+/* App-specific theme extension matching Founder's Frame style & typography */
 @theme inline {
   --color-surface: #0c0c0e;
   --color-surface-alt: #161619;
   --color-brand: #ffff00; /* bright yellow accent */
   --color-brand-muted: rgba(255, 255, 0, 0.2);
+
+  --font-sans: var(--font-dm-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-heading: var(--font-space-grotesk), ui-sans-serif, system-ui, sans-serif;
 
   --animate-float: float 6s ease-in-out infinite;
   --animate-float-delayed: float 7s ease-in-out 2s infinite;
@@ -34,8 +37,16 @@
 body {
   background-color: #0c0c0e;
   color: #f3f4f6;
-  font-family: var(--font-inter), system-ui, -apple-system, sans-serif;
+  font-family: var(--font-sans);
   overflow-x: hidden;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-heading);
+}
+
+.font-heading {
+  font-family: var(--font-heading);
 }
 
 .glass-panel {
@@ -65,6 +76,7 @@ body {
   background-color: transparent;
   color: #ffff00;
   font-weight: 700;
+  font-family: var(--font-heading);
   font-size: 1.25rem;
   padding: 0.75rem 1.5rem;
   border-radius: 9999px;
