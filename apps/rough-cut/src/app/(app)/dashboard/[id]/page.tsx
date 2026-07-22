@@ -930,6 +930,13 @@ export default function EditorPage() {
   // offline mid-wait. Both drive the overlay's honest, non-percentage UI.
   const [aiCutPhase, setAiCutPhase] = useState<AiCutPhase>("analyzing");
   const [aiCutOffline, setAiCutOffline] = useState(false);
+  // Fake-but-monotonic progress and rotating micro-copy for the two loading
+  // surfaces below (AiCutOverlay + the chainPending StatusScreen) — spans
+  // both the on-demand pass (aiBusy/autoCutBusy) and the auto-chain wait
+  // (chainPending), since all three cover the same underlying Gemini call.
+  const aiCutActive = aiBusy || autoCutBusy || chainPending;
+  const aiCutProgress = useFakeProgress(aiCutActive, aiCutPhase);
+  const aiCutMessage = useAiCutMessage(aiCutPhase, aiCutActive);
 
   // A dead connection can otherwise sit silent for a long time before fetch
   // itself notices — this surfaces it immediately instead of leaving the
@@ -1626,16 +1633,16 @@ export default function EditorPage() {
   // instead of an indefinite spinner, since this wait can run to a couple of
   // minutes on a long transcript.
   if (chainPending) {
-    const { title, detail } = aiCutPhaseCopy(aiCutPhase);
+    const { title } = aiCutPhaseCopy(aiCutPhase);
     return (
       <StatusScreen
         icon={<AiCutBadge isOffline={aiCutOffline} />}
         bareIcon
         title={aiCutOffline ? "You're offline" : title}
         message={
-          aiCutOffline ? "We'll keep waiting until your connection is back." : detail
+          aiCutOffline ? "We'll keep waiting until your connection is back." : aiCutMessage
         }
-        progress={<AutoChainProgressBar isOffline={aiCutOffline} />}
+        progress={<AutoChainProgressBar isOffline={aiCutOffline} progress={aiCutProgress} />}
       />
     );
   }
@@ -1781,7 +1788,14 @@ export default function EditorPage() {
                 </button>
               )}
             </div>
-            {(aiBusy || autoCutBusy) && <AiCutOverlay phase={aiCutPhase} isOffline={aiCutOffline} />}
+            {(aiBusy || autoCutBusy) && (
+              <AiCutOverlay
+                phase={aiCutPhase}
+                isOffline={aiCutOffline}
+                progress={aiCutProgress}
+                message={aiCutMessage}
+              />
+            )}
           </div>
 
           {/* Transport bar */}
@@ -2002,17 +2016,84 @@ export default function EditorPage() {
   );
 }
 
-/** Copy for the current phase — shared so the two loading surfaces below stay in sync. */
-function aiCutPhaseCopy(phase: AiCutPhase): { title: string; detail: string } {
+/** Title for the current phase — shared so the two loading surfaces below stay in sync. */
+function aiCutPhaseCopy(phase: AiCutPhase): { title: string } {
   return phase === "verifying"
-    ? {
-        title: "Double-checking a few edits…",
-        detail: "Re-reading the borderline calls in context before finalizing",
-      }
-    : {
-        title: "A.I. is doing the rough cut in the background...",
-        detail: "Finding false starts, stumbles & flubbed takes",
-      };
+    ? { title: "Double-checking a few edits…" }
+    : { title: "A.I. is doing the rough cut in the background..." };
+}
+
+// Rotating micro-copy under the title — cycles every few seconds so a wait that
+// can run to a couple of minutes visibly keeps moving instead of sitting on one
+// static line. Purely cosmetic (no real sub-progress signal exists mid-phase),
+// so it never claims specifics the model can't back up.
+const ANALYZING_MESSAGES = [
+  "Finding false starts, stumbles & flubbed takes",
+  "Scanning for dead air and long pauses",
+  "Spotting repeated takes",
+  "Weighing pacing and flow",
+  "Cross-checking the borderline cuts",
+];
+const VERIFYING_MESSAGES = [
+  "Re-reading the borderline calls in context",
+  "Double-checking edge cases before finalizing",
+  "Making sure nothing important got cut",
+];
+const AI_CUT_MESSAGE_INTERVAL_MS = 3200;
+
+function useAiCutMessage(phase: AiCutPhase, active: boolean): string {
+  const messages = phase === "verifying" ? VERIFYING_MESSAGES : ANALYZING_MESSAGES;
+  const [index, setIndex] = useState(0);
+  useEffect(() => {
+    if (!active) return;
+    const id = setInterval(
+      () => setIndex((i) => (i + 1) % messages.length),
+      AI_CUT_MESSAGE_INTERVAL_MS
+    );
+    return () => clearInterval(id);
+  }, [active, phase, messages]);
+  // Not reset to 0 on each run — cosmetic cycling only, so picking up wherever
+  // the last run left off (mod the current phase's message count) is fine.
+  return messages[index % messages.length];
+}
+
+// Fake-but-honest progress: Gemini gives no real percentage, so this is pure
+// motion — an asymptotic curve that climbs fast at first and creeps toward a
+// cap it never quite reaches, rather than an indeterminate loop that looks
+// identical whether 5 seconds or 5 minutes have passed. `verifying` raises the
+// cap (it only starts once analysis is mostly done) and progress never drops,
+// even if the cap changes mid-run.
+function useFakeProgress(active: boolean, phase: AiCutPhase): number {
+  const [progress, setProgress] = useState(0);
+  const startRef = useRef<number | null>(null);
+
+  // Separate from the tick effect below so a mid-run phase change (analyzing
+  // -> verifying) doesn't re-fire this and snap progress back to 0 — only a
+  // fresh run (active going false -> true) should reset the clock.
+  useEffect(() => {
+    if (!active) {
+      startRef.current = null;
+      return;
+    }
+    startRef.current = Date.now();
+    const id = setTimeout(() => setProgress(0), 0);
+    return () => clearTimeout(id);
+  }, [active]);
+
+  useEffect(() => {
+    if (!active) return;
+    const cap = phase === "verifying" ? 98 : 88;
+    const id = setInterval(() => {
+      const start = startRef.current;
+      if (start === null) return;
+      const elapsedSec = (Date.now() - start) / 1000;
+      const target = cap * (1 - Math.exp(-elapsedSec / 25));
+      setProgress((prev) => Math.max(prev, target));
+    }, 400);
+    return () => clearInterval(id);
+  }, [active, phase]);
+
+  return progress;
 }
 
 /**
@@ -2056,13 +2137,24 @@ function AiCutBadge({ isOffline }: { isOffline: boolean }) {
 
 /**
  * Centered progress overlay while the AI pass runs. Gemini gives no
- * real-time percentage — motion communicates progress instead of a number,
- * and the phase/offline text is the honest signal: it comes from the
- * route's live NDJSON stream (`readAiCutStream`), not a guess. This overlay
- * unmounts the moment aiBusy clears.
+ * real-time percentage — motion (the fill bar) and rotating micro-copy
+ * communicate that work is progressing, while the phase/offline text stays
+ * the honest signal: it comes from the route's live NDJSON stream
+ * (`readAiCutStream`), not a guess. This overlay unmounts the moment aiBusy
+ * clears.
  */
-function AiCutOverlay({ phase, isOffline }: { phase: AiCutPhase; isOffline: boolean }) {
-  const { title, detail } = aiCutPhaseCopy(phase);
+function AiCutOverlay({
+  phase,
+  isOffline,
+  progress,
+  message,
+}: {
+  phase: AiCutPhase;
+  isOffline: boolean;
+  progress: number;
+  message: string;
+}) {
+  const { title } = aiCutPhaseCopy(phase);
   return (
     <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/70 backdrop-blur-sm">
       <div className="glass-panel flex flex-col items-center gap-4 rounded-2xl px-10 py-9 shadow-[0_0_60px_rgba(255,252,0,0.06)]">
@@ -2072,37 +2164,50 @@ function AiCutOverlay({ phase, isOffline }: { phase: AiCutPhase; isOffline: bool
             {isOffline ? "You're offline" : title}
           </p>
           <p className="mt-1 text-xs text-zinc-400">
-            {isOffline ? "We'll keep waiting until your connection is back." : detail}
+            {isOffline ? "We'll keep waiting until your connection is back." : message}
           </p>
         </div>
+        <AutoChainProgressBar isOffline={isOffline} progress={progress} />
       </div>
     </div>
   );
 }
 
 /**
- * Indeterminate progress bar for the ADR 0004 AC-12 full-page loading state —
- * a continuous brand-yellow shimmer (`animate-liquid`, the same gradient
- * treatment as marketing's CTA buttons) rather than a sliding block, so it
- * still reads as "alive" without ever claiming a percentage. No caption of
- * its own — the `StatusScreen` title/message at the call site already
- * carries the live phase/offline text, driven by the same stream as
- * `AiCutOverlay`.
+ * Progress bar for the ADR 0004 AC-12 full-page loading state (and the
+ * in-editor `AiCutOverlay`) — fills to a fake-but-monotonic percentage
+ * (`useFakeProgress`) rather than looping indeterminately, so a wait that can
+ * run a couple of minutes visibly keeps creeping forward. The filled portion
+ * still carries the brand-yellow shimmer (`animate-liquid`) so it reads as
+ * "alive," not just a static bar. No caption of its own — the `StatusScreen`
+ * title/message or `AiCutOverlay`'s rotating line at the call site already
+ * carries the live phase/offline text.
  */
-function AutoChainProgressBar({ isOffline }: { isOffline: boolean }) {
+function AutoChainProgressBar({
+  isOffline,
+  progress,
+}: {
+  isOffline: boolean;
+  progress: number;
+}) {
+  const pct = Math.min(100, Math.max(0, progress));
   return (
     <div className="w-full max-w-xs">
       <div
         role="progressbar"
+        aria-valuenow={Math.round(pct)}
+        aria-valuemin={0}
+        aria-valuemax={100}
         aria-label="A.I. rough cut progress"
         className="relative h-2 w-full overflow-hidden rounded-full bg-white/5 ring-1 ring-[#fffc00]/10"
       >
         <div
           className={
             isOffline
-              ? "absolute inset-0 rounded-full bg-white/15"
-              : "absolute inset-0 rounded-full bg-gradient-to-r from-[#fffc00] via-yellow-400 to-[#fffc00] bg-[length:200%_200%] motion-safe:animate-liquid"
+              ? "absolute inset-y-0 left-0 rounded-full bg-white/15 transition-[width] duration-700 ease-out"
+              : "absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-[#fffc00] via-yellow-400 to-[#fffc00] bg-[length:200%_200%] motion-safe:animate-liquid transition-[width] duration-700 ease-out"
           }
+          style={{ width: `${Math.max(4, pct)}%` }}
         />
       </div>
     </div>
