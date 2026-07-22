@@ -1629,12 +1629,13 @@ export default function EditorPage() {
     const { title, detail } = aiCutPhaseCopy(aiCutPhase);
     return (
       <StatusScreen
-        icon={<Loader2 className="h-7 w-7 motion-safe:animate-spin" />}
+        icon={<AiCutBadge isOffline={aiCutOffline} />}
+        bareIcon
         title={aiCutOffline ? "You're offline" : title}
         message={
           aiCutOffline ? "We'll keep waiting until your connection is back." : detail
         }
-        progress={<AutoChainProgressBar />}
+        progress={<AutoChainProgressBar isOffline={aiCutOffline} />}
       />
     );
   }
@@ -2015,46 +2016,94 @@ function aiCutPhaseCopy(phase: AiCutPhase): { title: string; detail: string } {
 }
 
 /**
+ * The AI Cut loading badge: a slowly rotating brand-yellow sweep ring around
+ * a pulsing glow, with the Sparkles icon at the center — on-brand rather
+ * than a generic spinner (see globals.css's `pulse-glow-brand`, the same
+ * treatment marketing's CTA buttons use for `animate-liquid`). Offline swaps
+ * the ring/glow to a muted grey — motion communicates "still working," so it
+ * has to visibly stop reading as "working" when the connection actually drops.
+ */
+function AiCutBadge({ isOffline }: { isOffline: boolean }) {
+  return (
+    <div className="relative flex h-20 w-20 items-center justify-center">
+      <div
+        className={
+          isOffline
+            ? "absolute inset-0 rounded-full"
+            : "absolute inset-0 rounded-full motion-safe:animate-spin [animation-duration:2.5s]"
+        }
+        style={{
+          background: `conic-gradient(from 0deg, transparent 0%, ${isOffline ? "rgba(255,255,255,0.35)" : "#fffc00"} 15%, transparent 35%)`,
+        }}
+      />
+      <div
+        className={
+          isOffline
+            ? "absolute inset-[3px] rounded-full border border-white/15 bg-black"
+            : "absolute inset-[3px] rounded-full border border-[#fffc00]/25 bg-black animate-glow-brand"
+        }
+      />
+      <Sparkles
+        className={
+          isOffline
+            ? "relative h-8 w-8 text-white/40"
+            : "relative h-8 w-8 text-[#fffc00] motion-safe:animate-pulse"
+        }
+      />
+    </div>
+  );
+}
+
+/**
  * Centered progress overlay while the AI pass runs. Gemini gives no
- * real-time percentage — the bar is deliberately indeterminate (no number
- * claimed), and the phase/offline text is the honest signal: it comes from
- * the route's live NDJSON stream (`readAiCutStream`), not a guess. This
- * overlay unmounts the moment aiBusy clears.
+ * real-time percentage — motion communicates progress instead of a number,
+ * and the phase/offline text is the honest signal: it comes from the
+ * route's live NDJSON stream (`readAiCutStream`), not a guess. This overlay
+ * unmounts the moment aiBusy clears.
  */
 function AiCutOverlay({ phase, isOffline }: { phase: AiCutPhase; isOffline: boolean }) {
   const { title, detail } = aiCutPhaseCopy(phase);
   return (
-    <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-black/60 backdrop-blur-sm">
-      <Loader2 className="h-10 w-10 text-white motion-safe:animate-spin" />
-      <div className="text-center">
-        <p className="text-sm font-semibold text-white">
-          {isOffline ? "You're offline" : title}
-        </p>
-        <p className="mt-1 text-xs text-zinc-400">
-          {isOffline ? "We'll keep waiting until your connection is back." : detail}
-        </p>
+    <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+      <div className="glass-panel flex flex-col items-center gap-4 rounded-2xl px-10 py-9 shadow-[0_0_60px_rgba(255,252,0,0.06)]">
+        <AiCutBadge isOffline={isOffline} />
+        <div className="text-center">
+          <p className="text-sm font-semibold text-white">
+            {isOffline ? "You're offline" : title}
+          </p>
+          <p className="mt-1 text-xs text-zinc-400">
+            {isOffline ? "We'll keep waiting until your connection is back." : detail}
+          </p>
+        </div>
       </div>
     </div>
   );
 }
 
 /**
- * Indeterminate progress bar for the ADR 0004 AC-12 full-page loading state
- * — reuses `.animate-indeterminate-progress` (globals.css), the same
- * pattern already used while transcription is "processing" for the same
- * reason: no real percentage to report. No caption of its own — the
- * `StatusScreen` title/message at the call site already carries the live
- * phase/offline text, driven by the same stream as `AiCutOverlay`.
+ * Indeterminate progress bar for the ADR 0004 AC-12 full-page loading state —
+ * a continuous brand-yellow shimmer (`animate-liquid`, the same gradient
+ * treatment as marketing's CTA buttons) rather than a sliding block, so it
+ * still reads as "alive" without ever claiming a percentage. No caption of
+ * its own — the `StatusScreen` title/message at the call site already
+ * carries the live phase/offline text, driven by the same stream as
+ * `AiCutOverlay`.
  */
-function AutoChainProgressBar() {
+function AutoChainProgressBar({ isOffline }: { isOffline: boolean }) {
   return (
     <div className="w-full max-w-xs">
       <div
         role="progressbar"
         aria-label="A.I. rough cut progress"
-        className="relative h-1.5 w-full overflow-hidden rounded-full bg-foreground/10"
+        className="relative h-2 w-full overflow-hidden rounded-full bg-white/5 ring-1 ring-[#fffc00]/10"
       >
-        <div className="absolute inset-y-0 w-1/3 rounded-full bg-accent animate-indeterminate-progress" />
+        <div
+          className={
+            isOffline
+              ? "absolute inset-0 rounded-full bg-white/15"
+              : "absolute inset-0 rounded-full bg-gradient-to-r from-[#fffc00] via-yellow-400 to-[#fffc00] bg-[length:200%_200%] motion-safe:animate-liquid"
+          }
+        />
       </div>
     </div>
   );
@@ -2101,6 +2150,7 @@ function StatusScreen({
   message,
   tone,
   progress,
+  bareIcon,
 }: {
   icon: ReactNode;
   title: string;
@@ -2110,15 +2160,23 @@ function StatusScreen({
    * between the message and the exit link. Omitted screens (transcribing,
    * failed, not found) are unaffected. */
   progress?: ReactNode;
+  /** Skip the generic `h-14 w-14 rounded-2xl` icon wrapper — for a caller
+   * (e.g. `AiCutBadge`) that's already a fully-styled visual with its own
+   * size and glow, which the generic box would only clip/flatten. */
+  bareIcon?: boolean;
 }) {
   return (
     <div className="flex h-screen flex-col items-center justify-center gap-4 bg-background px-6 text-center">
-      <div
-        className={`flex h-14 w-14 items-center justify-center rounded-2xl ${tone === "error" ? "bg-red-500/10 text-red-400" : "bg-accent/15 text-accent"
-          }`}
-      >
-        {icon}
-      </div>
+      {bareIcon ? (
+        icon
+      ) : (
+        <div
+          className={`flex h-14 w-14 items-center justify-center rounded-2xl ${tone === "error" ? "bg-red-500/10 text-red-400" : "bg-accent/15 text-accent"
+            }`}
+        >
+          {icon}
+        </div>
+      )}
       <div className="space-y-1.5">
         <h1 className="text-lg font-bold text-foreground">{title}</h1>
         <p className="max-w-md text-sm text-foreground/50">{message}</p>
