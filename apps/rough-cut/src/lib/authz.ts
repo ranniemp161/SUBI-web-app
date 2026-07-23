@@ -22,8 +22,9 @@ export async function getAuthorizedDbUser(clerkId: string): Promise<User | null>
 
   if (rows.length > 0) {
     const existing = rows[0];
-    if (email && isAllowlistedMember(email) && !existing.isMember) {
-      return provisionUser(clerkId, email);
+    const userEmail = email || existing.email || "";
+    if (userEmail && isAllowlistedMember(userEmail) && !existing.isMember) {
+      return provisionUser(clerkId, userEmail);
     }
     return existing;
   }

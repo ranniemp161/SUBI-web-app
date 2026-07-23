@@ -8,8 +8,11 @@ import { users, type User } from "@repo/db/schema";
  * Case-insensitive since email providers treat case as insignificant.
  */
 export function isAllowlistedMember(email: string): boolean {
-  const allowlisted = process.env.MEMBER_ALLOWLIST_EMAIL;
-  return !!allowlisted && email.toLowerCase() === allowlisted.toLowerCase();
+  const raw = process.env.MEMBER_ALLOWLIST_EMAIL;
+  if (!raw || !email) return false;
+  const cleanAllowlisted = raw.trim().replace(/^["']|["']$/g, "").toLowerCase();
+  const cleanEmail = email.trim().toLowerCase();
+  return cleanEmail === cleanAllowlisted;
 }
 
 /**
