@@ -7,8 +7,7 @@ import {
   Target, 
   Lightbulb, 
   ShieldAlert, 
-  CheckCircle2, 
-  ArrowRight 
+  CheckCircle2 
 } from "lucide-react";
 
 export const metadata = {
@@ -51,7 +50,7 @@ const pillars = [
 
 export default function MentorshipPage() {
   return (
-    <div className="relative overflow-hidden z-0">
+    <div className="relative overflow-hidden z-0 min-h-screen bg-[#0c0c0e]">
       {/* AMBIENT FIXED GRADIENTS MATCHING FOUNDER'S FRAME */}
       <div className="fixed top-[-20%] left-[-10%] w-[600px] h-[600px] bg-brand/10 blur-[120px] rounded-full pointer-events-none mix-blend-screen z-[-1]" />
       <div className="fixed bottom-[-20%] right-[-10%] w-[600px] h-[600px] bg-brand/10 blur-[120px] rounded-full pointer-events-none mix-blend-screen z-[-1]" />
@@ -65,9 +64,9 @@ export default function MentorshipPage() {
         <div className="absolute top-[88%] left-[7%] w-36 h-36 border border-white/10 rounded-2xl rotate-[18deg] shadow-[0_0_30px_rgba(255,255,255,0.02)] bg-gradient-to-tl from-white/5 to-transparent animate-float-delayed" />
       </div>
 
-      {/* HERO SECTION */}
+      {/* HERO SECTION WITH SUFFICIENT TOP PADDING FOR FIXED NAVBAR */}
       <FadeIn>
-        <section className="px-6 pt-12 pb-20 max-w-5xl mx-auto text-center relative z-10">
+        <section className="px-6 pt-28 md:pt-36 pb-20 max-w-5xl mx-auto text-center relative z-10">
           <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-brand/10 border border-brand/20 text-brand text-xs font-bold tracking-wider uppercase mb-8 shadow-[0_0_20px_rgba(255,255,0,0.1)]">
             <Sparkles className="w-4 h-4 text-brand" />
             Executive Founder Mentorship
@@ -82,24 +81,24 @@ export default function MentorshipPage() {
           </h1>
 
           {/* MAIN VSL VIDEO EMBED */}
-          <div className="my-10 max-w-4xl mx-auto shadow-[0_0_50px_rgba(255,255,0,0.15)]">
+          <div className="my-8 max-w-4xl mx-auto shadow-[0_0_50px_rgba(255,255,0,0.15)]">
             <WistiaPlayer mediaId="1ygx84trbg" />
           </div>
 
-          {/* CTA BUTTON */}
+          {/* SIGNATURE ANIMATED CTA BUTTON (Placed above fold right under video) */}
           <div className="my-8">
             <Link
               href="/mentorship/apply"
-              className="inline-flex items-center gap-3 bg-gradient-to-r from-brand via-yellow-400 to-brand text-black font-heading font-bold text-lg px-8 py-4 rounded-full transition-all hover:scale-105 shadow-[0_0_25px_rgba(255,255,0,0.3)]"
+              className="btn-animated text-xl"
             >
-              Schedule a call <ArrowRight className="w-5 h-5" />
+              Schedule a call
             </Link>
           </div>
 
           {/* TRUST COPY BLOCK */}
           <div className="mt-12 max-w-2xl mx-auto text-left glass-panel p-8 rounded-2xl border border-white/10 space-y-4">
             <p className="text-lg md:text-xl font-bold text-white leading-snug">
-              Founder visibility is no longer optional — this is how to do it properly.
+              Founder visibility is no longer optional — this is how to do it properly...
             </p>
             <div className="pt-2 border-t border-white/10 space-y-3 text-gray-300 text-base leading-relaxed">
               <p className="font-semibold text-brand flex items-center gap-2">
@@ -140,9 +139,9 @@ export default function MentorshipPage() {
             <div>
               <Link
                 href="/mentorship/apply"
-                className="inline-flex items-center gap-2 bg-gradient-to-r from-brand via-yellow-400 to-brand text-black font-heading font-bold text-base px-6 py-3 rounded-full transition-all hover:scale-105 shadow-[0_0_20px_rgba(255,255,0,0.2)]"
+                className="btn-animated text-lg"
               >
-                Schedule a call <ArrowRight className="w-4 h-4" />
+                Schedule a call
               </Link>
             </div>
           </div>
@@ -272,9 +271,9 @@ export default function MentorshipPage() {
             <div className="pt-4">
               <Link
                 href="/mentorship/apply"
-                className="inline-flex items-center gap-3 bg-gradient-to-r from-brand via-yellow-400 to-brand text-black font-heading font-bold text-xl px-10 py-5 rounded-full transition-all hover:scale-105 shadow-[0_0_40px_rgba(255,255,0,0.3)]"
+                className="btn-animated text-xl"
               >
-                Schedule a call <ArrowRight className="w-5 h-5" />
+                Schedule a call
               </Link>
             </div>
           </div>
