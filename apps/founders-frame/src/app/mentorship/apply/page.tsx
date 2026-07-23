@@ -2,6 +2,8 @@
 
 import { useState, FormEvent } from "react";
 import Link from "next/link";
+import Navbar from "@/components/Navbar";
+import Footer from "@/components/Footer";
 import FadeIn from "@/components/FadeIn";
 import CalendlyWidget from "@/components/CalendlyWidget";
 import { Sparkles, CheckCircle2, ArrowRight, ShieldCheck, Clock, Calendar } from "lucide-react";
@@ -33,6 +35,9 @@ export default function ApplicationFormPage() {
 
   return (
     <div className="relative overflow-hidden z-0 min-h-screen bg-[#0c0c0e]">
+      {/* TOP NAVBAR */}
+      <Navbar />
+
       {/* AMBIENT FIXED GRADIENTS MATCHING FOUNDER'S FRAME */}
       <div className="fixed top-[-20%] left-[-10%] w-[600px] h-[600px] bg-brand/10 blur-[120px] rounded-full pointer-events-none mix-blend-screen z-[-1]" />
       <div className="fixed bottom-[-20%] right-[-10%] w-[600px] h-[600px] bg-brand/10 blur-[120px] rounded-full pointer-events-none mix-blend-screen z-[-1]" />
@@ -43,7 +48,7 @@ export default function ApplicationFormPage() {
         <div className="absolute top-[60%] right-[6%] w-44 h-44 border border-white/10 rounded-3xl -rotate-[15deg] shadow-[0_0_30px_rgba(255,255,255,0.02)] bg-gradient-to-tl from-white/5 to-transparent animate-float-delayed" />
       </div>
 
-      <div className="max-w-4xl mx-auto px-6 pt-28 md:pt-36 pb-20 relative z-10">
+      <div className="max-w-4xl mx-auto px-6 pt-32 md:pt-40 pb-20 relative z-10">
         <FadeIn>
           <div className="text-center max-w-2xl mx-auto mb-10">
             <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-brand/10 border border-brand/20 text-brand text-xs font-bold tracking-wider uppercase mb-4 shadow-[0_0_20px_rgba(255,255,0,0.1)]">
@@ -249,7 +254,7 @@ export default function ApplicationFormPage() {
                   <button
                     type="submit"
                     disabled={loading}
-                    className="inline-flex items-center gap-2 bg-gradient-to-r from-brand via-yellow-400 to-brand text-black font-heading font-bold text-base px-8 py-3.5 rounded-full transition-all hover:scale-105 shadow-[0_0_20px_rgba(255,255,0,0.2)] w-full sm:w-auto justify-center"
+                    className="inline-flex items-center gap-2 bg-gradient-to-r from-brand via-yellow-400 to-brand text-black font-heading font-bold text-base px-8 py-3.5 rounded-full transition-all hover:scale-105 shadow-[0_0_20px_rgba(255,255,0,0.2)] w-full sm:w-auto justify-center cursor-pointer"
                   >
                     {loading ? "Submitting..." : "Submit Application & Book Call"}
                     <ArrowRight className="w-4 h-4" />
@@ -270,6 +275,9 @@ export default function ApplicationFormPage() {
           </FadeIn>
         )}
       </div>
+
+      {/* BOTTOM FOOTER */}
+      <Footer />
     </div>
   );
 }

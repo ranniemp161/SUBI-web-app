@@ -1,4 +1,6 @@
 import Link from "next/link";
+import Navbar from "@/components/Navbar";
+import Footer from "@/components/Footer";
 import WistiaPlayer from "@/components/WistiaPlayer";
 import SpotlightCard from "@/components/SpotlightCard";
 import FadeIn from "@/components/FadeIn";
@@ -51,6 +53,9 @@ const pillars = [
 export default function MentorshipPage() {
   return (
     <div className="relative overflow-hidden z-0 min-h-screen bg-[#0c0c0e]">
+      {/* TOP NAVBAR */}
+      <Navbar />
+
       {/* AMBIENT FIXED GRADIENTS MATCHING FOUNDER'S FRAME */}
       <div className="fixed top-[-20%] left-[-10%] w-[600px] h-[600px] bg-brand/10 blur-[120px] rounded-full pointer-events-none mix-blend-screen z-[-1]" />
       <div className="fixed bottom-[-20%] right-[-10%] w-[600px] h-[600px] bg-brand/10 blur-[120px] rounded-full pointer-events-none mix-blend-screen z-[-1]" />
@@ -64,9 +69,9 @@ export default function MentorshipPage() {
         <div className="absolute top-[88%] left-[7%] w-36 h-36 border border-white/10 rounded-2xl rotate-[18deg] shadow-[0_0_30px_rgba(255,255,255,0.02)] bg-gradient-to-tl from-white/5 to-transparent animate-float-delayed" />
       </div>
 
-      {/* HERO SECTION WITH SUFFICIENT TOP PADDING FOR FIXED NAVBAR */}
+      {/* HERO SECTION WITH TOP PADDING FOR FIXED NAVBAR */}
       <FadeIn>
-        <section className="px-6 pt-28 md:pt-36 pb-20 max-w-5xl mx-auto text-center relative z-10">
+        <section className="px-6 pt-32 md:pt-40 pb-20 max-w-5xl mx-auto text-center relative z-10">
           <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-brand/10 border border-brand/20 text-brand text-xs font-bold tracking-wider uppercase mb-8 shadow-[0_0_20px_rgba(255,255,0,0.1)]">
             <Sparkles className="w-4 h-4 text-brand" />
             Executive Founder Mentorship
@@ -85,7 +90,7 @@ export default function MentorshipPage() {
             <WistiaPlayer mediaId="1ygx84trbg" />
           </div>
 
-          {/* SIGNATURE ANIMATED CTA BUTTON (Placed above fold right under video) */}
+          {/* SIGNATURE ANIMATED CTA BUTTON */}
           <div className="my-8">
             <Link
               href="/mentorship/apply"
@@ -279,6 +284,9 @@ export default function MentorshipPage() {
           </div>
         </section>
       </FadeIn>
+
+      {/* BOTTOM FOOTER */}
+      <Footer />
     </div>
   );
 }
