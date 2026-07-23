@@ -69,15 +69,15 @@ export default function MentorshipPage() {
         <div className="absolute top-[88%] left-[7%] w-36 h-36 border border-white/10 rounded-2xl rotate-[18deg] shadow-[0_0_30px_rgba(255,255,255,0.02)] bg-gradient-to-tl from-white/5 to-transparent animate-float-delayed" />
       </div>
 
-      {/* HERO SECTION WITH TOP PADDING FOR FIXED NAVBAR */}
+      {/* HERO SECTION - COMPACT FIT ABOVE THE FOLD */}
       <FadeIn>
-        <section className="px-6 pt-32 md:pt-40 pb-20 max-w-5xl mx-auto text-center relative z-10">
-          <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-brand/10 border border-brand/20 text-brand text-xs font-bold tracking-wider uppercase mb-8 shadow-[0_0_20px_rgba(255,255,0,0.1)]">
-            <Sparkles className="w-4 h-4 text-brand" />
+        <section className="px-6 pt-20 md:pt-24 pb-12 max-w-4xl mx-auto text-center relative z-10">
+          <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-brand/10 border border-brand/20 text-brand text-xs font-bold tracking-wider uppercase mb-3 shadow-[0_0_15px_rgba(255,255,0,0.1)]">
+            <Sparkles className="w-3.5 h-3.5 text-brand" />
             Executive Founder Mentorship
           </div>
 
-          <h1 className="text-4xl md:text-6xl font-heading font-black text-white leading-tight tracking-tight mb-8">
+          <h1 className="text-3xl md:text-5xl font-heading font-black text-white leading-tight tracking-tight mb-4 max-w-3xl mx-auto">
             I help founders launch their{" "}
             <span className="text-transparent bg-clip-text bg-gradient-to-r from-yellow-300 via-brand to-amber-500">
               personal brand
@@ -85,29 +85,29 @@ export default function MentorshipPage() {
             on YouTube
           </h1>
 
-          {/* MAIN VSL VIDEO EMBED */}
-          <div className="my-8 max-w-4xl mx-auto shadow-[0_0_50px_rgba(255,255,0,0.15)]">
+          {/* MAIN VSL VIDEO EMBED - PROPORTIONED TO FIT VIEWPORT */}
+          <div className="my-4 max-w-2xl md:max-w-3xl mx-auto shadow-[0_0_40px_rgba(255,255,0,0.15)]">
             <WistiaPlayer mediaId="1ygx84trbg" />
           </div>
 
-          {/* SIGNATURE ANIMATED CTA BUTTON */}
-          <div className="my-8">
+          {/* PROMINENT SOLID YELLOW ANIMATED CTA BUTTON */}
+          <div className="mt-5 mb-4">
             <Link
               href="/mentorship/apply"
-              className="btn-animated text-xl"
+              className="btn-animated text-base md:text-lg py-3 px-8"
             >
               Schedule a call
             </Link>
           </div>
 
           {/* TRUST COPY BLOCK */}
-          <div className="mt-12 max-w-2xl mx-auto text-left glass-panel p-8 rounded-2xl border border-white/10 space-y-4">
-            <p className="text-lg md:text-xl font-bold text-white leading-snug">
+          <div className="mt-8 max-w-2xl mx-auto text-left glass-panel p-6 md:p-8 rounded-2xl border border-white/10 space-y-3">
+            <p className="text-base md:text-lg font-bold text-white leading-snug">
               Founder visibility is no longer optional — this is how to do it properly...
             </p>
-            <div className="pt-2 border-t border-white/10 space-y-3 text-gray-300 text-base leading-relaxed">
+            <div className="pt-2 border-t border-white/10 space-y-2 text-gray-300 text-sm md:text-base leading-relaxed">
               <p className="font-semibold text-brand flex items-center gap-2">
-                <CheckCircle2 className="w-5 h-5 text-brand" /> It starts with trust.
+                <CheckCircle2 className="w-4 h-4 text-brand" /> It starts with trust.
               </p>
               <p>
                 When founders step forward to share their story, their wins, their setbacks, and their passion, customers connect. They feel part of the journey.
@@ -122,21 +122,21 @@ export default function MentorshipPage() {
 
       {/* SOCIAL PROOF SECTION */}
       <FadeIn delay={0.2}>
-        <section className="py-20 px-6 bg-[#0f0f13]/80 border-y border-white/10 relative z-10 backdrop-blur-md">
-          <div className="max-w-4xl mx-auto text-center">
-            <h2 className="text-2xl md:text-3xl font-heading font-extrabold text-brand mb-8">
+        <section className="py-16 px-6 bg-[#0f0f13]/80 border-y border-white/10 relative z-10 backdrop-blur-md">
+          <div className="max-w-3xl mx-auto text-center">
+            <h2 className="text-xl md:text-3xl font-heading font-extrabold text-brand mb-6">
               Don&apos;t just take my word for it — hear from a founder I&apos;ve worked with
             </h2>
 
             {/* TESTIMONIAL VIDEO EMBED */}
-            <div className="my-8 shadow-[0_0_40px_rgba(0,0,0,0.8)]">
+            <div className="my-6 shadow-[0_0_35px_rgba(0,0,0,0.8)] max-w-2xl mx-auto">
               <WistiaPlayer mediaId="rh2t6cw9a6" />
             </div>
 
             {/* CAPTION */}
-            <div className="mt-6 mb-8">
-              <h3 className="text-xl font-heading font-bold text-white">Oshay Duke Jackson</h3>
-              <p className="text-sm text-gray-400 mt-1">
+            <div className="mt-4 mb-6">
+              <h3 className="text-lg font-heading font-bold text-white">Oshay Duke Jackson</h3>
+              <p className="text-xs md:text-sm text-gray-400 mt-1">
                 Founder, Kenganda | <span className="text-brand font-semibold">1M+ Subscribers Across Platforms</span>
               </p>
             </div>
@@ -144,7 +144,7 @@ export default function MentorshipPage() {
             <div>
               <Link
                 href="/mentorship/apply"
-                className="btn-animated text-lg"
+                className="btn-animated text-base py-2.5 px-6"
               >
                 Schedule a call
               </Link>
@@ -155,15 +155,15 @@ export default function MentorshipPage() {
 
       {/* WHO THIS IS FOR */}
       <FadeIn delay={0.2}>
-        <section className="py-24 px-6 max-w-6xl mx-auto relative z-10">
-          <div className="text-center max-w-3xl mx-auto mb-16">
+        <section className="py-20 px-6 max-w-6xl mx-auto relative z-10">
+          <div className="text-center max-w-3xl mx-auto mb-12">
             <span className="text-xs font-bold text-brand uppercase tracking-widest px-3 py-1 rounded-full bg-brand/10 border border-brand/20">
               Target Fit
             </span>
-            <h2 className="text-3xl md:text-5xl font-heading font-black text-white mt-4 mb-4">
+            <h2 className="text-3xl md:text-4xl font-heading font-black text-white mt-4 mb-3">
               Who this is for
             </h2>
-            <p className="text-lg md:text-xl text-gray-300">
+            <p className="text-base md:text-lg text-gray-300">
               This is for founders who already have a business with customers and momentum.
             </p>
           </div>
@@ -194,13 +194,13 @@ export default function MentorshipPage() {
 
       {/* WHAT I HELP YOU DO (SERVICE PILLARS) */}
       <FadeIn delay={0.2}>
-        <section className="py-24 px-6 bg-[#09090c]/90 border-t border-white/10 relative z-10 backdrop-blur-md">
+        <section className="py-20 px-6 bg-[#09090c]/90 border-t border-white/10 relative z-10 backdrop-blur-md">
           <div className="max-w-6xl mx-auto">
-            <div className="text-center max-w-3xl mx-auto mb-16">
-              <h2 className="text-3xl md:text-5xl font-heading font-black text-white mb-4">
+            <div className="text-center max-w-3xl mx-auto mb-12">
+              <h2 className="text-3xl md:text-4xl font-heading font-black text-white mb-3">
                 What I help you do
               </h2>
-              <p className="text-gray-400 text-lg">
+              <p className="text-gray-400 text-base md:text-lg">
                 Six foundational pillars engineered to transform founder presence into enterprise leverage.
               </p>
             </div>
@@ -232,31 +232,31 @@ export default function MentorshipPage() {
 
       {/* WHO THIS IS NOT FOR */}
       <FadeIn delay={0.2}>
-        <section className="py-20 px-6 bg-[#121217]/80 border-y border-white/10 relative z-10 backdrop-blur-md">
+        <section className="py-16 px-6 bg-[#121217]/80 border-y border-white/10 relative z-10 backdrop-blur-md">
           <div className="max-w-4xl mx-auto">
-            <div className="flex items-center gap-3 mb-8">
-              <ShieldAlert className="w-8 h-8 text-red-500" />
-              <h2 className="text-3xl font-heading font-extrabold text-white">
+            <div className="flex items-center gap-3 mb-6">
+              <ShieldAlert className="w-7 h-7 text-red-500" />
+              <h2 className="text-2xl md:text-3xl font-heading font-extrabold text-white">
                 Who this is <span className="text-red-500">NOT</span> for
               </h2>
             </div>
 
-            <div className="space-y-4">
-              <div className="flex items-start gap-4 p-5 rounded-xl bg-red-500/5 border border-red-500/20 text-gray-200 text-lg">
+            <div className="space-y-3">
+              <div className="flex items-start gap-4 p-4 rounded-xl bg-red-500/5 border border-red-500/20 text-gray-200 text-base md:text-lg">
                 <span className="text-xl">🚫</span>
                 <span>This is <strong>not</strong> for beginners starting from zero without an established business.</span>
               </div>
-              <div className="flex items-start gap-4 p-5 rounded-xl bg-red-500/5 border border-red-500/20 text-gray-200 text-lg">
+              <div className="flex items-start gap-4 p-4 rounded-xl bg-red-500/5 border border-red-500/20 text-gray-200 text-base md:text-lg">
                 <span className="text-xl">🚫</span>
                 <span>This is <strong>not</strong> for people looking for viral hacks, shortcuts, or quick fame.</span>
               </div>
-              <div className="flex items-start gap-4 p-5 rounded-xl bg-red-500/5 border border-red-500/20 text-gray-200 text-lg">
+              <div className="flex items-start gap-4 p-4 rounded-xl bg-red-500/5 border border-red-500/20 text-gray-200 text-base md:text-lg">
                 <span className="text-xl">🚫</span>
                 <span>This is <strong>not</strong> for founders who want to stay completely hidden behind a logo.</span>
               </div>
             </div>
 
-            <p className="mt-8 text-gray-400 italic text-base bg-white/5 p-4 rounded-xl border border-white/10 text-center">
+            <p className="mt-6 text-gray-400 italic text-sm md:text-base bg-white/5 p-4 rounded-xl border border-white/10 text-center">
               &ldquo;If you are not willing to be visible or build a personal brand, this mentorship program will not work.&rdquo;
             </p>
           </div>
@@ -265,18 +265,18 @@ export default function MentorshipPage() {
 
       {/* BOTTOM CTA */}
       <FadeIn delay={0.2}>
-        <section className="py-24 px-6 text-center bg-gradient-to-b from-[#0c0c0e] to-black relative z-10">
-          <div className="max-w-3xl mx-auto space-y-6">
-            <h2 className="text-4xl md:text-5xl font-heading font-black text-white tracking-tight">
+        <section className="py-20 px-6 text-center bg-gradient-to-b from-[#0c0c0e] to-black relative z-10">
+          <div className="max-w-3xl mx-auto space-y-5">
+            <h2 className="text-3xl md:text-5xl font-heading font-black text-white tracking-tight">
               Ready to step forward?
             </h2>
-            <p className="text-gray-400 text-lg max-w-xl mx-auto">
+            <p className="text-gray-400 text-base md:text-lg max-w-xl mx-auto">
               Book an exploratory call to see if your business qualifies for 1-on-1 founder mentorship.
             </p>
-            <div className="pt-4">
+            <div className="pt-3">
               <Link
                 href="/mentorship/apply"
-                className="btn-animated text-xl"
+                className="btn-animated text-lg md:text-xl py-3.5 px-8"
               >
                 Schedule a call
               </Link>
