@@ -49,23 +49,25 @@
                     linear-gradient(to bottom, rgba(255, 255, 255, 0.08) 1px, transparent 1px);
 }
 
-/* Signature Animated Button matching Client LP HTML spec */
+/* Highly Prominent Vibrant Yellow Animated Button */
 .btn-animated {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 0.75rem;
-  background-color: transparent;
-  color: #ffff00;
-  font-weight: 700;
+  background: linear-gradient(135deg, #ffff00 0%, #ffe600 50%, #ffd700 100%);
+  color: #000000 !important;
+  font-weight: 800;
   font-family: var(--font-heading);
   font-size: 1.25rem;
-  padding: 0.75rem 1.5rem;
+  padding: 0.875rem 2.25rem;
   border-radius: 9999px;
   text-decoration: none;
   transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
   cursor: pointer;
-  border: none;
-  box-shadow: none;
+  border: 1px solid rgba(255, 255, 0, 0.8);
+  box-shadow: 0 0 35px rgba(255, 255, 0, 0.45), 0 4px 20px rgba(0, 0, 0, 0.5);
+  letter-spacing: -0.01em;
 }
 
 .btn-animated::before {
@@ -81,14 +83,16 @@
 }
 
 .btn-animated:hover {
-  transform: scale(1.15);
-  color: #2997ff;
+  transform: scale(1.08);
+  background: linear-gradient(135deg, #ffffff 0%, #ffff33 100%);
+  color: #000000 !important;
+  box-shadow: 0 0 50px rgba(255, 255, 0, 0.65), 0 6px 25px rgba(0, 0, 0, 0.6);
 }
 
 .btn-animated:hover::before {
-  transform: translateX(4px);
+  transform: translateX(5px);
 }
 
 .btn-animated:hover::after {
-  transform: translateX(-4px);
+  transform: translateX(-5px);
 }
