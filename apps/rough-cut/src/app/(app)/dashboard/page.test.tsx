@@ -91,13 +91,18 @@ function stubFetch({
   projects = [],
   credits = { balanceMicros: 1_000_000_000, isMember: false },
   createdProject,
+  createProjectError,
 }: {
   projects?: unknown[];
   credits?: { balanceMicros: number; isMember: boolean } | null;
   createdProject?: unknown;
+  createProjectError?: { status: number; body: unknown };
 } = {}) {
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     if (url === "/api/projects" && init?.method === "POST") {
+      if (createProjectError) {
+        return jsonResponse(createProjectError.body, { ok: false, status: createProjectError.status });
+      }
       return jsonResponse(
         createdProject ?? {
           id: "new-proj",
@@ -158,6 +163,24 @@ describe("DashboardPage — no-click upload (ADR 0004 child 1, AC-1, AC-2)", () 
     });
 
     expect(await screen.findByText(CURRENT_METADATA.fileName)).toBeVisible();
+  });
+
+  it("shows an error toast with the server's reason when project creation fails, instead of failing silently", async () => {
+    const fetchMock = stubFetch({
+      createProjectError: { status: 401, body: { error: "Unauthorized" } },
+    });
+    render(<DashboardPage />);
+    await userEvent.click(await screen.findByRole("button", { name: "pick-file" }));
+
+    await waitFor(() => expect(postCallsFrom(fetchMock)).toHaveLength(1));
+    await waitFor(() =>
+      expect(toastMock.error).toHaveBeenCalledWith(
+        "Couldn't start this upload",
+        expect.objectContaining({ description: "Unauthorized" })
+      )
+    );
+    // No project row is added for a failed creation.
+    expect(screen.queryByText(CURRENT_METADATA.fileName)).toBeNull();
   });
 });
 
