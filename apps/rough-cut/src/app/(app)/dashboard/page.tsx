@@ -578,7 +578,7 @@ export default function DashboardPage() {
         });
 
         if (!response.ok) {
-          throw new Error("Failed to create project");
+          throw new Error(await readErrorReason(response));
         }
 
         const project = await response.json();
@@ -594,6 +594,9 @@ export default function DashboardPage() {
         kickOffTranscription(project.id, file);
       } catch (error) {
         console.error("Failed to create project:", error);
+        toast.error("Couldn't start this upload", {
+          description: error instanceof Error ? error.message : String(error),
+        });
       } finally {
         setIsCreating(false);
       }
