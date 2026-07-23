@@ -72,6 +72,9 @@
   .animate-indeterminate-progress {
     animation: none;
   }
+  .animate-glow-brand {
+    animation: none;
+  }
 }
 
 /* Slim, on-brand scrollbars (replaces the default OS bar). Thin track, pill
@@ -139,6 +142,24 @@
 
 .animate-glow-blue {
   animation: pulse-glow-blue 2s infinite ease-in-out;
+}
+
+/* Brand-yellow glow, same shape as glow-amber/glow-blue above — used by the
+   AI Cut loading badge so its "AI is working" moment reads as on-brand, not
+   a generic spinner. */
+@keyframes pulse-glow-brand {
+  0%, 100% {
+    box-shadow: 0 0 10px rgba(255, 252, 0, 0.15), inset 0 0 6px rgba(255, 252, 0, 0.05);
+    border-color: rgba(255, 252, 0, 0.25);
+  }
+  50% {
+    box-shadow: 0 0 22px rgba(255, 252, 0, 0.4), inset 0 0 10px rgba(255, 252, 0, 0.15);
+    border-color: rgba(255, 252, 0, 0.5);
+  }
+}
+
+.animate-glow-brand {
+  animation: pulse-glow-brand 2.2s infinite ease-in-out;
 }
 
 /* Shimmer animation for card skeletons */

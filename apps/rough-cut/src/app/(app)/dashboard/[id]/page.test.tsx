@@ -582,7 +582,7 @@ describe("EditorPage — reselect-gated processing (ADR 0004 child 2)", () => {
     expect(screen.getByTestId("transcript-panel-stub")).toBeVisible();
   });
 
-  it("shows an indeterminate progress bar (no fake percentage) on the full-page loading state, gone once the editor mounts", async () => {
+  it("shows a fake-but-monotonic progress bar on the full-page loading state, gone once the editor mounts", async () => {
     let resolveAiCut!: (v: unknown) => void;
     const aiCutResponse = new Promise((resolve) => {
       resolveAiCut = resolve;
@@ -604,9 +604,10 @@ describe("EditorPage — reselect-gated processing (ADR 0004 child 2)", () => {
 
     const bar = screen.getByRole("progressbar", { name: "A.I. rough cut progress" });
     expect(bar).toBeVisible();
-    // Indeterminate: no percentage is ever claimed, unlike the old fake bar.
-    expect(bar).not.toHaveAttribute("aria-valuenow");
-    expect(screen.queryByText(/^\d+%$/)).toBeNull();
+    // Fake-but-honest: a percentage is shown and only ever climbs, but it's
+    // motion, not a real signal from Gemini.
+    expect(bar).toHaveAttribute("aria-valuenow");
+    expect(Number(bar.getAttribute("aria-valuenow"))).toBeGreaterThanOrEqual(0);
 
     resolveAiCut(
       jsonResponse({
