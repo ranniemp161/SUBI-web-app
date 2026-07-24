@@ -22,23 +22,7 @@ export default function Navbar() {
             priority
           />
         </Link>
-        <div className="hidden md:flex items-center gap-8 text-sm font-medium text-gray-300">
-          <Link href="/#products" className="relative group hover:text-white transition-colors">
-            Products
-            <span className="absolute -bottom-1 left-0 w-0 h-[2px] bg-brand transition-all duration-300 group-hover:w-full"></span>
-          </Link>
-          <Link 
-            href="/mentorship" 
-            className={`relative group transition-colors ${isMentorshipActive ? 'text-white font-semibold' : 'hover:text-white'}`}
-          >
-            Mentorship
-            <span className={`absolute -bottom-1 left-0 h-[2px] bg-brand transition-all duration-300 ${isMentorshipActive ? 'w-full' : 'w-0 group-hover:w-full'}`}></span>
-          </Link>
-          <Link href="/about" className={`relative group transition-colors ${pathname === '/about' ? 'text-white' : 'hover:text-white'}`}>
-            About Us
-            <span className={`absolute -bottom-1 left-0 h-[2px] bg-brand transition-all duration-300 ${pathname === '/about' ? 'w-full' : 'w-0 group-hover:w-full'}`}></span>
-          </Link>
-        </div>
+
         <div className="flex items-center gap-4">
           {isMentorshipActive ? (
             <Link 
