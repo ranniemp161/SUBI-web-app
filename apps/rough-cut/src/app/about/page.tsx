@@ -7,7 +7,7 @@ import SpotlightCard from "@/components/SpotlightCard";
 import FadeIn from "@/components/FadeIn";
 
 export const metadata: Metadata = {
-  title: "About | Ruff Cut",
+  title: "About | MyFirstCut",
   description: "Built by a founder, for founders on camera.",
 };
 

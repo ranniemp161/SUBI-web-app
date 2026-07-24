@@ -7,7 +7,7 @@ import FadeIn from "@/components/FadeIn";
 import { WALLET_URL } from "@/lib/env";
 
 export const metadata: Metadata = {
-  title: "Terms of Service | Ruff Cut",
+  title: "Terms of Service | MyFirstCut",
   description: "The terms that govern your use of MyFirstCut.",
 };
 
