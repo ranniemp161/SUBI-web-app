@@ -74,15 +74,24 @@ export async function POST(request: Request) {
     const userId = event.data.id as string;
 
     const emailAddresses = event.data.email_addresses as
-      | Array<{ id: string; email_address: string }>
+      | Array<{
+          id: string;
+          email_address: string;
+          verification: { status: string } | null;
+        }>
       | undefined;
     const primaryEmailId = event.data.primary_email_address_id as
       | string
       | undefined;
+    // Must be the PRIMARY email AND verified — no falling back to an
+    // arbitrary array entry. isMember (granted below via provisionUser) is
+    // gated on this exact string matching MEMBER_ALLOWLIST_EMAIL, so an
+    // unverified/non-primary address here must never be trusted.
     const email =
-      emailAddresses?.find((e) => e.id === primaryEmailId)?.email_address ??
-      emailAddresses?.[0]?.email_address ??
-      "";
+      emailAddresses?.find(
+        (e) =>
+          e.id === primaryEmailId && e.verification?.status === "verified"
+      )?.email_address ?? "";
 
     if (!email) {
       console.error(

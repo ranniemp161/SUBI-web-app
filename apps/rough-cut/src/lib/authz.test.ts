@@ -64,7 +64,14 @@ describe("getAuthorizedDbUser", () => {
     const dbUser = { id: "u1", clerkId: "c1", email: "a@b.com", isMember: false };
     limitMock.mockResolvedValue([dbUser]);
     currentUserMock.mockResolvedValue({
-      emailAddresses: [{ emailAddress: "a@b.com" }],
+      primaryEmailAddressId: "e1",
+      emailAddresses: [
+        {
+          id: "e1",
+          emailAddress: "a@b.com",
+          verification: { status: "verified" },
+        },
+      ],
     });
     const updatedUser = { ...dbUser, isMember: true };
     const { isAllowlistedMember } = await import("@/lib/users");
@@ -80,7 +87,14 @@ describe("getAuthorizedDbUser", () => {
   it("provisions user if not in db but found via Clerk currentUser", async () => {
     limitMock.mockResolvedValue([]);
     currentUserMock.mockResolvedValue({
-      emailAddresses: [{ emailAddress: "a@b.com" }],
+      primaryEmailAddressId: "e1",
+      emailAddresses: [
+        {
+          id: "e1",
+          emailAddress: "a@b.com",
+          verification: { status: "verified" },
+        },
+      ],
     });
     const dbUser = { id: "u1", clerkId: "c1", email: "a@b.com" };
     vi.mocked(provisionUser).mockResolvedValue(dbUser as unknown as User);
@@ -89,6 +103,25 @@ describe("getAuthorizedDbUser", () => {
 
     expect(result).toEqual(dbUser);
     expect(provisionUser).toHaveBeenCalledWith("c1", "a@b.com");
+  });
+
+  it("returns null if the only email on the account is unverified", async () => {
+    limitMock.mockResolvedValue([]);
+    currentUserMock.mockResolvedValue({
+      primaryEmailAddressId: "e1",
+      emailAddresses: [
+        {
+          id: "e1",
+          emailAddress: "pending@example.com",
+          verification: { status: "unverified" },
+        },
+      ],
+    });
+
+    const result = await getAuthorizedDbUser("c1");
+
+    expect(result).toBeNull();
+    expect(provisionUser).not.toHaveBeenCalled();
   });
 
   it("returns null if not in db and Clerk currentUser has no email", async () => {

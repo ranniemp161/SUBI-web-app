@@ -6,7 +6,7 @@ import SpotlightCard from "@/components/SpotlightCard";
 import FadeIn from "@/components/FadeIn";
 
 export const metadata: Metadata = {
-  title: "Privacy Policy | Ruff Cut",
+  title: "Privacy Policy | MyFirstCut",
   description: "How MyFirstCut collects, uses, and protects your data.",
 };
 

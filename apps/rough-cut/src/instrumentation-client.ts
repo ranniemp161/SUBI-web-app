@@ -14,7 +14,7 @@ if (process.env.NEXT_PUBLIC_SENTRY_DSN) {
         submitButtonLabel: "Send",
         formTitle: "Request a feature or share feedback",
         messagePlaceholder:
-          "What feature would make Ruff Cut better for you? The more detail the better.",
+          "What feature would make MyFirstCut better for you? The more detail the better.",
         showBranding: false,
       }),
     ],
