@@ -1,9 +1,18 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { render, screen, cleanup, fireEvent } from "@testing-library/react";
-import { describe, it, expect, vi, beforeAll, afterEach } from "vitest";
+import { render, screen, cleanup, fireEvent, waitFor, act } from "@testing-library/react";
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vitest";
 import TimelineBar from "./timeline-bar";
 import type { EDL } from "@/lib/edl";
+import type { VideoFps } from "@/lib/frame-math";
+import { extractWaveform, type Waveform } from "@/lib/waveform";
+import { extractFilmstrip } from "@/lib/thumbnails";
+
+// The decode/timeline reconciliation tests below need a decoded waveform with a
+// chosen duration; real decoding needs WebCodecs, absent in jsdom. Every other
+// test passes sourceFile: null, so these decoders are never called there.
+vi.mock("@/lib/waveform", () => ({ extractWaveform: vi.fn() }));
+vi.mock("@/lib/thumbnails", () => ({ extractFilmstrip: vi.fn() }));
 
 // jsdom implements neither the pointer-capture trio nor ResizeObserver nor a
 // PointerEvent constructor, all of which the hand-tool pan logic calls
@@ -55,6 +64,7 @@ function makeProps(overrides: Partial<React.ComponentProps<typeof TimelineBar>> 
     currentTime: 0,
     isPlaying: false,
     sourceFile: null,
+    sourceFps: null,
     fileName: "clip.mov",
     snapTimes: [],
     onSeek: vi.fn(),
@@ -312,6 +322,69 @@ describe("TimelineBar — cross-panel sync (spec 0002)", () => {
     expect(band).toBeTruthy();
     expect(band.style.left).toBe("40px"); // 1s * 40px/s
     expect(band.style.width).toBe("80px"); // (3-1)s * 40px/s
+  });
+});
+
+// The filmstrip and waveform are sampled across their own decoded duration, but
+// clips and the playhead are positioned by the shared timeline duration. When a
+// decode's own length drifts from the timeline by more than one frame, spec 0004
+// (AC-9) keeps positioning on the shared duration and surfaces the mismatch as a
+// dev-only warning so it isn't silent. The default EDL above ends at 8s, so the
+// shared timeline duration here is 8s.
+describe("TimelineBar — decode/timeline reconciliation (spec 0004, AC-9)", () => {
+  const FPS_30: VideoFps = { numerator: 30, denominator: 1 }; // one frame ≈ 0.033s
+  const TIMELINE_SECONDS = 8;
+
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.mocked(extractWaveform).mockResolvedValue(null);
+    vi.mocked(extractFilmstrip).mockResolvedValue(null); // isolate the waveform path
+  });
+  afterEach(() => {
+    warnSpy.mockRestore();
+    vi.mocked(extractWaveform).mockReset();
+    vi.mocked(extractFilmstrip).mockReset();
+  });
+
+  function waveformOfDuration(duration: number): Waveform {
+    return { peaksMin: new Float32Array(4), peaksMax: new Float32Array(4), duration };
+  }
+
+  async function renderDecoded(
+    overrides: Partial<React.ComponentProps<typeof TimelineBar>> = {}
+  ) {
+    render(
+      <TimelineBar
+        {...makeProps({ sourceFile: new File([], "clip.mov"), sourceFps: FPS_30, ...overrides })}
+      />
+    );
+    // Wait for the async decode to commit (its "Decoding audio…" label clears),
+    // then flush the passive reconciliation effect that runs just after that
+    // commit, so an assertion sees the settled warn state.
+    await waitFor(() =>
+      expect(screen.queryByText("Decoding audio…")).not.toBeInTheDocument()
+    );
+    await act(async () => {});
+  }
+
+  it("warns when a decoded duration disagrees with the timeline by more than one frame", async () => {
+    // 8.5s decoded against an 8s timeline: 0.5s off, far over one 30fps frame.
+    vi.mocked(extractWaveform).mockResolvedValue(waveformOfDuration(TIMELINE_SECONDS + 0.5));
+    await renderDecoded();
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("disagrees with"));
+  });
+
+  it("stays silent when the decoded duration is within one frame of the timeline", async () => {
+    vi.mocked(extractWaveform).mockResolvedValue(waveformOfDuration(TIMELINE_SECONDS + 0.01));
+    await renderDecoded();
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not warn when the source frame rate is unknown (no tolerance to size the check)", async () => {
+    vi.mocked(extractWaveform).mockResolvedValue(waveformOfDuration(TIMELINE_SECONDS + 0.5));
+    await renderDecoded({ sourceFps: null });
+    expect(warnSpy).not.toHaveBeenCalled();
   });
 });
 

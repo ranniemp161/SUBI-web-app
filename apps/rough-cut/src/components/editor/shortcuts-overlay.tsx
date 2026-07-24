@@ -6,7 +6,7 @@ const SHORTCUTS: { keys: string; label: string }[] = [
   { keys: "Space / K", label: "Play / pause" },
   { keys: "J / L", label: "Jump back / forward 5s" },
   { keys: "← / →", label: "Step 1s (Shift = 5s)" },
-  { keys: ", / .", label: "Nudge 0.1s" },
+  { keys: ", / .", label: "Step 1 frame back / forward" },
   { keys: "↑ / ↓", label: "Previous / next edit point" },
   { keys: "Home / End", label: "Jump to start / end" },
   { keys: "Click word", label: "Seek to that word" },

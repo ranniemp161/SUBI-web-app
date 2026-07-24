@@ -8,12 +8,18 @@ import {
 } from "react";
 import type { EDL } from "@/lib/edl";
 import { nextPlaybackTime, stopPlaybackTime } from "@/lib/edl";
+import { frameToSeconds, secondsToFrame, type VideoFps } from "@/lib/frame-math";
 
 export interface VideoPlayerHandle {
   seek: (seconds: number) => void;
   play: () => void;
   pause: () => void;
   togglePlay: () => void;
+  /** Step exactly one source frame back (-1) or forward (+1) at `fps` (spec
+   *  0004). Pauses first, seeks to the exact frame boundary, and — where the
+   *  browser supports it — confirms the frame actually presented before
+   *  reporting. Steps through the real source video, ignoring cuts. */
+  stepFrame: (direction: 1 | -1, fps: VideoFps) => void;
   setPlaybackRate: (rate: number) => void;
   setMuted: (muted: boolean) => void;
   requestFullscreen: () => void;
@@ -65,6 +71,12 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
     // word/segment. Remember the requested time and report it verbatim while
     // the readback sits within the quantization error.
     const pendingSeekRef = useRef<number | null>(null);
+    // True while a frame step's paused seek is settling. It tells the rAF/
+    // timeupdate sync to report the stepped position as-is and NOT apply the
+    // playback cut-skip, so a step lands on the real source frame even inside a
+    // cut (spec 0004, AC-13). Cleared when playback resumes, restoring the
+    // normal skip behavior (AC-16).
+    const steppingRef = useRef(false);
 
     // video.play() returns a promise that rejects with AbortError if a pause()
     // or seek interrupts it before it resolves. The editor interleaves
@@ -96,6 +108,40 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
         if (!video) return;
         if (video.paused) safePlay(video);
         else video.pause();
+      },
+      stepFrame(direction: 1 | -1, fps: VideoFps) {
+        const video = videoRef.current;
+        if (!video) return;
+        // Stepping is a paused precision action.
+        if (!video.paused) video.pause();
+        steppingRef.current = true;
+        // Land on the exact neighbouring frame boundary, computed through the
+        // app-wide frame math so it matches export and the rest of the app.
+        const currentFrame = secondsToFrame(video.currentTime, fps);
+        const targetFrame = Math.max(0, currentFrame + direction);
+        const targetTime = frameToSeconds(targetFrame, fps);
+        pendingSeekRef.current = targetTime;
+        video.currentTime = targetTime;
+
+        // Not in every browser (feature-detected); confirm the frame actually
+        // presented before reporting (AC-12), else fall back below (AC-15).
+        const rvfc = video.requestVideoFrameCallback as
+          | HTMLVideoElement["requestVideoFrameCallback"]
+          | undefined;
+        if (typeof rvfc === "function") {
+          rvfc.call(video, (_now, metadata) => {
+            const shown = metadata.mediaTime;
+            const time =
+              Math.abs(shown - targetTime) <= SEEK_QUANTIZATION_EPS ? targetTime : shown;
+            pendingSeekRef.current = time;
+            onTimeUpdate?.(time);
+          });
+        } else {
+          // No requestVideoFrameCallback: report the requested frame time now;
+          // the seeked/timeupdate sync also reports it via the pending snap.
+          // Frame-exact confirmation is unavailable, the step still works (AC-15).
+          onTimeUpdate?.(targetTime);
+        }
       },
       setPlaybackRate(rate: number) {
         if (videoRef.current) videoRef.current.playbackRate = rate;
@@ -133,6 +179,16 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
           if (Math.abs(time - pending) <= SEEK_QUANTIZATION_EPS) time = pending;
           else if (!video.seeking) pendingSeekRef.current = null;
         }
+        // A frame step reports its exact landing position and never skips a cut
+        // (spec 0004, AC-13): report the (pending-snapped) time and bail before
+        // the playback stop/skip logic below.
+        if (steppingRef.current) {
+          if (time !== lastReported) {
+            lastReported = time;
+            onTimeUpdate?.(time);
+          }
+          return;
+        }
         // A cut with no kept content after it has nowhere to skip to — stop
         // playback at the end of the last kept clip instead of letting the
         // deleted tail (or media past the timeline's end) play through. Only
@@ -164,6 +220,9 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       }
 
       const handlePlay = () => {
+        // Resuming playback ends any frame-stepping state, so the normal cut-
+        // skip behavior takes over again (spec 0004, AC-16).
+        steppingRef.current = false;
         cancelAnimationFrame(frame);
         frame = requestAnimationFrame(tick);
         onPlayingChange?.(true);
