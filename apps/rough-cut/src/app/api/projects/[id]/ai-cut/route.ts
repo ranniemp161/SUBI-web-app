@@ -9,7 +9,7 @@ import {
   AI_CUT_RUN_LIMIT,
 } from "@/lib/projects";
 import { aiCutRateLimit, rateLimit } from "@/lib/rate-limit";
-import { runAiRoughCut, isAiRoughCutConfigured } from "@/lib/ai-rough-cut";
+import { runAiRoughCut, isAiRoughCutConfigured, type AiCutPhase } from "@/lib/ai-rough-cut";
 import { chargeAiCut, costSecondsForDurationMs, refundAiCut } from "@/lib/credits";
 import { reportError } from "@/lib/observability";
 import type { Transcript } from "@/lib/edl";
@@ -145,37 +145,47 @@ export async function POST(
       }
 
       // Start a stream immediately so the Vercel Proxy doesn't kill the connection at 10s (Hobby limit).
-      // We stream a space character every 5 seconds to keep the connection alive while Gemini thinks.
+      // Each line is a newline-delimited JSON value: `{"phase":...}` lines while
+      // Gemini thinks (also the heartbeat keeping the connection alive every 5s),
+      // then one terminal line — the AiCutRun or `{"error"}` — ending the stream.
+      // Callers must read incrementally and treat the first non-phase line as the
+      // result; a 200 status alone doesn't mean success (see AGENTS.md).
       const stream = new ReadableStream({
         async start(controller) {
           const encoder = new TextEncoder();
-          const heartbeat = setInterval(() => {
-            controller.enqueue(encoder.encode(" "));
-          }, 5000);
+          let currentPhase: AiCutPhase = "analyzing";
+          const sendPhase = () => {
+            controller.enqueue(encoder.encode(`${JSON.stringify({ phase: currentPhase })}\n`));
+          };
+          const heartbeat = setInterval(sendPhase, 5000);
+          sendPhase();
 
           try {
-            const aiCuts = await runAiRoughCut(transcript.words);
+            const aiCuts = await runAiRoughCut(transcript.words, (phase) => {
+              currentPhase = phase;
+              sendPhase();
+            });
 
             if (!aiCuts) {
               await refundAiCutQuietly(project.userId, id, costSeconds, idempotencyKey);
               await releaseAiCutClaim(id);
               clearInterval(heartbeat);
               // Since HTTP 200 is already sent, we must send the error inside the JSON payload
-              controller.enqueue(encoder.encode(JSON.stringify({ error: "This transcript is too long for the AI pass." })));
+              controller.enqueue(encoder.encode(`${JSON.stringify({ error: "This transcript is too long for the AI pass." })}\n`));
               controller.close();
               return;
             }
 
             const run = await createAiCutRun(id, aiCuts.ranges, aiCuts.model);
             clearInterval(heartbeat);
-            controller.enqueue(encoder.encode(JSON.stringify(run)));
+            controller.enqueue(encoder.encode(`${JSON.stringify(run)}\n`));
             controller.close();
           } catch (error) {
             clearInterval(heartbeat);
             await refundAiCutQuietly(project.userId, id, costSeconds, idempotencyKey);
             await releaseAiCutClaim(id);
             reportError("Error running AI rough cut", error);
-            controller.enqueue(encoder.encode(JSON.stringify({ error: "The AI pass failed — try again." })));
+            controller.enqueue(encoder.encode(`${JSON.stringify({ error: "The AI pass failed — try again." })}\n`));
             controller.close();
           }
         },

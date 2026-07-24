@@ -29,7 +29,6 @@ import type { ReactNode } from "react";
 import { ExportModal } from "@/components/export-modal";
 import { Toaster, toast } from "sonner";
 import FilePicker from "@/components/file-picker";
-import ProgressRing from "@/components/progress-ring";
 import VideoPlayer, {
   type VideoPlayerHandle,
   type VideoMeta,
@@ -79,6 +78,7 @@ import {
   type TranscriptWord,
 } from "@/lib/edl";
 import { applyAiCuts, type AiCutRun } from "@/lib/ai-cuts";
+import type { AiCutPhase } from "@/lib/ai-rough-cut";
 import { refineTranscriptWords, applyManualEditGuard } from "@/lib/word-alignment";
 import { ConfirmDialog } from "@repo/ui";
 import { FeedbackButton } from "@/components/feedback-button";
@@ -99,6 +99,11 @@ const AI_CUT_RUN_LIMIT = 3;
 // ~4 frames at 24fps; generous enough to absorb eyeballing the playhead,
 // tight enough to never jump to the wrong word.
 const PLAYHEAD_CUT_SNAP_SECONDS = 0.15;
+
+// Backstop only — the route's own maxDuration = 300 (api/projects/[id]/ai-cut/route.ts)
+// is the real ceiling. This exists so a killed function that doesn't cleanly
+// close its connection can't hang the UI indefinitely; 5s past the server cap.
+const AI_CUT_CLIENT_TIMEOUT_MS = 305_000;
 
 interface Project {
   id: string;
@@ -156,6 +161,86 @@ const exportSupportSnapshot = (): ExportSupport =>
 // answer on the client. No effect, no hydration mismatch.
 const exportSupportServerSnapshot = (): ExportSupport | null => null;
 const exportSupportSubscribe = () => () => { };
+
+/** One NDJSON line from the AI Cut stream: a phase update (consumed via
+ * onPhase, returns null) or the terminal payload (returned as-is). */
+function parseAiCutLine(line: string, onPhase: (phase: AiCutPhase) => void): unknown | null {
+  const trimmed = line.trim();
+  if (!trimmed) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    return null;
+  }
+  const phase = (parsed as { phase?: unknown })?.phase;
+  if (phase === "analyzing" || phase === "verifying") {
+    onPhase(phase);
+    return null;
+  }
+  return parsed;
+}
+
+/**
+ * Read the AI Cut route's NDJSON stream incrementally, surfacing each
+ * `{"phase":...}` line to `onPhase` as it arrives and returning the terminal
+ * AiCutRun/`{"error"}` payload once the stream ends. Falls back to a single
+ * buffered read (no live phase updates, still correct) if the environment
+ * doesn't expose a readable body stream.
+ */
+async function readAiCutStream(
+  response: Response,
+  onPhase: (phase: AiCutPhase) => void
+): Promise<unknown> {
+  let result: unknown = null;
+
+  if (!response.body) {
+    const text = await response.text();
+    for (const line of text.split("\n")) {
+      const parsed = parseAiCutLine(line, onPhase);
+      if (parsed !== null) result = parsed;
+    }
+    return result;
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (value) buffer += decoder.decode(value, { stream: true });
+    let newlineIndex: number;
+    while ((newlineIndex = buffer.indexOf("\n")) >= 0) {
+      const parsed = parseAiCutLine(buffer.slice(0, newlineIndex), onPhase);
+      if (parsed !== null) result = parsed;
+      buffer = buffer.slice(newlineIndex + 1);
+    }
+    if (done) break;
+  }
+  if (buffer.trim()) {
+    const parsed = parseAiCutLine(buffer, onPhase);
+    if (parsed !== null) result = parsed;
+  }
+  return result;
+}
+
+/**
+ * Best-effort re-check of a project's stored AI Cut runs — used when the
+ * request that would create one fails ambiguously (network drop, timeout),
+ * since the server may have finished and charged before the response
+ * reached the browser. Returns null on any failure; callers must treat that
+ * as "unknown," never as "confirmed no runs."
+ */
+async function fetchAiCutRunsQuietly(projectId: string): Promise<AiCutRun[] | null> {
+  try {
+    const response = await fetch(`/api/projects/${projectId}`);
+    if (!response.ok) return null;
+    const data = (await response.json()) as { aiCutRuns?: AiCutRun[] };
+    return data.aiCutRuns ?? null;
+  } catch {
+    return null;
+  }
+}
 
 export default function EditorPage() {
   const { id } = useParams<{ id: string }>();
@@ -840,6 +925,33 @@ export default function EditorPage() {
   // transcription time failed, and the only path for older projects.
   const [aiBusy, setAiBusy] = useState(false);
   const aiCutIdempotencyKey = useRef<string | null>(null);
+  // Which Gemini pass is currently running (pushed live from the route's
+  // NDJSON stream — see readAiCutStream) and whether the browser has gone
+  // offline mid-wait. Both drive the overlay's honest, non-percentage UI.
+  const [aiCutPhase, setAiCutPhase] = useState<AiCutPhase>("analyzing");
+  const [aiCutOffline, setAiCutOffline] = useState(false);
+  // Fake-but-monotonic progress and rotating micro-copy for the two loading
+  // surfaces below (AiCutOverlay + the chainPending StatusScreen) — spans
+  // both the on-demand pass (aiBusy/autoCutBusy) and the auto-chain wait
+  // (chainPending), since all three cover the same underlying Gemini call.
+  const aiCutActive = aiBusy || autoCutBusy || chainPending;
+  const aiCutProgress = useFakeProgress(aiCutActive, aiCutPhase);
+  const aiCutMessage = useAiCutMessage(aiCutPhase, aiCutActive);
+
+  // A dead connection can otherwise sit silent for a long time before fetch
+  // itself notices — this surfaces it immediately instead of leaving the
+  // progress UI looking unchanged while nothing is actually happening.
+  useEffect(() => {
+    if (!aiBusy) return;
+    const handleOffline = () => setAiCutOffline(true);
+    const handleOnline = () => setAiCutOffline(false);
+    window.addEventListener("offline", handleOffline);
+    window.addEventListener("online", handleOnline);
+    return () => {
+      window.removeEventListener("offline", handleOffline);
+      window.removeEventListener("online", handleOnline);
+    };
+  }, [aiBusy]);
 
   // `sourceEdl` lets a caller run the AI pass against a just-built EDL that
   // isn't yet in `edl` state (the auto-chain's mechanical result). Because
@@ -851,6 +963,8 @@ export default function EditorPage() {
     const base = sourceEdl ?? edl;
     if (!base || aiBusy) return;
     setAiBusy(true);
+    setAiCutPhase("analyzing");
+    setAiCutOffline(false);
 
     if (!aiCutIdempotencyKey.current) {
       aiCutIdempotencyKey.current = crypto.randomUUID();
@@ -862,9 +976,12 @@ export default function EditorPage() {
       const response = await fetch(`/api/projects/${id}/ai-cut`, {
         method: "POST",
         headers: { "Idempotency-Key": currentKey },
+        // Backstop only — see AI_CUT_CLIENT_TIMEOUT_MS.
+        signal: AbortSignal.timeout(AI_CUT_CLIENT_TIMEOUT_MS),
       });
-      const data = await response.json().catch(() => null);
+
       if (!response.ok) {
+        const data = await response.json().catch(() => null);
         if (response.status === 402) {
           toast.error("Not enough funds", {
             id: "ai-cut",
@@ -902,8 +1019,11 @@ export default function EditorPage() {
         return;
       }
 
-      // If the Vercel Proxy heartbeat stream started successfully (200 OK) but Gemini failed 
-      // mid-stream, the error is shipped inside the JSON payload.
+      // The route streams NDJSON: `{"phase":...}` lines as Gemini works,
+      // then one terminal line — the AiCutRun or `{"error"}` — even though
+      // the HTTP status is already a 200.
+      const data = await readAiCutStream(response, setAiCutPhase);
+
       const lateError = (data as { error?: string } | null)?.error;
       if (lateError) {
         toast.error("AI cut failed", {
@@ -935,10 +1055,36 @@ export default function EditorPage() {
         `AI cut applied — ${run.ranges.length} mistake${run.ranges.length === 1 ? "" : "s"} removed`,
         { id: "ai-cut", action: { label: "Undo", onClick: () => undo() } }
       );
-    } catch {
-      toast.error("AI cut failed", {
+    } catch (error) {
+      // The connection may have dropped after the server already finished
+      // and charged for a run — re-check before assuming failure, so a flaky
+      // connection never causes a second billed run for the same transcript.
+      const knownRunIds = new Set((projectRef.current?.aiCutRuns ?? []).map((r) => r.id));
+      const reconciledRuns = await fetchAiCutRunsQuietly(id);
+      const orphanedRun = reconciledRuns?.find((r) => !knownRunIds.has(r.id));
+      if (orphanedRun) {
+        setProject((prev) =>
+          prev
+            ? { ...prev, activeAiCutRunId: orphanedRun.id, aiCutRuns: reconciledRuns! }
+            : prev
+        );
+        if (orphanedRun.ranges.length > 0 && applyEdl(applyAiCuts(base, orphanedRun, words))) {
+          setCutEvent({ kind: "ai", at: Date.now() });
+        }
+        toast.success(
+          `Reconnected — AI cut had already finished (${orphanedRun.ranges.length} mistake${orphanedRun.ranges.length === 1 ? "" : "s"} removed)`,
+          { id: "ai-cut", action: { label: "Undo", onClick: () => undo() } }
+        );
+        return;
+      }
+      const isTimeout =
+        error instanceof DOMException &&
+        (error.name === "TimeoutError" || error.name === "AbortError");
+      toast.error(isTimeout ? "AI cut timed out" : "AI cut failed", {
         id: "ai-cut",
-        description: "Check your connection and try again.",
+        description: isTimeout
+          ? "This took longer than expected. Check your connection and try again."
+          : "Check your connection and try again.",
       });
     } finally {
       aiCutIdempotencyKey.current = null;
@@ -1487,12 +1633,16 @@ export default function EditorPage() {
   // instead of an indefinite spinner, since this wait can run to a couple of
   // minutes on a long transcript.
   if (chainPending) {
+    const { title } = aiCutPhaseCopy(aiCutPhase);
     return (
       <StatusScreen
-        icon={<Loader2 className="h-7 w-7 motion-safe:animate-spin" />}
-        title="A.I. is doing the rough cut in the background..."
-        message="Finding false starts, stumbles & flubbed takes"
-        progress={<AutoChainProgressBar wordCount={words.length} />}
+        icon={<AiCutBadge isOffline={aiCutOffline} />}
+        bareIcon
+        title={aiCutOffline ? "You're offline" : title}
+        message={
+          aiCutOffline ? "We'll keep waiting until your connection is back." : aiCutMessage
+        }
+        progress={<AutoChainProgressBar isOffline={aiCutOffline} progress={aiCutProgress} />}
       />
     );
   }
@@ -1638,7 +1788,14 @@ export default function EditorPage() {
                 </button>
               )}
             </div>
-            {(aiBusy || autoCutBusy) && <AiCutOverlay wordCount={words.length} />}
+            {(aiBusy || autoCutBusy) && (
+              <AiCutOverlay
+                phase={aiCutPhase}
+                isOffline={aiCutOffline}
+                progress={aiCutProgress}
+                message={aiCutMessage}
+              />
+            )}
           </div>
 
           {/* Transport bar */}
@@ -1859,75 +2016,198 @@ export default function EditorPage() {
   );
 }
 
-/**
- * Duration-calibrated completion estimate, shared by every "AI is working"
- * loading visual in this file. Gemini gives no real progress signal — it's a
- * single call — so this is a transcript-size-calibrated guess that climbs to
- * 95% and lets the caller's own unmount (once the real work finishes) be
- * what "completes" it, rather than ever claiming 100% before it's true.
- */
-function useEstimatedProgress(wordCount: number): number {
-  const [startedAt] = useState(() => Date.now());
-  const [now, setNow] = useState(startedAt);
+/** Title for the current phase — shared so the two loading surfaces below stay in sync. */
+function aiCutPhaseCopy(phase: AiCutPhase): { title: string } {
+  return phase === "verifying"
+    ? { title: "Double-checking a few edits…" }
+    : { title: "A.I. is doing the rough cut in the background..." };
+}
+
+// Rotating micro-copy under the title — cycles every few seconds so a wait that
+// can run to a couple of minutes visibly keeps moving instead of sitting on one
+// static line. Purely cosmetic (no real sub-progress signal exists mid-phase),
+// so it never claims specifics the model can't back up.
+const ANALYZING_MESSAGES = [
+  "Finding false starts, stumbles & flubbed takes",
+  "Scanning for dead air and long pauses",
+  "Spotting repeated takes",
+  "Weighing pacing and flow",
+  "Cross-checking the borderline cuts",
+];
+const VERIFYING_MESSAGES = [
+  "Re-reading the borderline calls in context",
+  "Double-checking edge cases before finalizing",
+  "Making sure nothing important got cut",
+];
+const AI_CUT_MESSAGE_INTERVAL_MS = 3200;
+
+function useAiCutMessage(phase: AiCutPhase, active: boolean): string {
+  const messages = phase === "verifying" ? VERIFYING_MESSAGES : ANALYZING_MESSAGES;
+  const [index, setIndex] = useState(0);
   useEffect(() => {
-    const interval = setInterval(() => setNow(Date.now()), 500);
-    return () => clearInterval(interval);
-  }, []);
-  // Gemini's runtime scales with transcript length (thinking enabled, capped
-  // at 240s server-side) — roughly 40 words/s of review, floored and capped.
-  const expectedSeconds = Math.min(180, Math.max(12, 8 + wordCount / 40));
-  return Math.min(95, ((now - startedAt) / 1000 / expectedSeconds) * 100);
+    if (!active) return;
+    const id = setInterval(
+      () => setIndex((i) => (i + 1) % messages.length),
+      AI_CUT_MESSAGE_INTERVAL_MS
+    );
+    return () => clearInterval(id);
+  }, [active, phase, messages]);
+  // Not reset to 0 on each run — cosmetic cycling only, so picking up wherever
+  // the last run left off (mod the current phase's message count) is fine.
+  return messages[index % messages.length];
+}
+
+// Fake-but-honest progress: Gemini gives no real percentage, so this is pure
+// motion — an asymptotic curve that climbs fast at first and creeps toward a
+// cap it never quite reaches, rather than an indeterminate loop that looks
+// identical whether 5 seconds or 5 minutes have passed. `verifying` raises the
+// cap (it only starts once analysis is mostly done) and progress never drops,
+// even if the cap changes mid-run.
+function useFakeProgress(active: boolean, phase: AiCutPhase): number {
+  const [progress, setProgress] = useState(0);
+  const startRef = useRef<number | null>(null);
+
+  // Separate from the tick effect below so a mid-run phase change (analyzing
+  // -> verifying) doesn't re-fire this and snap progress back to 0 — only a
+  // fresh run (active going false -> true) should reset the clock.
+  useEffect(() => {
+    if (!active) {
+      startRef.current = null;
+      return;
+    }
+    startRef.current = Date.now();
+    const id = setTimeout(() => setProgress(0), 0);
+    return () => clearTimeout(id);
+  }, [active]);
+
+  useEffect(() => {
+    if (!active) return;
+    const cap = phase === "verifying" ? 98 : 88;
+    const id = setInterval(() => {
+      const start = startRef.current;
+      if (start === null) return;
+      const elapsedSec = (Date.now() - start) / 1000;
+      const target = cap * (1 - Math.exp(-elapsedSec / 25));
+      setProgress((prev) => Math.max(prev, target));
+    }, 400);
+    return () => clearInterval(id);
+  }, [active, phase]);
+
+  return progress;
 }
 
 /**
- * Centered progress overlay while the AI pass runs. This overlay unmounts
- * the moment aiBusy clears.
+ * The AI Cut loading badge: a slowly rotating brand-yellow sweep ring around
+ * a pulsing glow, with the Sparkles icon at the center — on-brand rather
+ * than a generic spinner (see globals.css's `pulse-glow-brand`, the same
+ * treatment marketing's CTA buttons use for `animate-liquid`). Offline swaps
+ * the ring/glow to a muted grey — motion communicates "still working," so it
+ * has to visibly stop reading as "working" when the connection actually drops.
  */
-function AiCutOverlay({ wordCount }: { wordCount: number }) {
-  const percent = useEstimatedProgress(wordCount);
+function AiCutBadge({ isOffline }: { isOffline: boolean }) {
   return (
-    <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-black/60 backdrop-blur-sm">
-      <ProgressRing percent={percent} size={96} />
-      <div className="text-center">
-        <p className="text-sm font-semibold text-white">
-          A.I. is doing the rough cut in the background...
-        </p>
-        <p className="mt-1 text-xs text-zinc-400">
-          Finding false starts, stumbles & flubbed takes
-        </p>
+    <div className="relative flex h-20 w-20 items-center justify-center">
+      <div
+        className={
+          isOffline
+            ? "absolute inset-0 rounded-full"
+            : "absolute inset-0 rounded-full motion-safe:animate-spin [animation-duration:2.5s]"
+        }
+        style={{
+          background: `conic-gradient(from 0deg, transparent 0%, ${isOffline ? "rgba(255,255,255,0.35)" : "#fffc00"} 15%, transparent 35%)`,
+        }}
+      />
+      <div
+        className={
+          isOffline
+            ? "absolute inset-[3px] rounded-full border border-white/15 bg-black"
+            : "absolute inset-[3px] rounded-full border border-[#fffc00]/25 bg-black animate-glow-brand"
+        }
+      />
+      <Sparkles
+        className={
+          isOffline
+            ? "relative h-8 w-8 text-white/40"
+            : "relative h-8 w-8 text-[#fffc00] motion-safe:animate-pulse"
+        }
+      />
+    </div>
+  );
+}
+
+/**
+ * Centered progress overlay while the AI pass runs. Gemini gives no
+ * real-time percentage — motion (the fill bar) and rotating micro-copy
+ * communicate that work is progressing, while the phase/offline text stays
+ * the honest signal: it comes from the route's live NDJSON stream
+ * (`readAiCutStream`), not a guess. This overlay unmounts the moment aiBusy
+ * clears.
+ */
+function AiCutOverlay({
+  phase,
+  isOffline,
+  progress,
+  message,
+}: {
+  phase: AiCutPhase;
+  isOffline: boolean;
+  progress: number;
+  message: string;
+}) {
+  const { title } = aiCutPhaseCopy(phase);
+  return (
+    <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+      <div className="glass-panel flex flex-col items-center gap-4 rounded-2xl px-10 py-9 shadow-[0_0_60px_rgba(255,252,0,0.06)]">
+        <AiCutBadge isOffline={isOffline} />
+        <div className="text-center">
+          <p className="text-sm font-semibold text-white">
+            {isOffline ? "You're offline" : title}
+          </p>
+          <p className="mt-1 text-xs text-zinc-400">
+            {isOffline ? "We'll keep waiting until your connection is back." : message}
+          </p>
+        </div>
+        <AutoChainProgressBar isOffline={isOffline} progress={progress} />
       </div>
     </div>
   );
 }
 
 /**
- * Linear progress bar for the ADR 0004 AC-12 full-page loading state (added
- * as a follow-up: a visible, steadily-advancing percentage reads as less
- * uncertain than a bare spinner on a wait that can run to a couple of
- * minutes). Same estimate as `AiCutOverlay`, same visual pattern as the
- * dashboard's per-project job-progress bar (`dashboard/page.tsx`), styled
- * for `StatusScreen`'s token palette instead of that page's raw colors.
+ * Progress bar for the ADR 0004 AC-12 full-page loading state (and the
+ * in-editor `AiCutOverlay`) — fills to a fake-but-monotonic percentage
+ * (`useFakeProgress`) rather than looping indeterminately, so a wait that can
+ * run a couple of minutes visibly keeps creeping forward. The filled portion
+ * still carries the brand-yellow shimmer (`animate-liquid`) so it reads as
+ * "alive," not just a static bar. No caption of its own — the `StatusScreen`
+ * title/message or `AiCutOverlay`'s rotating line at the call site already
+ * carries the live phase/offline text.
  */
-function AutoChainProgressBar({ wordCount }: { wordCount: number }) {
-  const percent = useEstimatedProgress(wordCount);
-  const rounded = Math.round(percent);
+function AutoChainProgressBar({
+  isOffline,
+  progress,
+}: {
+  isOffline: boolean;
+  progress: number;
+}) {
+  const pct = Math.min(100, Math.max(0, progress));
   return (
     <div className="w-full max-w-xs">
-      <div className="mb-1.5 flex items-center justify-between text-[11px] font-medium text-foreground/50">
-        <span>Working…</span>
-        <span className="tabular-nums font-semibold text-accent">{rounded}%</span>
-      </div>
       <div
         role="progressbar"
-        aria-label="A.I. rough cut progress"
-        aria-valuenow={rounded}
+        aria-valuenow={Math.round(pct)}
         aria-valuemin={0}
         aria-valuemax={100}
-        className="h-1.5 w-full overflow-hidden rounded-full bg-foreground/10"
+        aria-label="A.I. rough cut progress"
+        className="relative h-2 w-full overflow-hidden rounded-full bg-white/5 ring-1 ring-[#fffc00]/10"
       >
         <div
-          className="h-full rounded-full bg-accent transition-all duration-300"
-          style={{ width: `${percent}%` }}
+          className={
+            isOffline
+              ? "absolute inset-y-0 left-0 rounded-full bg-white/15 transition-[width] duration-700 ease-out"
+              : "absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-[#fffc00] via-yellow-400 to-[#fffc00] bg-[length:200%_200%] motion-safe:animate-liquid transition-[width] duration-700 ease-out"
+          }
+          style={{ width: `${Math.max(4, pct)}%` }}
         />
       </div>
     </div>
@@ -1975,6 +2255,7 @@ function StatusScreen({
   message,
   tone,
   progress,
+  bareIcon,
 }: {
   icon: ReactNode;
   title: string;
@@ -1984,15 +2265,23 @@ function StatusScreen({
    * between the message and the exit link. Omitted screens (transcribing,
    * failed, not found) are unaffected. */
   progress?: ReactNode;
+  /** Skip the generic `h-14 w-14 rounded-2xl` icon wrapper — for a caller
+   * (e.g. `AiCutBadge`) that's already a fully-styled visual with its own
+   * size and glow, which the generic box would only clip/flatten. */
+  bareIcon?: boolean;
 }) {
   return (
     <div className="flex h-screen flex-col items-center justify-center gap-4 bg-background px-6 text-center">
-      <div
-        className={`flex h-14 w-14 items-center justify-center rounded-2xl ${tone === "error" ? "bg-red-500/10 text-red-400" : "bg-accent/15 text-accent"
-          }`}
-      >
-        {icon}
-      </div>
+      {bareIcon ? (
+        icon
+      ) : (
+        <div
+          className={`flex h-14 w-14 items-center justify-center rounded-2xl ${tone === "error" ? "bg-red-500/10 text-red-400" : "bg-accent/15 text-accent"
+            }`}
+        >
+          {icon}
+        </div>
+      )}
       <div className="space-y-1.5">
         <h1 className="text-lg font-bold text-foreground">{title}</h1>
         <p className="max-w-md text-sm text-foreground/50">{message}</p>

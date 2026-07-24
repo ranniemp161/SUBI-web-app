@@ -2,7 +2,7 @@ import { currentUser } from "@clerk/nextjs/server";
 import { eq } from "drizzle-orm";
 import { db, withDbRetry } from "@repo/db";
 import { users, type User } from "@repo/db/schema";
-import { provisionUser } from "@/lib/users";
+import { provisionUser, isAllowlistedMember } from "@/lib/users";
 
 /**
  * DB-backed authorization for write routes.
@@ -13,13 +13,22 @@ import { provisionUser } from "@/lib/users";
  * session but the webhook hasn't landed yet.
  */
 export async function getAuthorizedDbUser(clerkId: string): Promise<User | null> {
+  const clerkUser = await currentUser();
+  const email = clerkUser?.emailAddresses[0]?.emailAddress ?? "";
+
   const rows = await withDbRetry(() =>
     db.select().from(users).where(eq(users.clerkId, clerkId)).limit(1)
   );
-  if (rows.length > 0) return rows[0];
 
-  const clerkUser = await currentUser();
-  const email = clerkUser?.emailAddresses[0]?.emailAddress ?? "";
+  if (rows.length > 0) {
+    const existing = rows[0];
+    const userEmail = email || existing.email || "";
+    if (userEmail && isAllowlistedMember(userEmail) && !existing.isMember) {
+      return provisionUser(clerkId, userEmail);
+    }
+    return existing;
+  }
+
   if (!email) return null;
 
   return provisionUser(clerkId, email);

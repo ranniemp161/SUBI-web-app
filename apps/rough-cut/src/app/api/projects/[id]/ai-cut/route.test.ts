@@ -88,6 +88,16 @@ const VALID_ID = "12345678-1234-1234-1234-123456789abc";
 const params = Promise.resolve({ id: VALID_ID });
 const request = () => new Request("http://localhost", { method: "POST" });
 
+// The route's 200 body is NDJSON (a `{"phase":...}` line per phase update,
+// then one terminal line) — `res.json()` only works for the single-JSON
+// error responses (402/409/etc). This reads the whole stream and parses the
+// last line, mirroring how the real client (readAiCutStream) finds the result.
+async function readTerminalJson(res: Response): Promise<unknown> {
+  const text = await res.text();
+  const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
+  return JSON.parse(lines[lines.length - 1]);
+}
+
 const READY_PROJECT = {
   id: VALID_ID,
   userId: "user-1",
@@ -230,7 +240,7 @@ describe("POST /api/projects/:id/ai-cut — concurrent-run claim", () => {
     state.aiError = true;
     const res = await POST(request(), { params });
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readTerminalJson(res);
     expect(body).toHaveProperty("error");
     expect(state.releaseCalls).toEqual([[VALID_ID]]);
   });
@@ -241,7 +251,7 @@ describe("POST /api/projects/:id/ai-cut — concurrent-run claim", () => {
     state.aiResult = null;
     const res = await POST(request(), { params });
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readTerminalJson(res);
     expect(body).toHaveProperty("error");
     expect(state.releaseCalls).toEqual([[VALID_ID]]);
   });
@@ -287,10 +297,11 @@ describe("POST /api/projects/:id/ai-cut — the run itself", () => {
     const res = await POST(request(), { params });
     expect(res.status).toBe(200);
     expect(runAiRoughCut).toHaveBeenCalledWith(
-      (READY_PROJECT.transcript as { words: unknown }).words
+      (READY_PROJECT.transcript as { words: unknown }).words,
+      expect.any(Function)
     );
     expect(createAiCutRun).toHaveBeenCalledWith(VALID_ID, AI_CUTS.ranges, AI_CUTS.model);
-    expect(await res.json()).toEqual(CREATED_RUN);
+    expect(await readTerminalJson(res)).toEqual(CREATED_RUN);
     expect(state.refundCalls).toHaveLength(0);
   });
 
@@ -300,7 +311,7 @@ describe("POST /api/projects/:id/ai-cut — the run itself", () => {
     state.aiResult = null; // configured + words present, so null = size guard
     const res = await POST(request(), { params });
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readTerminalJson(res);
     expect(body).toHaveProperty("error");
     expect(createAiCutRun).not.toHaveBeenCalled();
     expect(refundAiCut).toHaveBeenCalledWith("user-1", VALID_ID, 5, undefined);
@@ -312,7 +323,7 @@ describe("POST /api/projects/:id/ai-cut — the run itself", () => {
     state.aiError = true;
     const res = await POST(request(), { params });
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await readTerminalJson(res);
     expect(body).toHaveProperty("error");
     expect(createAiCutRun).not.toHaveBeenCalled();
     expect(refundAiCut).toHaveBeenCalledWith("user-1", VALID_ID, 5, undefined);

@@ -12,6 +12,7 @@
   --animate-float-slow: float 8s ease-in-out 1s infinite;
   --animate-breathe: breathe 10s ease-in-out infinite;
   --animate-liquid: liquid-gradient 3s ease infinite;
+  --animate-pulse-slow: pulse-slow 4s ease-in-out infinite;
   
   @keyframes float {
     0%, 100% { transform: translateY(0px) rotate(0deg); }
@@ -27,6 +28,11 @@
     0% { background-position: 0% 50%; }
     50% { background-position: 100% 50%; }
     100% { background-position: 0% 50%; }
+  }
+
+  @keyframes pulse-slow {
+    0%, 100% { opacity: 0.2; transform: scale(1); }
+    50% { opacity: 0.45; transform: scale(1.05); }
   }
 }
 
@@ -47,4 +53,87 @@
   background-size: 40px 40px;
   background-image: linear-gradient(to right, rgba(255, 255, 255, 0.08) 1px, transparent 1px),
                     linear-gradient(to bottom, rgba(255, 255, 255, 0.08) 1px, transparent 1px);
+}
+
+/* Cinematic Video Bezel Frame */
+.cinematic-video-frame {
+  position: relative;
+  border-radius: 1.25rem;
+  padding: 8px;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 0, 0.05), rgba(255, 255, 255, 0.03));
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.9), 0 0 50px rgba(255, 255, 0, 0.12);
+  backdrop-filter: blur(20px);
+}
+
+/* Camera Lens Corner Crosshairs */
+.cinematic-corner-tl,
+.cinematic-corner-tr,
+.cinematic-corner-bl,
+.cinematic-corner-br {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  pointer-events: none;
+  z-index: 20;
+}
+
+.cinematic-corner-tl { top: -2px; left: -2px; border-top: 2px solid #ffff00; border-left: 2px solid #ffff00; }
+.cinematic-corner-tr { top: -2px; right: -2px; border-top: 2px solid #ffff00; border-right: 2px solid #ffff00; }
+.cinematic-corner-bl { bottom: -2px; left: -2px; border-bottom: 2px solid #ffff00; border-left: 2px solid #ffff00; }
+.cinematic-corner-br { bottom: -2px; right: -2px; border-bottom: 2px solid #ffff00; border-right: 2px solid #ffff00; }
+
+/* Metallic Gold Text Gradient */
+.text-metallic-gold {
+  background: linear-gradient(135deg, #ffffff 0%, #fffbcf 35%, #ffff00 70%, #d4af37 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Highly Prominent Vibrant Yellow Animated Button */
+.btn-animated {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  background: linear-gradient(135deg, #ffff00 0%, #ffe600 50%, #ffd700 100%);
+  color: #000000 !important;
+  font-weight: 800;
+  font-family: var(--font-heading);
+  font-size: 1.25rem;
+  padding: 0.875rem 2.25rem;
+  border-radius: 9999px;
+  text-decoration: none;
+  transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  cursor: pointer;
+  border: 1px solid rgba(255, 255, 0, 0.8);
+  box-shadow: 0 0 35px rgba(255, 255, 0, 0.45), 0 4px 20px rgba(0, 0, 0, 0.5);
+  letter-spacing: -0.01em;
+}
+
+.btn-animated::before {
+  content: '→';
+  font-weight: 900;
+  transition: transform 0.3s ease;
+}
+
+.btn-animated::after {
+  content: '←';
+  font-weight: 900;
+  transition: transform 0.3s ease;
+}
+
+.btn-animated:hover {
+  transform: scale(1.08);
+  background: linear-gradient(135deg, #ffffff 0%, #ffff33 100%);
+  color: #000000 !important;
+  box-shadow: 0 0 50px rgba(255, 255, 0, 0.65), 0 6px 25px rgba(0, 0, 0, 0.6);
+}
+
+.btn-animated:hover::before {
+  transform: translateX(5px);
+}
+
+.btn-animated:hover::after {
+  transform: translateX(-5px);
 }
