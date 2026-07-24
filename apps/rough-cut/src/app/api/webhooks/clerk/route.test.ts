@@ -111,7 +111,13 @@ describe("POST /api/webhooks/clerk — user.created handling", () => {
       type: "user.created",
       data: {
         id: "user_2",
-        email_addresses: [{ id: "e1", email_address: "a@b.com" }],
+        email_addresses: [
+          {
+            id: "e1",
+            email_address: "a@b.com",
+            verification: { status: "verified" },
+          },
+        ],
         primary_email_address_id: "e1",
       },
     });
@@ -122,20 +128,49 @@ describe("POST /api/webhooks/clerk — user.created handling", () => {
     ]);
   });
 
-  it("falls back to the first email address if primary_email_address_id is not found", async () => {
+  it("skips provisioning when primary_email_address_id doesn't resolve to a verified address", async () => {
     state.verifyImpl = () => ({
       type: "user.created",
       data: {
         id: "user_3",
-        email_addresses: [{ id: "e1", email_address: "first@example.com" }, { id: "e2", email_address: "second@example.com" }],
+        email_addresses: [
+          {
+            id: "e1",
+            email_address: "first@example.com",
+            verification: { status: "verified" },
+          },
+          {
+            id: "e2",
+            email_address: "second@example.com",
+            verification: { status: "verified" },
+          },
+        ],
         primary_email_address_id: "missing",
       },
     });
     const res = await POST(req({}));
     expect(res.status).toBe(200);
-    expect(state.provisionCalls).toEqual([
-      { clerkId: "user_3", email: "first@example.com" },
-    ]);
+    expect(state.provisionCalls).toEqual([]);
+  });
+
+  it("skips provisioning when the primary email is unverified", async () => {
+    state.verifyImpl = () => ({
+      type: "user.created",
+      data: {
+        id: "user_4",
+        email_addresses: [
+          {
+            id: "e1",
+            email_address: "pending@example.com",
+            verification: { status: "unverified" },
+          },
+        ],
+        primary_email_address_id: "e1",
+      },
+    });
+    const res = await POST(req({}));
+    expect(res.status).toBe(200);
+    expect(state.provisionCalls).toEqual([]);
   });
 
   it("skips provisioning and returns 200 when no email_addresses are present", async () => {

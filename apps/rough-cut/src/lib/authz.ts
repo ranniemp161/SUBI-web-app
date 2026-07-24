@@ -14,7 +14,17 @@ import { provisionUser, isAllowlistedMember } from "@/lib/users";
  */
 export async function getAuthorizedDbUser(clerkId: string): Promise<User | null> {
   const clerkUser = await currentUser();
-  const email = clerkUser?.emailAddresses[0]?.emailAddress ?? "";
+  // Must be the account's PRIMARY email AND verified — emailAddresses[0] is
+  // not guaranteed to be either. Clerk lets a signed-in user attach extra
+  // (initially unverified) addresses to their profile; picking index 0 blind
+  // would let someone add MEMBER_ALLOWLIST_EMAIL as a secondary address and
+  // self-grant membership without ever proving they control that inbox.
+  const email =
+    clerkUser?.emailAddresses.find(
+      (e) =>
+        e.id === clerkUser.primaryEmailAddressId &&
+        e.verification?.status === "verified"
+    )?.emailAddress ?? "";
 
   const rows = await withDbRetry(() =>
     db.select().from(users).where(eq(users.clerkId, clerkId)).limit(1)
