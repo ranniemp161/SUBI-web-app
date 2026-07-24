@@ -33,6 +33,7 @@ vi.mock("@clerk/nextjs/server", () => ({
 
 vi.mock("@/lib/users", () => ({
   provisionUser: vi.fn(),
+  isAllowlistedMember: vi.fn(() => false),
 }));
 
 import { getAuthorizedDbUser } from "./authz";
@@ -57,6 +58,23 @@ describe("getAuthorizedDbUser", () => {
     expect(result).toEqual(dbUser);
     expect(limitMock).toHaveBeenCalledWith(1);
     expect(provisionUser).not.toHaveBeenCalled();
+  });
+
+  it("re-provisions user if existing in db as non-member but email is allowlisted", async () => {
+    const dbUser = { id: "u1", clerkId: "c1", email: "a@b.com", isMember: false };
+    limitMock.mockResolvedValue([dbUser]);
+    currentUserMock.mockResolvedValue({
+      emailAddresses: [{ emailAddress: "a@b.com" }],
+    });
+    const updatedUser = { ...dbUser, isMember: true };
+    const { isAllowlistedMember } = await import("@/lib/users");
+    vi.mocked(isAllowlistedMember).mockReturnValue(true);
+    vi.mocked(provisionUser).mockResolvedValue(updatedUser as unknown as User);
+
+    const result = await getAuthorizedDbUser("c1");
+
+    expect(result).toEqual(updatedUser);
+    expect(provisionUser).toHaveBeenCalledWith("c1", "a@b.com");
   });
 
   it("provisions user if not in db but found via Clerk currentUser", async () => {

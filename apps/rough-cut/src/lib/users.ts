@@ -7,9 +7,12 @@ import { users, type User } from "@repo/db/schema";
  * provisioning — everyone else starts at isMember=false and pays via Stripe.
  * Case-insensitive since email providers treat case as insignificant.
  */
-function isAllowlistedMember(email: string): boolean {
-  const allowlisted = process.env.MEMBER_ALLOWLIST_EMAIL;
-  return !!allowlisted && email.toLowerCase() === allowlisted.toLowerCase();
+export function isAllowlistedMember(email: string): boolean {
+  const raw = process.env.MEMBER_ALLOWLIST_EMAIL;
+  if (!raw || !email) return false;
+  const cleanAllowlisted = raw.trim().replace(/^["']|["']$/g, "").toLowerCase();
+  const cleanEmail = email.trim().toLowerCase();
+  return cleanEmail === cleanAllowlisted;
 }
 
 /**

@@ -88,6 +88,26 @@ function posterFor(id: string): string {
   return POSTER_GRADIENTS[hash % POSTER_GRADIENTS.length];
 }
 
+/**
+ * Compact page-number list for the pagination bar, e.g. `1 … 4 5 6 … 12` —
+ * always shows the first/last page, the current page and one neighbor on
+ * each side, and collapses everything else into a single "ellipsis" entry
+ * per gap so the control stays a fixed, scannable width regardless of how
+ * many pages there are.
+ */
+function paginationRange(current: number, total: number): (number | "ellipsis")[] {
+  const siblingCount = 1;
+  const left = Math.max(2, current - siblingCount);
+  const right = Math.min(total - 1, current + siblingCount);
+
+  const range: (number | "ellipsis")[] = [1];
+  if (left > 2) range.push("ellipsis");
+  for (let page = left; page <= right; page++) range.push(page);
+  if (right < total - 1) range.push("ellipsis");
+  if (total > 1) range.push(total);
+  return range;
+}
+
 export interface CreditsInfo {
   balanceMicros: number;
   isMember: boolean;
@@ -297,6 +317,25 @@ export default function DashboardPage() {
   const paginatedProjects = needsPagination
     ? projects.slice((currentPage - 1) * PROJECTS_PER_PAGE, currentPage * PROJECTS_PER_PAGE)
     : projects;
+  const rangeStart = needsPagination ? (currentPage - 1) * PROJECTS_PER_PAGE + 1 : 1;
+  const rangeEnd = needsPagination
+    ? Math.min(currentPage * PROJECTS_PER_PAGE, projects.length)
+    : projects.length;
+
+  // Projects load newest-first, so "recent" vs "older" is a property of each
+  // card's own age, not of which page it landed on — a page can be all
+  // recent, all older, or (right at the boundary) a mix of both. The section
+  // title reflects whichever's actually on screen: "Recent projects" as long
+  // as at least one card on this page is recent, "Older projects" once the
+  // page has aged past that entirely (e.g. after paginating forward).
+  const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+  const recentProjects = paginatedProjects.filter(
+    (p) => nowTick - new Date(p.createdAt).getTime() <= SEVEN_DAYS_MS
+  );
+  const olderProjects = paginatedProjects.filter(
+    (p) => nowTick - new Date(p.createdAt).getTime() > SEVEN_DAYS_MS
+  );
+  const sectionTitle = recentProjects.length > 0 ? "Recent projects" : "Older projects";
 
   /** When a new project is added, reset to the first page so it's visible. */
   function goToPage(page: number) {
@@ -539,7 +578,7 @@ export default function DashboardPage() {
         });
 
         if (!response.ok) {
-          throw new Error("Failed to create project");
+          throw new Error(await readErrorReason(response));
         }
 
         const project = await response.json();
@@ -555,6 +594,9 @@ export default function DashboardPage() {
         kickOffTranscription(project.id, file);
       } catch (error) {
         console.error("Failed to create project:", error);
+        toast.error("Couldn't start this upload", {
+          description: error instanceof Error ? error.message : String(error),
+        });
       } finally {
         setIsCreating(false);
       }
@@ -873,7 +915,7 @@ export default function DashboardPage() {
       <div>
         <div className="mb-5 flex items-center gap-3">
           <h2 className="text-lg font-bold text-white tracking-tight">
-            Recent projects
+            {sectionTitle}
           </h2>
           <div className="h-px flex-1 bg-white/10" />
         </div>
@@ -917,15 +959,6 @@ export default function DashboardPage() {
             </p>
           </div>
         ) : (() => {
-            const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
-            const now = nowTick;
-            const recentProjects = paginatedProjects.filter(
-              (p) => now - new Date(p.createdAt).getTime() <= SEVEN_DAYS_MS
-            );
-            const olderProjects = paginatedProjects.filter(
-              (p) => now - new Date(p.createdAt).getTime() > SEVEN_DAYS_MS
-            );
-
             /** Renders a single project card — used for both Recent and Older sections. */
             function renderCard(project: Project) {
               const status = STATUS_META[project.transcriptStatus];
@@ -1028,12 +1061,17 @@ export default function DashboardPage() {
                 )}
                 {olderProjects.length > 0 && (
                   <div>
-                    <div className="mb-5 flex items-center gap-3">
-                      <h3 className="text-sm font-semibold uppercase tracking-widest text-zinc-500">
-                        Older projects
-                      </h3>
-                      <div className="h-px flex-1 bg-white/5" />
-                    </div>
+                    {/* Only repeat the "Older projects" label when this page
+                        is a mix of both — if the whole page is older, the
+                        top-level `sectionTitle` already says so. */}
+                    {recentProjects.length > 0 && (
+                      <div className="mb-5 flex items-center gap-3">
+                        <h3 className="text-sm font-semibold uppercase tracking-widest text-zinc-500">
+                          Older projects
+                        </h3>
+                        <div className="h-px flex-1 bg-white/5" />
+                      </div>
+                    )}
                     <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
                       {olderProjects.map(renderCard)}
                     </div>
@@ -1045,44 +1083,64 @@ export default function DashboardPage() {
 
 
         {needsPagination && (
-          <div className="mt-10 flex items-center justify-center gap-2">
-            {/* Prev */}
-            <button
-              onClick={() => goToPage(currentPage - 1)}
-              disabled={currentPage === 1}
-              className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/10 bg-white/5 text-sm text-zinc-400 transition-all hover:border-white/20 hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-30 cursor-pointer"
-              aria-label="Previous page"
-            >
-              ‹
-            </button>
+          <nav
+            aria-label="Project pagination"
+            className="mt-10 flex flex-col items-center gap-3 sm:flex-row sm:justify-between"
+          >
+            <p className="text-xs text-zinc-500">
+              Showing <span className="font-semibold text-zinc-300">{rangeStart}–{rangeEnd}</span> of{" "}
+              <span className="font-semibold text-zinc-300">{projects.length}</span> projects
+            </p>
 
-            {/* Page numbers */}
-            {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
+            <div className="flex items-center gap-1.5">
+              {/* Prev */}
               <button
-                key={page}
-                onClick={() => goToPage(page)}
-                className={`flex h-9 w-9 items-center justify-center rounded-lg border text-sm font-semibold transition-all cursor-pointer ${
-                  page === currentPage
-                    ? "border-[#fffc00]/50 bg-[#fffc00]/10 text-[#fffc00]"
-                    : "border-white/10 bg-white/5 text-zinc-400 hover:border-white/20 hover:bg-white/10 hover:text-white"
-                }`}
-                aria-label={`Page ${page}`}
-                aria-current={page === currentPage ? "page" : undefined}
+                onClick={() => goToPage(currentPage - 1)}
+                disabled={currentPage === 1}
+                className="flex h-9 items-center justify-center gap-1 rounded-lg border border-white/10 bg-white/5 px-3 text-sm text-zinc-400 transition-all hover:border-white/20 hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-30 cursor-pointer"
+                aria-label="Previous page"
               >
-                {page}
+                ‹ <span className="hidden sm:inline">Prev</span>
               </button>
-            ))}
 
-            {/* Next */}
-            <button
-              onClick={() => goToPage(currentPage + 1)}
-              disabled={currentPage === totalPages}
-              className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/10 bg-white/5 text-sm text-zinc-400 transition-all hover:border-white/20 hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-30 cursor-pointer"
-              aria-label="Next page"
-            >
-              ›
-            </button>
-          </div>
+              {/* Page numbers, collapsed to a fixed-width ellipsis pattern */}
+              {paginationRange(currentPage, totalPages).map((page, i) =>
+                page === "ellipsis" ? (
+                  <span
+                    key={`ellipsis-${i}`}
+                    aria-hidden
+                    className="flex h-9 w-9 items-center justify-center text-sm text-zinc-600"
+                  >
+                    …
+                  </span>
+                ) : (
+                  <button
+                    key={page}
+                    onClick={() => goToPage(page)}
+                    className={`flex h-9 w-9 items-center justify-center rounded-lg border text-sm font-semibold transition-all cursor-pointer ${
+                      page === currentPage
+                        ? "border-[#fffc00]/50 bg-[#fffc00]/10 text-[#fffc00]"
+                        : "border-white/10 bg-white/5 text-zinc-400 hover:border-white/20 hover:bg-white/10 hover:text-white"
+                    }`}
+                    aria-label={`Page ${page}`}
+                    aria-current={page === currentPage ? "page" : undefined}
+                  >
+                    {page}
+                  </button>
+                )
+              )}
+
+              {/* Next */}
+              <button
+                onClick={() => goToPage(currentPage + 1)}
+                disabled={currentPage === totalPages}
+                className="flex h-9 items-center justify-center gap-1 rounded-lg border border-white/10 bg-white/5 px-3 text-sm text-zinc-400 transition-all hover:border-white/20 hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-30 cursor-pointer"
+                aria-label="Next page"
+              >
+                <span className="hidden sm:inline">Next</span> ›
+              </button>
+            </div>
+          </nav>
         )}
       </div>
 

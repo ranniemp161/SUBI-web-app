@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import {
   sanitizeAiRanges,
   applyAiCuts,
+  selectBorderlineRanges,
+  applyVerifyVerdicts,
   type AiCuts,
   type AiCutRange,
 } from "./ai-cuts";
@@ -26,10 +28,10 @@ function keepAll(duration: number): EDL {
 
 describe("sanitizeAiRanges", () => {
   it("returns [] for non-array input and for an empty word list", () => {
-    expect(sanitizeAiRanges(null, 10)).toEqual([]);
-    expect(sanitizeAiRanges({ cuts: [] }, 10)).toEqual([]);
-    expect(sanitizeAiRanges("nope", 10)).toEqual([]);
-    expect(sanitizeAiRanges([{ startWordIndex: 0, endWordIndex: 1, category: "retake" }], 0)).toEqual([]);
+    expect(sanitizeAiRanges(null, TEN_WORDS)).toEqual([]);
+    expect(sanitizeAiRanges({ cuts: [] }, TEN_WORDS)).toEqual([]);
+    expect(sanitizeAiRanges("nope", TEN_WORDS)).toEqual([]);
+    expect(sanitizeAiRanges([{ startWordIndex: 0, endWordIndex: 1, category: "retake" }], [])).toEqual([]);
   });
 
   it("drops malformed entries but keeps the valid ones around them", () => {
@@ -43,7 +45,7 @@ describe("sanitizeAiRanges", () => {
         "garbage",
         { startWordIndex: 7, endWordIndex: 8, category: "stumble", note: "flub" },
       ],
-      10
+      TEN_WORDS
     );
     expect(result).toEqual([
       { startWordIndex: 1, endWordIndex: 2, category: "retake" },
@@ -58,7 +60,7 @@ describe("sanitizeAiRanges", () => {
         { startWordIndex: 10, endWordIndex: 12, category: "retake" }, // start past the words
         { startWordIndex: 5, endWordIndex: 2, category: "retake" }, // inverted
       ],
-      10
+      TEN_WORDS
     );
     expect(result).toEqual([{ startWordIndex: 8, endWordIndex: 9, category: "retake" }]);
   });
@@ -70,12 +72,133 @@ describe("sanitizeAiRanges", () => {
         { startWordIndex: 0, endWordIndex: 2, category: "false_start" },
         { startWordIndex: 2, endWordIndex: 4, category: "retake" }, // overlaps the first
       ],
-      10
+      TEN_WORDS
     );
     expect(result).toEqual([
       { startWordIndex: 0, endWordIndex: 4, category: "false_start" },
       { startWordIndex: 6, endWordIndex: 7, category: "stumble" },
     ]);
+  });
+
+  it("drops a range whose words the ASR wasn't confident about", () => {
+    const shaky: TranscriptWord[] = TEN_WORDS.map((word, i) =>
+      i >= 2 && i <= 4 ? { ...word, confidence: 0.3 } : word
+    );
+    const result = sanitizeAiRanges(
+      [{ startWordIndex: 2, endWordIndex: 4, category: "retake" }],
+      shaky
+    );
+    expect(result).toEqual([]);
+  });
+
+  it("keeps or drops a mixed-confidence range based on the average against the threshold", () => {
+    // Average (0.7 + 0.7) / 2 = 0.7 — at/above threshold, kept.
+    const justAbove: TranscriptWord[] = TEN_WORDS.map((word, i) =>
+      i === 2 || i === 3 ? { ...word, confidence: 0.7 } : word
+    );
+    expect(
+      sanitizeAiRanges([{ startWordIndex: 2, endWordIndex: 3, category: "retake" }], justAbove)
+    ).toEqual([{ startWordIndex: 2, endWordIndex: 3, category: "retake" }]);
+
+    // Average (0.2 + 0.2) / 2 = 0.2 — below threshold, dropped.
+    const belowThreshold: TranscriptWord[] = TEN_WORDS.map((word, i) =>
+      i === 2 || i === 3 ? { ...word, confidence: 0.2 } : word
+    );
+    expect(
+      sanitizeAiRanges([{ startWordIndex: 2, endWordIndex: 3, category: "retake" }], belowThreshold)
+    ).toEqual([]);
+  });
+
+  it("doesn't let one shaky word sink an otherwise confident range's average", () => {
+    // Range covers indices 0-4: four words at confidence 1, one at 0.3.
+    // Average = (1+1+1+1+0.3)/5 = 0.86 — comfortably above threshold.
+    const oneShakyWord: TranscriptWord[] = TEN_WORDS.map((word, i) =>
+      i === 2 ? { ...word, confidence: 0.3 } : word
+    );
+    const result = sanitizeAiRanges(
+      [{ startWordIndex: 0, endWordIndex: 4, category: "retake" }],
+      oneShakyWord
+    );
+    expect(result).toEqual([{ startWordIndex: 0, endWordIndex: 4, category: "retake" }]);
+  });
+
+  it("drops a range whose model-reported confidence is low", () => {
+    const result = sanitizeAiRanges(
+      [{ startWordIndex: 1, endWordIndex: 2, category: "retake", modelConfidence: 0.2 }],
+      TEN_WORDS
+    );
+    expect(result).toEqual([]);
+  });
+
+  it("keeps a range whose model-reported confidence is high", () => {
+    const result = sanitizeAiRanges(
+      [{ startWordIndex: 1, endWordIndex: 2, category: "retake", modelConfidence: 0.9 }],
+      TEN_WORDS
+    );
+    expect(result).toEqual([
+      { startWordIndex: 1, endWordIndex: 2, category: "retake", modelConfidence: 0.9 },
+    ]);
+  });
+
+  it("keeps a range with no model-reported confidence at all (defensive default)", () => {
+    const result = sanitizeAiRanges(
+      [{ startWordIndex: 1, endWordIndex: 2, category: "retake" }],
+      TEN_WORDS
+    );
+    expect(result).toEqual([{ startWordIndex: 1, endWordIndex: 2, category: "retake" }]);
+  });
+});
+
+describe("selectBorderlineRanges", () => {
+  const range = (startWordIndex: number, modelConfidence?: number): AiCutRange => ({
+    startWordIndex,
+    endWordIndex: startWordIndex,
+    category: "retake",
+    modelConfidence,
+  });
+
+  it("selects a range whose confidence sits inside [min, maxConfidence)", () => {
+    const result = selectBorderlineRanges([range(1, 0.6)], 0.8, 30);
+    expect(result).toEqual([range(1, 0.6)]);
+  });
+
+  it("excludes a range at or above the confidence ceiling", () => {
+    const result = selectBorderlineRanges([range(1, 0.9)], 0.8, 30);
+    expect(result).toEqual([]);
+  });
+
+  it("excludes a range with no modelConfidence at all", () => {
+    const result = selectBorderlineRanges([range(1, undefined)], 0.8, 30);
+    expect(result).toEqual([]);
+  });
+
+  it("truncates to the first N matches in array order", () => {
+    const ranges = [range(1, 0.6), range(2, 0.65), range(3, 0.7)];
+    const result = selectBorderlineRanges(ranges, 0.8, 2);
+    expect(result).toEqual([range(1, 0.6), range(2, 0.65)]);
+  });
+});
+
+describe("applyVerifyVerdicts", () => {
+  const range = (startWordIndex: number): AiCutRange => ({
+    startWordIndex,
+    endWordIndex: startWordIndex,
+    category: "retake",
+  });
+
+  it("drops a range flagged to restore", () => {
+    const result = applyVerifyVerdicts([range(1), range(2)], new Set([1]));
+    expect(result).toEqual([range(2)]);
+  });
+
+  it("keeps a range not flagged to restore", () => {
+    const result = applyVerifyVerdicts([range(1), range(2)], new Set([3]));
+    expect(result).toEqual([range(1), range(2)]);
+  });
+
+  it("changes nothing when the restore set is empty", () => {
+    const ranges = [range(1), range(2)];
+    expect(applyVerifyVerdicts(ranges, new Set())).toEqual(ranges);
   });
 });
 
