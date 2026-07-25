@@ -31,6 +31,9 @@ export const STORAGE_STATE = "e2e/.auth/user.json";
 
 export default defineConfig({
   testDir: "./e2e",
+  // Refuses to run when the target is Vercel's Deployment Protection login
+  // page rather than the app. See the comment in that file.
+  globalSetup: "./e2e/global-setup.ts",
   fullyParallel: true,
   reporter: process.env.CI
     ? [["github"], ["html", { open: "never" }]]

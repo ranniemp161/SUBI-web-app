@@ -42,11 +42,29 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Preview deployments answer every path with a redirect to Vercel's login
+      # page unless this secret is present. Rather than fail red on every PR
+      # until it is configured — which just teaches you to ignore a red check —
+      # skip visibly with a warning that says exactly what to do.
+      - name: Check for deployment protection bypass
+        id: bypass
+        env:
+          BYPASS: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        run: |
+          if [ -z "$BYPASS" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=E2E skipped::VERCEL_AUTOMATION_BYPASS_SECRET is not set, so every request would hit Vercel's login page. Add it from the Vercel project: Settings -> Deployment Protection -> Protection Bypass for Automation."
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Install Playwright browser
+        if: steps.bypass.outputs.configured == 'true'
         run: npx playwright install --with-deps chromium
         working-directory: apps/rough-cut
 
       - name: Run E2E against preview
+        if: steps.bypass.outputs.configured == 'true'
         working-directory: apps/rough-cut
         env:
           PLAYWRIGHT_BASE_URL: ${{ github.event.deployment_status.environment_url }}
@@ -60,7 +78,7 @@ jobs:
         run: npx playwright test
 
       - name: Upload report
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.bypass.outputs.configured == 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report-${{ github.event.deployment.sha }}
