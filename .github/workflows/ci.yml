@@ -5,11 +5,48 @@ on:
     branches: [main]
   pull_request:
 
+# One run per branch. A new push cancels the in-flight run instead of racing it.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  # Job id is `check` because that is the context name required by branch
+  # protection on main. Renaming this job silently disables that gate.
   check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history so turbo can diff against origin/main for affected-only
+          # filtering, and so the migration drift guard can find the merge base.
+          fetch-depth: 0
+
+      - name: Fetch base branch
+        if: github.event_name == 'pull_request'
+        run: git fetch --no-tags origin main:refs/remotes/origin/main || true
+
+      # Runs before `npm ci` so the common mistake fails in seconds, not minutes.
+      - name: Guard against schema changes with no migration
+        if: github.event_name == 'pull_request'
+        run: |
+          base=$(git merge-base origin/main HEAD)
+          changed=$(git diff --name-only "$base" HEAD)
+          if grep -q '^packages/db/src/schema.ts$' <<<"$changed"; then
+            if ! grep -qE '^packages/db/drizzle/.*\.sql$' <<<"$changed"; then
+              echo "::error file=packages/db/src/schema.ts::schema.ts changed but no migration was added."
+              echo ""
+              echo "packages/db/src/schema.ts was modified without a corresponding SQL"
+              echo "migration in packages/db/drizzle/. Production applies migrations from"
+              echo "that directory, so this change would deploy code against a schema that"
+              echo "was never migrated."
+              echo ""
+              echo "Fix:  cd packages/db && npm run db:generate"
+              echo "Then review and commit the emitted drizzle/NNNN_*.sql file."
+              echo "See packages/db/MIGRATIONS.md."
+              exit 1
+            fi
+          fi
 
       - uses: actions/setup-node@v4
         with:
@@ -19,11 +56,23 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # On a PR, only run tasks for packages that changed plus everything that
+      # depends on them (`...` prefix = dependents). On a push to main there is
+      # nothing to diff against, so everything runs.
+      - name: Resolve turbo filter
+        id: filter
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "arg=--filter=...[origin/main]" >> "$GITHUB_OUTPUT"
+          else
+            echo "arg=" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Lint
-        run: npm run lint
+        run: npx turbo run lint ${{ steps.filter.outputs.arg }}
 
       - name: Typecheck
-        run: npm run typecheck
+        run: npx turbo run typecheck ${{ steps.filter.outputs.arg }}
 
       - name: Test
-        run: npm run test
+        run: npx turbo run test ${{ steps.filter.outputs.arg }}

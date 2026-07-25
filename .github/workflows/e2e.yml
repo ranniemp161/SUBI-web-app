@@ -1,0 +1,86 @@
+name: E2E
+
+# Runs Playwright against the real rough-cut preview deployment once Vercel
+# reports it healthy. Deliberately NOT in required_status_checks: a flaky E2E
+# that blocks merge has nobody but you to unblock it. Promote it to required
+# once it has proven stable.
+#
+# NOTE: `deployment_status` workflows only run from the file as it exists on the
+# DEFAULT branch. This will therefore not run on the PR that introduces it —
+# only on PRs opened after it lands on main.
+on:
+  deployment_status:
+
+concurrency:
+  group: e2e-${{ github.event.deployment.sha }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    # Matched by substring rather than the exact environment name
+    # ("Preview – subi-web-app-rough-cut"), which contains an en dash that is
+    # very easy to mistype into a filter that silently never matches.
+    if: >-
+      github.event.deployment_status.state == 'success' &&
+      startsWith(github.event.deployment_status.environment, 'Preview') &&
+      contains(github.event.deployment_status.environment, 'rough-cut')
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The commit that produced this deployment, not the default branch.
+          ref: ${{ github.event.deployment.sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Preview deployments answer every path with a redirect to Vercel's login
+      # page unless this secret is present. Rather than fail red on every PR
+      # until it is configured — which just teaches you to ignore a red check —
+      # skip visibly with a warning that says exactly what to do.
+      - name: Check for deployment protection bypass
+        id: bypass
+        env:
+          BYPASS: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        run: |
+          if [ -z "$BYPASS" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=E2E skipped::VERCEL_AUTOMATION_BYPASS_SECRET is not set, so every request would hit Vercel's login page. Add it from the Vercel project: Settings -> Deployment Protection -> Protection Bypass for Automation."
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install Playwright browser
+        if: steps.bypass.outputs.configured == 'true'
+        run: npx playwright install --with-deps chromium
+        working-directory: apps/rough-cut
+
+      - name: Run E2E against preview
+        if: steps.bypass.outputs.configured == 'true'
+        working-directory: apps/rough-cut
+        env:
+          PLAYWRIGHT_BASE_URL: ${{ github.event.deployment_status.environment_url }}
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+          # When these are absent the authenticated project is skipped entirely
+          # and only the unauthenticated smoke tier runs — see playwright.config.ts.
+          CLERK_SECRET_KEY: ${{ secrets.E2E_CLERK_SECRET_KEY }}
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.E2E_CLERK_PUBLISHABLE_KEY }}
+          E2E_CLERK_USER_IDENTIFIER: ${{ secrets.E2E_CLERK_USER_IDENTIFIER }}
+          E2E_CLERK_USER_PASSWORD: ${{ secrets.E2E_CLERK_USER_PASSWORD }}
+        run: npx playwright test
+
+      - name: Upload report
+        if: ${{ !cancelled() && steps.bypass.outputs.configured == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-${{ github.event.deployment.sha }}
+          path: apps/rough-cut/playwright-report/
+          retention-days: 7

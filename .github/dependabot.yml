@@ -1,0 +1,43 @@
+version: 2
+
+updates:
+  # One grouped PR a week rather than a stream of individual ones. With the
+  # required checks on main (CI + all three Vercel production builds +
+  # GitGuardian), a grouped bump that goes green is a merge button, not a chore.
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: chore
+      include: scope
+    groups:
+      production-dependencies:
+        dependency-type: production
+        update-types:
+          - minor
+          - patch
+      development-dependencies:
+        dependency-type: development
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # Majors land as their own PR so they are never bundled into a routine
+      # weekly bump that gets merged without reading.
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: chore
+    groups:
+      actions:
+        patterns:
+          - "*"
