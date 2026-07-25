@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { ClerkProvider } from "@clerk/nextjs";
 import { DM_Sans, Space_Grotesk } from "next/font/google";
+import { SpeedInsights } from "@vercel/speed-insights/next";
 import "./globals.css";
 import { FloatingBoxes } from "@/components/floating-boxes";
 const dmSans = DM_Sans({
@@ -41,6 +42,7 @@ export default function RootLayout({
           </div>
           <FloatingBoxes />
           {children}
+          <SpeedInsights />
         </body>
       </html>
     </ClerkProvider>
