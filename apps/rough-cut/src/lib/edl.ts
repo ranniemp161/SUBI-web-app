@@ -613,6 +613,67 @@ export function restoreSegment(edl: EDL, segment: EDLSegment): EDL {
 }
 
 /**
+ * Restore the cut span of one or more transcript words back to "keep".
+ * Absorbs the outward cut padding (WORD_CUT_PAD_SECONDS) and any adjacent
+ * wordless cut residue between the restored word(s) and adjacent speech so that
+ * the restored clip heals cleanly into its neighbours on the timeline without
+ * leaving tiny 50ms cut residue slivers.
+ */
+export function restoreWords(
+  edl: EDL,
+  words: TranscriptWord[],
+  allWords: TranscriptWord[]
+): EDL {
+  if (words.length === 0) return edl;
+
+  const clean = sanitizeWords(allWords);
+  const cleanWords = toCleanWords(clean, words);
+  if (cleanWords.length === 0) return edl;
+
+  const rawStart = Math.min(...cleanWords.map((w) => w.start));
+  const rawEnd = Math.max(...cleanWords.map((w) => w.end));
+  const selectionMid = (rawStart + rawEnd) / 2;
+
+  const isSelected = new Set(cleanWords);
+
+  let prevBoundary = -Infinity;
+  let nextBoundary = Infinity;
+
+  for (const w of clean) {
+    if (isSelected.has(w)) continue;
+    if ((w.start + w.end) / 2 <= selectionMid) {
+      prevBoundary = Math.max(prevBoundary, w.end);
+    } else {
+      nextBoundary = Math.min(nextBoundary, w.start);
+    }
+  }
+
+  const expandedStart = roundMs(
+    Math.max(
+      rawStart - WORD_CUT_PAD_SECONDS,
+      prevBoundary === -Infinity ? 0 : prevBoundary
+    )
+  );
+  const expandedEnd = roundMs(
+    Math.min(
+      rawEnd + WORD_CUT_PAD_SECONDS,
+      nextBoundary === Infinity ? rawEnd + WORD_CUT_PAD_SECONDS : nextBoundary
+    )
+  );
+
+  const safeStart = Math.min(expandedStart, rawStart);
+  const safeEnd = Math.max(expandedEnd, rawEnd);
+
+  return restoreSegment(edl, {
+    start: safeStart,
+    end: safeEnd,
+    status: "cut",
+    reason: null,
+  });
+}
+
+
+/**
  * Pin a just-dragged boundary so the trim survives re-run. `originalBoundary` is
  * where the boundary sat before the drag; the boundary now sits at the shared
  * edge of segments[leftIndex] / its right neighbour.

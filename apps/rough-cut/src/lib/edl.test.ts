@@ -8,6 +8,7 @@ import {
   buildInitialEDL,
   reRoughCut,
   restoreSegment,
+  restoreWords,
   pinTrimmedBoundary,
   trimBoundary,
   keptDuration,
@@ -551,6 +552,52 @@ describe("cutWords", () => {
     const result = cutWords(keep(20), [donald], allWords);
 
     expect(findSegmentAt(result, donald.start)?.status).toBe("cut");
+  });
+});
+
+describe("restoreWords", () => {
+  it("absorbs outward cut padding from cutWords and heals into a single contiguous kept segment", () => {
+    const wordWith = { word: "with", start: 1.0, end: 1.4, confidence: 1 };
+    const wordNo = { word: "no", start: 2.0, end: 2.2, confidence: 1 };
+    const wordMilitary = { word: "military", start: 2.8, end: 3.2, confidence: 1 };
+    const allWords = [wordWith, wordNo, wordMilitary];
+
+    // First, cut "no". WORD_CUT_PAD_SECONDS (0.05s) turns the cut into [1.95, 2.25].
+    const cutEdl = cutWords(keep(10), [wordNo], allWords);
+    expect(cutEdl.segments).toEqual([
+      { start: 0, end: 1.95, status: "keep", reason: null },
+      { start: 1.95, end: 2.25, status: "cut", reason: "manual" },
+      { start: 2.25, end: 10, status: "keep", reason: null },
+    ]);
+
+    // Now restore "no". restoreWords absorbs [1.95, 2.25] and heals into a single keep clip.
+    const restoredEdl = restoreWords(cutEdl, [wordNo], allWords);
+    expect(restoredEdl.segments).toEqual([
+      { start: 0, end: 10, status: "keep", reason: null },
+    ]);
+  });
+
+  it("clamps padding absorption against an adjacent cut word so it does not restore neighbouring cut speech", () => {
+    const wordA = { word: "A", start: 1.0, end: 1.4, confidence: 1 };
+    const wordB = { word: "B", start: 1.5, end: 1.8, confidence: 1 };
+    const wordC = { word: "C", start: 2.5, end: 2.9, confidence: 1 };
+    const allWords = [wordA, wordB, wordC];
+
+    // Cut both A and B.
+    let edl = cutWords(keep(10), [wordA], allWords);
+    edl = cutWords(edl, [wordB], allWords);
+
+    // Restore only B.
+    const restored = restoreWords(edl, [wordB], allWords);
+
+    // Word B should be kept, word A should remain cut.
+    expect(findSegmentAt(restored, wordB.start)?.status).toBe("keep");
+    expect(findSegmentAt(restored, wordA.start)?.status).toBe("cut");
+  });
+
+  it("no-ops gracefully on empty input", () => {
+    const edl = keep(10);
+    expect(restoreWords(edl, [], [])).toBe(edl);
   });
 });
 
