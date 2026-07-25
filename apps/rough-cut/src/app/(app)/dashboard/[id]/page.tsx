@@ -59,6 +59,7 @@ import {
   changedSpan,
   cutWords as cutWordsInEdl,
   cutEachWord,
+  restoreWords as restoreWordsInEdl,
   restoreSegment as restoreSegmentInEdl,
   trimBoundary as trimBoundaryInEdl,
   setRangeStatus as setRangeStatusInEdl,
@@ -600,9 +601,27 @@ export default function EditorPage() {
     [edl, words, applyEdl, undo]
   );
 
+  const handleRestoreWords = useCallback(
+    (selected: TranscriptWord[]) => {
+      if (!edl) return;
+      setSelectedStart(null);
+      setSelectedRange(null);
+      applyEdl(restoreWordsInEdl(edl, selected, words));
+      toast(`Restored ${selected.length} word${selected.length === 1 ? "" : "s"}`, {
+        action: { label: "Undo", onClick: () => undo() },
+      });
+    },
+    [edl, words, applyEdl, undo]
+  );
+
   const handleRestoreSegment = useCallback(
     (segment: EDLSegment) => {
       if (!edl) return;
+      // Clear any cross-panel selection first — a timeline restore is fired from
+      // a selected cut clip, and the blue selection band would otherwise linger
+      // over the healed region (mirrors deleteSelected).
+      setSelectedStart(null);
+      setSelectedRange(null);
       applyEdl(restoreSegmentInEdl(edl, segment));
       toast("Segment restored", {
         action: { label: "Undo", onClick: () => undo() },
@@ -1963,6 +1982,7 @@ export default function EditorPage() {
             onSeek={handleSeek}
             onPlayFrom={handlePlayFrom}
             onCutWords={handleCutWords}
+            onRestoreWords={handleRestoreWords}
             onRestoreSegment={handleRestoreSegment}
             onOpenRetakeReview={() => setShowRetakeReview(true)}
             cutEvent={cutEvent}

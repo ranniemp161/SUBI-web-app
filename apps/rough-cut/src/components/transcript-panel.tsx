@@ -47,6 +47,7 @@ interface TranscriptPanelProps {
    *  onSeek (seek only) when not provided. */
   onPlayFrom?: (seconds: number) => void;
   onCutWords: (words: TranscriptWord[]) => void;
+  onRestoreWords?: (words: TranscriptWord[]) => void;
   onRestoreSegment: (segment: EDLSegment) => void;
   onOpenRetakeReview: () => void;
   /** Last completed cut pass — each new event re-shows the summary card. */
@@ -277,6 +278,7 @@ export default function TranscriptPanel({
   onSeek,
   onPlayFrom,
   onCutWords,
+  onRestoreWords,
   onRestoreSegment,
   onOpenRetakeReview,
   cutEvent,
@@ -1107,19 +1109,24 @@ export default function TranscriptPanel({
               type="button"
               onClick={() => {
                 if (selection.has(menu.index) && selection.size > 1) {
-                  // Restore the whole selected span (restoreSegment only reads
-                  // start/end), matching how Cut respects a multi-word selection.
+                  // Restore the whole selected span, absorbing word cut padding
+                  // so no 50ms cut residue slivers linger on the timeline.
                   const sel = Array.from(selection).map((i) => words[i]);
-                  const start = Math.min(...sel.map((w) => w.start));
-                  const end = Math.max(...sel.map((w) => w.end));
-                  onRestoreSegment({ start, end, status: "cut", reason: null });
+                  if (onRestoreWords) {
+                    onRestoreWords(sel);
+                  } else {
+                    const start = Math.min(...sel.map((w) => w.start));
+                    const end = Math.max(...sel.map((w) => w.end));
+                    onRestoreSegment({ start, end, status: "cut", reason: null });
+                  }
                 } else {
-                  // Restore only this word's own span, not the underlying EDL
-                  // segment — adjacent independently-cut words can share one
-                  // merged segment (mergeAdjacent), and menuSegment is that
-                  // merged range, not something scoped to the clicked word.
+                  // Restore this word's span, absorbing word cut padding.
                   const word = words[menu.index];
-                  onRestoreSegment({ start: word.start, end: word.end, status: "cut", reason: null });
+                  if (onRestoreWords) {
+                    onRestoreWords([word]);
+                  } else {
+                    onRestoreSegment({ start: word.start, end: word.end, status: "cut", reason: null });
+                  }
                 }
                 clearSelection();
                 setMenu(null);
