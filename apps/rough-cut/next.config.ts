@@ -25,7 +25,13 @@ const buildConfig = async (): Promise<NextConfig> => {
     }
   }
 
-  if (!process.env.SENTRY_DSN) return nextConfig;
+  // Source-map upload needs SENTRY_AUTH_TOKEN/ORG/PROJECT, all of which the
+  // Vercel<->Sentry integration provisions. Gating this on a bare SENTRY_DSN
+  // (which that integration does NOT provision) meant the plugin never ran, so
+  // even the client errors that did report had unreadable minified stacks.
+  if (!process.env.SENTRY_DSN && !process.env.NEXT_PUBLIC_SENTRY_DSN) {
+    return nextConfig;
+  }
   const { withSentryConfig } = await import("@sentry/nextjs");
   return withSentryConfig(nextConfig, {
     org: process.env.SENTRY_ORG,
