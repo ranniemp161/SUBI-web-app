@@ -32,6 +32,7 @@ import {
 import { extractWaveform, type Waveform } from "@/lib/waveform";
 import { extractFilmstrip, type Filmstrip } from "@/lib/thumbnails";
 import { formatDuration, nearestSorted } from "@/lib/utils";
+import { frameDurationSeconds, type VideoFps } from "@/lib/frame-math";
 import {
   SYNC_HOVER_LINE_CLASS,
   SYNC_PLAYHEAD_CLASS,
@@ -50,6 +51,10 @@ interface TimelineBarProps {
   currentTime: number;
   isPlaying: boolean;
   sourceFile: File | null;
+  /** The reselected source's detected frame rate, or null until known. Used to
+   *  size the one-frame tolerance when reconciling the filmstrip's/waveform's
+   *  own decoded duration against the shared timeline duration (spec 0004). */
+  sourceFps: VideoFps | null;
   fileName: string;
   /** Sorted word-edge times to snap trim drags to (hold Alt to drag freely). */
   snapTimes: number[];
@@ -108,6 +113,23 @@ function niceRulerStep(targetSeconds: number): number {
 }
 
 /**
+ * The media duration to position a decoded filmstrip or waveform against (spec
+ * 0004). Both are sampled uniformly across their own decoded duration, but the
+ * clips and the playhead are positioned by the shared timeline duration
+ * (`totalDuration(edl)`). To make peaks and thumbs line up with the clips and
+ * the playhead, a timeline time is mapped into the decode's buckets using the
+ * shared duration, not the decode's own length — which can differ slightly (an
+ * audio track a hair longer than the video, a container header duration that is
+ * a touch off). Within one frame the two are interchangeable; beyond that the
+ * shared duration still wins here, so a decode-length disagreement can never
+ * reintroduce drift (AC-9). Falls back to the decode's own length only when the
+ * timeline duration isn't known yet.
+ */
+function positioningDuration(sharedDuration: number, decodedDuration: number): number {
+  return sharedDuration > 0 ? sharedDuration : decodedDuration;
+}
+
+/**
  * Two-track NLE timeline (Video clips + Audio waveform): tick ruler, scrubbable
  * playhead, draggable clip boundaries (snap to word edges), click a cut to
  * restore. Creating new cuts is the transcript panel's job.
@@ -118,6 +140,7 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
     currentTime,
     isPlaying,
     sourceFile,
+    sourceFps,
     fileName,
     snapTimes,
     onSeek,
@@ -398,8 +421,9 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
     pendingZoomRef.current = null;
   }, [pxPerSec]);
 
-  // Draw only the visible slice of the waveform, mapped against the audio's own
-  // decoded duration so peaks line up with the clips.
+  // Draw only the visible slice of the waveform, mapped against the shared
+  // timeline duration (not the audio's own decoded length) so peaks line up
+  // with the clips and the playhead (spec 0004, AC-8).
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -408,7 +432,9 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     if (!waveform || waveform.duration <= 0) return;
 
-    const { peaksMin, peaksMax, duration } = waveform;
+    const { peaksMin, peaksMax } = waveform;
+    const duration = positioningDuration(total, waveform.duration);
+    if (duration <= 0) return;
     const buckets = peaksMin.length;
     const mid = canvas.height / 2;
     ctx.fillStyle = WAVE_COLOR;
@@ -423,7 +449,7 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
       const yBottom = mid - min * mid;
       ctx.fillRect(x, yTop, 1, Math.max(1, yBottom - yTop));
     }
-  }, [waveform, pxPerSec, view]);
+  }, [waveform, pxPerSec, view, total]);
 
   // Tile the visible slice of the filmstrip across the video track. Tiles are
   // anchored to absolute timeline positions (not the viewport) so they don't
@@ -436,7 +462,9 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     if (!filmstrip || filmstrip.duration <= 0) return;
 
-    const { strip, count, thumbWidth, thumbHeight, duration } = filmstrip;
+    const { strip, count, thumbWidth, thumbHeight } = filmstrip;
+    const duration = positioningDuration(total, filmstrip.duration);
+    if (duration <= 0) return;
     const drawH = canvas.height;
     const drawW = Math.max(1, Math.round((thumbWidth / thumbHeight) * drawH));
     const firstTile = Math.floor(view.scrollLeft / drawW);
@@ -458,7 +486,28 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
         drawH
       );
     }
-  }, [filmstrip, pxPerSec, view]);
+  }, [filmstrip, pxPerSec, view, total]);
+
+  // Reconciliation check (spec 0004, AC-9): positioning above always uses the
+  // shared timeline duration, so a decode whose own length drifts from the
+  // timeline by more than one frame can never move the peaks or thumbs off the
+  // clips. This surfaces such a mismatch in dev so it isn't silent; it changes
+  // nothing that's drawn. The one-frame tolerance is sized at the detected fps.
+  useEffect(() => {
+    if (process.env.NODE_ENV === "production" || !sourceFps || !(total > 0)) return;
+    const oneFrame = frameDurationSeconds(sourceFps);
+    const warnIfDrifted = (label: string, decoded: number | undefined) => {
+      if (decoded && decoded > 0 && Math.abs(decoded - total) > oneFrame) {
+        console.warn(
+          `[timeline] ${label} decoded duration ${decoded.toFixed(3)}s disagrees with ` +
+            `the timeline duration ${total.toFixed(3)}s by more than one frame; using the ` +
+            `shared timeline duration for positioning (spec 0004).`
+        );
+      }
+    };
+    warnIfDrifted("waveform", waveform?.duration);
+    warnIfDrifted("filmstrip", filmstrip?.duration);
+  }, [waveform, filmstrip, total, sourceFps]);
 
   // Keep the playhead in view during playback. The Hand tool suspends
   // auto-follow so the user's manual pan isn't fought by the recenter.

@@ -14,6 +14,8 @@ import {
   Pause,
   Rewind,
   FastForward,
+  ChevronLeft,
+  ChevronRight,
   Volume2,
   VolumeX,
   Maximize,
@@ -48,7 +50,7 @@ import { buildCmx3600Edl } from "@/lib/export/cmx3600";
 import { buildXmeml } from "@/lib/export/xmeml";
 import { sanitizeFilename, stripExtension } from "@/lib/export/filename";
 import { hasExportableRanges } from "@/lib/export/plan";
-import { DEFAULT_FPS, type VideoFps } from "@/lib/export/timebase";
+import { type VideoFps } from "@/lib/export/timebase";
 import { detectVideoFps } from "@/lib/detect-frame-rate";
 import { detectEmbeddedTimecodeOffset } from "@/lib/detect-embedded-timecode";
 import { downloadTextFile } from "@/lib/download-text-file";
@@ -250,9 +252,17 @@ export default function EditorPage() {
 
   const [sourceFile, setSourceFile] = useState<File | null>(null);
   // The reselected source's detected frame rate; null until detection settles
-  // (or when it fails / no file yet), in which case exports fall back to
-  // DEFAULT_FPS. Detection is best-effort — see detect-frame-rate.ts.
+  // (or when it fails / no file yet). While null, timeline (NLE interchange)
+  // export is blocked rather than guessing a rate (spec 0004). Detection is
+  // best-effort — see detect-frame-rate.ts.
   const [sourceFps, setSourceFps] = useState<VideoFps | null>(null);
+  // Mirror for the global key handler and frame-step callback, so they read the
+  // latest rate without re-registering the listener (spec 0004). Synced in an
+  // effect (not during render) since those readers only run after commit.
+  const sourceFpsRef = useRef<VideoFps | null>(null);
+  useEffect(() => {
+    sourceFpsRef.current = sourceFps;
+  }, [sourceFps]);
   // The reselected source's embedded start timecode (tmcd track), in
   // seconds; 0 until detection settles, fails, or the source has none. See
   // detect-embedded-timecode.ts.
@@ -729,6 +739,15 @@ export default function EditorPage() {
     []
   );
 
+  // Step exactly one source frame back (-1) or forward (+1) at the detected
+  // rate (spec 0004). A no-op until the rate is known (source reselected),
+  // matching the timeline-export gate — no frame-precise action without a rate.
+  const stepOneFrame = useCallback((direction: 1 | -1) => {
+    const fps = sourceFpsRef.current;
+    if (!fps) return;
+    playerRef.current?.stepFrame(direction, fps);
+  }, []);
+
   // Jump to the previous/next edit point (any keep/cut segment boundary).
   const seekToEditPoint = useCallback(
     (dir: 1 | -1) => {
@@ -816,10 +835,12 @@ export default function EditorPage() {
           seekRelative(e.shiftKey ? 5 : 1);
           break;
         case ",":
-          seekRelative(-0.1);
+          e.preventDefault();
+          stepOneFrame(-1);
           break;
         case ".":
-          seekRelative(0.1);
+          e.preventDefault();
+          stepOneFrame(1);
           break;
         case "ArrowUp":
           e.preventDefault();
@@ -862,7 +883,7 @@ export default function EditorPage() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [edl, undo, redo, seekRelative, seekToEditPoint, cutToPlayhead, splitAtPlayhead, selectedStart, deleteSelected]);
+  }, [edl, undo, redo, seekRelative, stepOneFrame, seekToEditPoint, cutToPlayhead, splitAtPlayhead, selectedStart, deleteSelected]);
 
   const totalSeconds = useMemo(
     () => (edl ? Math.max(...edl.segments.map((s) => s.end), 0) : 0),
@@ -1356,7 +1377,11 @@ export default function EditorPage() {
     detectVideoFps(sourceFile).then((fps) => {
       if (cancelled) return;
       setSourceFps(fps);
-      detectEmbeddedTimecodeOffset(sourceFile, fps ?? DEFAULT_FPS).then((offset) => {
+      // Timeline export is blocked until the real rate is known (spec 0004), so
+      // there's no point detecting the timecode offset without one — and no
+      // DEFAULT_FPS guess is ever fed into an export.
+      if (!fps) return;
+      detectEmbeddedTimecodeOffset(sourceFile, fps).then((offset) => {
         if (!cancelled) setSourceTimecodeOffset(offset);
       });
     });
@@ -1367,14 +1392,20 @@ export default function EditorPage() {
 
   // Builds an FCPXML / CMX 3600 EDL / FCP7 XML file describing the current
   // EDL's kept segments and downloads it directly — no WebCodecs, no save
-  // picker, no reselected source video required, since these formats only
-  // reference the source by filename. Without a reselected file the timebase
-  // falls back to DEFAULT_FPS (30) with no offset, which strict NLE
-  // relinking may reject.
-  const exportFps = sourceFps ?? DEFAULT_FPS;
-
+  // picker. These formats reference the source by filename and by frame number,
+  // so a correct frame rate is required. As of spec 0004 the timeline exports
+  // are blocked until the real source rate is detected (see
+  // `interchangeExportBlockedReason` below); no DEFAULT_FPS guess is ever used.
+  // Each handler still guards on `sourceFps` as defense in depth, so the export
+  // can never run at a guessed rate even if the button were somehow triggered.
   const handleExportFcpxml = useCallback(() => {
-    if (!edl || !project || !hasExportableRanges(edl, exportFps)) {
+    if (!sourceFps) {
+      toast.error("Reselect your source video first", {
+        description: "Its frame rate must be known before exporting a timeline.",
+      });
+      return;
+    }
+    if (!edl || !project || !hasExportableRanges(edl, sourceFps)) {
       toast.error("Nothing to export", {
         description: "This project has no kept segments yet.",
       });
@@ -1387,17 +1418,23 @@ export default function EditorPage() {
       videoMeta && videoMeta.width && videoMeta.height
         ? { width: videoMeta.width, height: videoMeta.height }
         : undefined,
-      exportFps,
+      sourceFps,
       sourceTimecodeOffset
     );
     downloadTextFile(xml, `${sanitizeFilename(stripExtension(project.fileName))}.fcpxml`, "application/xml");
     toast.success("FCPXML exported", {
       description: "Open it in Final Cut Pro or DaVinci Resolve and relink your source file.",
     });
-  }, [edl, project, videoMeta, exportFps, sourceTimecodeOffset]);
+  }, [edl, project, videoMeta, sourceFps, sourceTimecodeOffset]);
 
   const handleExportCmx3600 = useCallback(() => {
-    if (!edl || !project || !hasExportableRanges(edl, exportFps)) {
+    if (!sourceFps) {
+      toast.error("Reselect your source video first", {
+        description: "Its frame rate must be known before exporting a timeline.",
+      });
+      return;
+    }
+    if (!edl || !project || !hasExportableRanges(edl, sourceFps)) {
       toast.error("Nothing to export", {
         description: "This project has no kept segments yet.",
       });
@@ -1407,17 +1444,23 @@ export default function EditorPage() {
       edl,
       project.fileName,
       project.fileName,
-      exportFps,
+      sourceFps,
       sourceTimecodeOffset
     );
     downloadTextFile(doc, `${sanitizeFilename(stripExtension(project.fileName))}.edl`, "text/plain");
     toast.success("CMX 3600 EDL exported", {
       description: "Open it in DaVinci Resolve and relink your source file.",
     });
-  }, [edl, project, exportFps, sourceTimecodeOffset]);
+  }, [edl, project, sourceFps, sourceTimecodeOffset]);
 
   const handleExportXmeml = useCallback(() => {
-    if (!edl || !project || !hasExportableRanges(edl, exportFps)) {
+    if (!sourceFps) {
+      toast.error("Reselect your source video first", {
+        description: "Its frame rate must be known before exporting a timeline.",
+      });
+      return;
+    }
+    if (!edl || !project || !hasExportableRanges(edl, sourceFps)) {
       toast.error("Nothing to export", {
         description: "This project has no kept segments yet.",
       });
@@ -1427,7 +1470,7 @@ export default function EditorPage() {
       edl,
       project.fileName,
       project.fileName,
-      exportFps,
+      sourceFps,
       videoMeta && videoMeta.width && videoMeta.height
         ? { width: videoMeta.width, height: videoMeta.height }
         : undefined,
@@ -1437,7 +1480,7 @@ export default function EditorPage() {
     toast.success("Premiere Pro XML exported", {
       description: "Import it in Premiere Pro and relink your source file.",
     });
-  }, [edl, project, videoMeta, exportFps, sourceTimecodeOffset]);
+  }, [edl, project, videoMeta, sourceFps, sourceTimecodeOffset]);
 
   // Warn on tab close/reload only while an export is actively encoding — that's
   // the one state with work worth losing. "starting" has nothing yet, and
@@ -1723,7 +1766,11 @@ export default function EditorPage() {
         onExportCmx3600={handleExportCmx3600}
         onExportXmeml={handleExportXmeml}
         exportFormatBlockedReason={
-          !edl || !hasExportableRanges(edl, exportFps) ? "Nothing to export yet" : undefined
+          !sourceFps
+            ? "Reselect your source video to export a timeline — its frame rate isn't known yet."
+            : !edl || !hasExportableRanges(edl, sourceFps)
+              ? "Nothing to export yet"
+              : undefined
         }
       />
 
@@ -1816,6 +1863,20 @@ export default function EditorPage() {
               </button>
               <button
                 type="button"
+                aria-label="Step back one frame"
+                onClick={() => stepOneFrame(-1)}
+                disabled={!sourceFps}
+                title={
+                  sourceFps
+                    ? "Step back one frame (,)"
+                    : "Reselect your source video to step by frame"
+                }
+                className={`${transportBtn} disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent`}
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
                 aria-label={isPlaying ? "Pause" : "Play"}
                 onClick={() => playerRef.current?.togglePlay()}
                 className="flex h-10 w-10 items-center justify-center rounded-full bg-accent text-accent-foreground transition-colors hover:bg-accent-hover"
@@ -1825,6 +1886,20 @@ export default function EditorPage() {
                 ) : (
                   <Play className="h-5 w-5 translate-x-0.5 fill-current" />
                 )}
+              </button>
+              <button
+                type="button"
+                aria-label="Step forward one frame"
+                onClick={() => stepOneFrame(1)}
+                disabled={!sourceFps}
+                title={
+                  sourceFps
+                    ? "Step forward one frame (.)"
+                    : "Reselect your source video to step by frame"
+                }
+                className={`${transportBtn} disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent`}
+              >
+                <ChevronRight className="h-4 w-4" />
               </button>
               <button
                 type="button"
@@ -1913,6 +1988,7 @@ export default function EditorPage() {
         currentTime={currentTime}
         isPlaying={isPlaying}
         sourceFile={sourceFile}
+        sourceFps={sourceFps}
         fileName={project.fileName}
         snapTimes={snapTimes}
         onSeek={handleSeek}
@@ -2500,7 +2576,7 @@ const SHORTCUTS: { keys: string; label: string }[] = [
   { keys: "Space / K", label: "Play / pause" },
   { keys: "J / L", label: "Jump back / forward 5s" },
   { keys: "← / →", label: "Step 1s (Shift = 5s)" },
-  { keys: ", / .", label: "Nudge 0.1s" },
+  { keys: ", / .", label: "Step 1 frame back / forward" },
   { keys: "↑ / ↓", label: "Previous / next edit point" },
   { keys: "Home / End", label: "Jump to start / end" },
   { keys: "Click word", label: "Seek to that word" },

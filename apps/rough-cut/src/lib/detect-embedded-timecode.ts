@@ -28,10 +28,27 @@ import { nominalFps, type VideoFps } from "@/lib/export/timebase";
 // nonsense offset into an otherwise-correct export.
 const MAX_PLAUSIBLE_OFFSET_SECONDS = 24 * 60 * 60;
 
+// mp4box logs a box it can't parse straight to `console.error`, prefixed with
+// its own duration tag like `[0:00:25.295]`. This happens on plenty of real
+// files (64-bit box sizes, trailing padding, mdat bytes scanned as boxes) and
+// there is no way to silence it: `setLogLevel` can't go above ERROR, and this
+// particular log skips the `isoFile.onError` route. Since this detection is
+// best-effort and already resolves to 0 on any failure, that log is pure noise
+// the Next.js dev overlay escalates to a Console Error. Matches only mp4box's
+// own log format so nothing else is ever swallowed.
+const MP4BOX_LOG_PREFIX = /^\[\d+:\d{2}:\d{2}(\.\d+)?\]$/;
+
 export async function detectEmbeddedTimecodeOffset(file: File, fps: VideoFps): Promise<number> {
+  const originalConsoleError = console.error;
   try {
     const { createFile } = await import("mp4box");
     const arrayBuffer = await file.arrayBuffer();
+    // Drop mp4box's own console noise for the duration of the parse; every other
+    // error still passes through, and console.error is restored in `finally`.
+    console.error = (...args: unknown[]) => {
+      if (typeof args[0] === "string" && MP4BOX_LOG_PREFIX.test(args[0])) return;
+      originalConsoleError(...args);
+    };
     const startFrames = await new Promise<number | null>((resolve) => {
       const isoFile = createFile();
       let settled = false;
@@ -76,5 +93,7 @@ export async function detectEmbeddedTimecodeOffset(file: File, fps: VideoFps): P
     return offsetSeconds;
   } catch {
     return 0;
+  } finally {
+    console.error = originalConsoleError;
   }
 }

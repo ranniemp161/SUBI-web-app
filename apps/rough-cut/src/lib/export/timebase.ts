@@ -1,21 +1,23 @@
 /**
- * Shared frame math for NLE export formats (FCPXML, CMX 3600 EDL, FCP7 XML),
- * so every format agrees exactly on where each cut falls — one place to get
- * the timebase wrong, not three.
+ * Timecode and timebase helpers for NLE export formats (FCPXML, CMX 3600 EDL,
+ * FCP7 XML). The core seconds/ms to frame rounding now lives in
+ * `src/lib/frame-math.ts` so the live editing path and the export path share
+ * one rounding rule (spec 0004); `toFrames` here delegates to it. This file
+ * keeps the export-specific parts: the fallback rate, standard-rate snapping,
+ * drop-frame counting, and SMPTE timecode formatting.
  *
  * The timebase is the source clip's detected frame rate (see
- * `src/lib/detect-frame-rate.ts`), falling back to DEFAULT_FPS when no source
- * file is available. Transcript word timestamps stay snapped to a 30fps grid
- * at transcription time (ADR 0004, `deepgram.ts`); that snap only quantizes
- * seconds, and the exporters re-round those seconds to the detected rate
- * here, so all formats still agree by construction.
+ * `src/lib/detect-frame-rate.ts`). `DEFAULT_FPS` is the last-resort rate only;
+ * as of spec 0004 the export action is disabled until the real source rate is
+ * known, so `DEFAULT_FPS` is no longer silently substituted for a missing rate
+ * on a real export (it stays only as a definitional default for these helpers
+ * and their tests).
  */
+import { secondsToFrame, type VideoFps } from "@/lib/frame-math";
 
-/** A video frame rate as an exact rational, e.g. NTSC 29.97 = 30000/1001. */
-export interface VideoFps {
-  numerator: number;
-  denominator: number;
-}
+// Re-exported so existing importers of `VideoFps` from this module keep working;
+// its canonical home is now `frame-math.ts`.
+export type { VideoFps } from "@/lib/frame-math";
 
 /** Fallback timebase when the source's real rate is unknown. */
 export const DEFAULT_FPS: VideoFps = { numerator: 30, denominator: 1 };
@@ -73,8 +75,9 @@ export function isDropFrame(fps: VideoFps): boolean {
   return fps.denominator === 1001 && (nominal === 30 || nominal === 60);
 }
 
+/** Delegates to the app-wide rounding rule in `frame-math.ts` (spec 0004). */
 export function toFrames(seconds: number, fps: VideoFps = DEFAULT_FPS): number {
-  return Math.round((seconds * fps.numerator) / fps.denominator);
+  return secondsToFrame(seconds, fps);
 }
 
 /** Shortest duration (seconds) worth keeping as its own clip/event at fps. */

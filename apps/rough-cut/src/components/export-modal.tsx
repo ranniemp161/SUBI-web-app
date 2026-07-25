@@ -197,6 +197,15 @@ export function ExportModal({
         </div>
 
         <div className="shrink-0 p-6 pt-0">
+          {isCurrentFormatDisabled && currentBlockedReason && (
+            <div
+              role="status"
+              className="mb-3 flex gap-2.5 rounded-lg border border-amber-500/20 bg-amber-500/10 p-3 text-sm text-amber-600/90 dark:text-amber-400/90"
+            >
+              <Info className="mt-0.5 h-4 w-4 shrink-0" />
+              <p>{currentBlockedReason}</p>
+            </div>
+          )}
           <button
             onClick={handleExport}
             disabled={busy || isCurrentFormatDisabled}

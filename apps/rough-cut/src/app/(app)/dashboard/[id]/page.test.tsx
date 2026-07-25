@@ -46,6 +46,14 @@ vi.mock("sonner", () => ({
   Toaster: () => null,
 }));
 
+// Timeline (NLE interchange) export is gated on a known source frame rate
+// (spec 0004). The stub picked file below is a 1-byte fake that real fps
+// detection can't read, so mock it to a known 30fps rate; without this,
+// sourceFps stays null and the interchange export stays (correctly) disabled.
+vi.mock("@/lib/detect-frame-rate", () => ({
+  detectVideoFps: vi.fn(async () => ({ numerator: 30, denominator: 1 })),
+}));
+
 vi.mock("@/components/file-picker", () => ({
   default: ({ onFileSelected }: { onFileSelected: (file: File, meta: unknown) => void }) => (
     <button
@@ -1082,6 +1090,12 @@ describe("EditorPage — export dropdowns (Radix rebuild, AC-8, AC-16)", () => {
     expect(edlCall).toBeDefined();
     clickSpy.mockRestore();
   });
+
+  // Note (spec 0004, child 2, AC-5/AC-6): the fps-unknown blocked state can't be
+  // cleanly exercised here — jsdom has no WebCodecs, so MP4 is always
+  // unsupported, and with fps also null the top-level Export button is disabled
+  // (correct: nothing is exportable), so the modal never opens. The blocked
+  // reselect message + disabled Export Now is a real-browser check in verify.md.
 });
 
 // ---------------------------------------------------------------------------
