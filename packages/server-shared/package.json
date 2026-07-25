@@ -13,7 +13,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@sentry/nextjs": "^10.63.0",
+    "@sentry/nextjs": "^10.68.0",
     "@upstash/ratelimit": "^2.0.8",
     "@upstash/redis": "^1.38.0"
   }
