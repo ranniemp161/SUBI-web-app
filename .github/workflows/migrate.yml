@@ -1,0 +1,68 @@
+name: Migrate database
+
+# Manual only. Code auto-deploys to Production on merge to main, but schema
+# changes deliberately do NOT — an unattended bad migration on prod is worse
+# than a forgotten one, which the app surfaces immediately. This workflow
+# replaces running drizzle-kit from a laptop whose packages/db/.env.local
+# points at whichever Neon branch it last pointed at.
+#
+# Before the first Production run, confirm the __drizzle_migrations baseline
+# row for migration 0000 exists — prod predates migration tracking and a cold
+# `migrate` would try to CREATE TABLE over live tables.
+# See packages/db/MIGRATIONS.md, "First-deploy baseline".
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which database to migrate"
+        required: true
+        type: choice
+        options:
+          - dev
+          - production
+      confirm:
+        description: 'Type "migrate" to confirm'
+        required: true
+        type: string
+
+concurrency:
+  group: migrate-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    # Bind to a GitHub Environment so DATABASE_URL is scoped per target and so
+    # `production` can carry a required-reviewer gate (configure in repo
+    # Settings -> Environments).
+    environment: ${{ inputs.target }}
+
+    steps:
+      - name: Check confirmation
+        if: inputs.confirm != 'migrate'
+        run: |
+          echo "::error::Confirmation text did not match. Type exactly: migrate"
+          exit 1
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: List committed migrations
+        run: ls -1 packages/db/drizzle/*.sql
+
+      # db:migrate is `drizzle-kit migrate && tsx scripts/verify.ts` — it applies
+      # pending migrations then fails loudly if the live schema still does not
+      # match src/schema.ts, so a silent partial migration cannot pass as success.
+      - name: Apply migrations and verify schema
+        working-directory: packages/db
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: npm run db:migrate
