@@ -39,6 +39,14 @@ export async function POST(request: Request) {
     );
   }
 
+  const contentLength = Number(request.headers.get("content-length"));
+  if (contentLength > 1_048_576) {
+    return NextResponse.json(
+      { error: "Payload too large." },
+      { status: 413 }
+    );
+  }
+
   const body = await request.text();
 
   // Signature BEFORE the rate limit: svix verification is pure CPU, while the
@@ -62,7 +70,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const limit = await ipRateLimit(request, "webhook-clerk", WEBHOOK_LIMIT, WEBHOOK_WINDOW_SECONDS);
+  const limit = await ipRateLimit(request, "webhook-clerk", WEBHOOK_LIMIT, WEBHOOK_WINDOW_SECONDS, { failClosed: true });
   if (!limit.allowed) {
     return NextResponse.json(
       { error: "Too many webhook requests." },

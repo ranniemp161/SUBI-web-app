@@ -22,6 +22,9 @@ const AI_CUT_LIMIT = 10;
 const AI_CUT_WINDOW_SECONDS = 3600;
 
 /** Shared per-user cap for AI Cut routes, keyed `ai-cut:<clerkId>`. */
-export async function aiCutRateLimit(clerkId: string): Promise<RateLimitResult> {
-  return rateLimit(`ai-cut:${clerkId}`, AI_CUT_LIMIT, AI_CUT_WINDOW_SECONDS);
+export async function aiCutRateLimit(
+  clerkId: string,
+  options?: { failClosed?: boolean }
+): Promise<RateLimitResult> {
+  return rateLimit(`ai-cut:${clerkId}`, AI_CUT_LIMIT, AI_CUT_WINDOW_SECONDS, options);
 }

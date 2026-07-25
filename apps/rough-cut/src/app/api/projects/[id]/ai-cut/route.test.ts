@@ -150,7 +150,7 @@ describe("POST /api/projects/:id/ai-cut — gates", () => {
     state.rateAllowed = false;
     const res = await POST(request(), { params });
     expect(res.status).toBe(429);
-    expect(aiCutRateLimit).toHaveBeenCalledWith("clerk_1");
+    expect(aiCutRateLimit).toHaveBeenCalledWith("clerk_1", { failClosed: true });
     expect(runAiRoughCut).not.toHaveBeenCalled();
   });
 

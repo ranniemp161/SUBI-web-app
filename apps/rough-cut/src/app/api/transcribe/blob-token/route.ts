@@ -50,7 +50,8 @@ export async function POST(request: Request): Promise<NextResponse> {
         const limit = await rateLimit(
           `blob-upload:${clerkId}`,
           BLOB_UPLOAD_LIMIT,
-          BLOB_UPLOAD_WINDOW_SECONDS
+          BLOB_UPLOAD_WINDOW_SECONDS,
+          { failClosed: true }
         );
         if (!limit.allowed) {
           throw new Error("You're uploading too frequently. Please wait a bit and try again.");

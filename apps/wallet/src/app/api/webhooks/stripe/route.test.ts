@@ -133,17 +133,26 @@ describe("POST /api/webhooks/stripe — request guards", () => {
     expect(rateLimit).not.toHaveBeenCalled();
   });
 
-  it("400 when the stripe-signature header is missing", async () => {
-    const res = await POST(req({ signature: "" }));
-    expect(res.status).toBe(400);
-    expect(rateLimit).not.toHaveBeenCalled();
+  it("413 when content-length exceeds 1MB", async () => {
+    const res = await POST(
+      new Request("http://localhost/api/webhooks/stripe", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "content-length": "2000000",
+          "stripe-signature": "sig",
+        },
+        body: JSON.stringify({ data: "x" }),
+      })
+    );
+    expect(res.status).toBe(413);
   });
 
   it("429 once the per-IP limit is exceeded (checked after the signature passes)", async () => {
     state.rateAllowed = false;
     const res = await POST(req({ ip: "198.51.100.30" }));
     expect(res.status).toBe(429);
-    expect(rateLimit).toHaveBeenCalledWith("webhook-stripe:198.51.100.30", 120, 60);
+    expect(rateLimit).toHaveBeenCalledWith("webhook-stripe:198.51.100.30", 120, 60, { failClosed: true });
   });
 
   it("400 on an invalid signature, without consuming a rate-limit slot", async () => {

@@ -20,7 +20,8 @@ export async function ipRateLimit(
   request: Request,
   bucket: string,
   limit: number,
-  windowSeconds: number
+  windowSeconds: number,
+  options?: { failClosed?: boolean }
 ): Promise<RateLimitResult> {
-  return rateLimit(`${bucket}:${getClientIp(request)}`, limit, windowSeconds);
+  return rateLimit(`${bucket}:${getClientIp(request)}`, limit, windowSeconds, options);
 }

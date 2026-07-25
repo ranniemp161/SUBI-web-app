@@ -91,7 +91,8 @@ export async function POST(request: Request) {
   const limit = await rateLimit(
     `transcribe:${clerkId}`,
     TRANSCRIBE_LIMIT,
-    TRANSCRIBE_WINDOW_SECONDS
+    TRANSCRIBE_WINDOW_SECONDS,
+    { failClosed: true }
   );
   if (!limit.allowed) {
     return NextResponse.json(

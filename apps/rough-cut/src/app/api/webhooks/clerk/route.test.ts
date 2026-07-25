@@ -77,6 +77,23 @@ describe("POST /api/webhooks/clerk — request guards", () => {
     expect(ipRateLimit).not.toHaveBeenCalled();
   });
 
+  it("413 when content-length exceeds 1MB", async () => {
+    const res = await POST(
+      new Request("http://localhost/api/webhooks/clerk", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "content-length": "2000000",
+          "svix-id": "id",
+          "svix-timestamp": "ts",
+          "svix-signature": "sig",
+        },
+        body: JSON.stringify({ data: "x" }),
+      })
+    );
+    expect(res.status).toBe(413);
+  });
+
   it("400 when svix headers are missing (never touches the rate limiter)", async () => {
     const res = await POST(req({}, { headers: false }));
     expect(res.status).toBe(400);
@@ -89,7 +106,7 @@ describe("POST /api/webhooks/clerk — request guards", () => {
     const res = await POST(req({}, { ip: "198.51.100.20" }));
     expect(res.status).toBe(429);
     // Note: the test mock now intercepts ipRateLimit, which takes the Request object directly
-    expect(ipRateLimit).toHaveBeenCalledWith(expect.any(Request), "webhook-clerk", 120, 60);
+    expect(ipRateLimit).toHaveBeenCalledWith(expect.any(Request), "webhook-clerk", 120, 60, { failClosed: true });
     expect(state.verifyImpl).toHaveBeenCalled();
   });
 
