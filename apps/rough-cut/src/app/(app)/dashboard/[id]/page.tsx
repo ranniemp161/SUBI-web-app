@@ -257,9 +257,12 @@ export default function EditorPage() {
   // best-effort — see detect-frame-rate.ts.
   const [sourceFps, setSourceFps] = useState<VideoFps | null>(null);
   // Mirror for the global key handler and frame-step callback, so they read the
-  // latest rate without re-registering the listener (spec 0004).
+  // latest rate without re-registering the listener (spec 0004). Synced in an
+  // effect (not during render) since those readers only run after commit.
   const sourceFpsRef = useRef<VideoFps | null>(null);
-  sourceFpsRef.current = sourceFps;
+  useEffect(() => {
+    sourceFpsRef.current = sourceFps;
+  }, [sourceFps]);
   // The reselected source's embedded start timecode (tmcd track), in
   // seconds; 0 until detection settles, fails, or the source has none. See
   // detect-embedded-timecode.ts.
