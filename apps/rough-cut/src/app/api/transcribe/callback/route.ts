@@ -59,7 +59,15 @@ export async function POST(request: Request) {
     );
   }
 
-  const limit = await ipRateLimit(request, "transcribe-callback", CALLBACK_LIMIT, CALLBACK_WINDOW_SECONDS);
+  const contentLength = Number(request.headers.get("content-length"));
+  if (contentLength > 1_048_576) {
+    return NextResponse.json(
+      { error: "Payload too large." },
+      { status: 413 }
+    );
+  }
+
+  const limit = await ipRateLimit(request, "transcribe-callback", CALLBACK_LIMIT, CALLBACK_WINDOW_SECONDS, { failClosed: true });
   if (!limit.allowed) {
     return NextResponse.json(
       { error: "Too many callback requests." },

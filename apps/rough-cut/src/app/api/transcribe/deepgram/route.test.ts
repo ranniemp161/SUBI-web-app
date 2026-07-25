@@ -140,7 +140,7 @@ describe("POST /api/transcribe/deepgram — request guards", () => {
     state.rateAllowed = false;
     const res = await POST(req());
     expect(res.status).toBe(429);
-    expect(rateLimit).toHaveBeenCalledWith("transcribe:clerk_1", 30, 3600);
+    expect(rateLimit).toHaveBeenCalledWith("transcribe:clerk_1", 30, 3600, { failClosed: true });
   });
 
   it("404 when the project isn't found or owned", async () => {

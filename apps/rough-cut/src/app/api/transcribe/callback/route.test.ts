@@ -141,7 +141,7 @@ describe("POST /api/transcribe/callback — IP rate limit", () => {
     state.rateAllowed = false;
     const res = await POST(callbackRequest(`?projectId=${VALID_ID}&token=${TOKEN}`, undefined, "198.51.100.9"));
     expect(res.status).toBe(429);
-    expect(rateLimit).toHaveBeenCalledWith("transcribe-callback:198.51.100.9", 60, 600);
+    expect(rateLimit).toHaveBeenCalledWith("transcribe-callback:198.51.100.9", 60, 600, { failClosed: true });
     // selectRows defaults to [] anyway, but this proves the lookup never ran.
     expect(state.updates).toHaveLength(0);
   });
@@ -150,7 +150,7 @@ describe("POST /api/transcribe/callback — IP rate limit", () => {
     state.selectRows = [{ id: VALID_ID, transcriptCallbackToken: TOKEN }];
     const res = await POST(callbackRequest(`?projectId=${VALID_ID}&token=${TOKEN}`));
     expect(res.status).toBe(200);
-    expect(rateLimit).toHaveBeenCalledWith("transcribe-callback:203.0.113.1", 60, 600);
+    expect(rateLimit).toHaveBeenCalledWith("transcribe-callback:203.0.113.1", 60, 600, { failClosed: true });
   });
 });
 

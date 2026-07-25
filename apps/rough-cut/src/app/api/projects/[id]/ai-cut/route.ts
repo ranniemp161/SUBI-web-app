@@ -52,7 +52,7 @@ export async function POST(
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const limit = await aiCutRateLimit(clerkId);
+  const limit = await aiCutRateLimit(clerkId, { failClosed: true });
   if (!limit.allowed) {
     return NextResponse.json(
       { error: "Too many AI cut runs — try again in a bit." },
