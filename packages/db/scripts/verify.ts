@@ -66,7 +66,11 @@ function buildExpectedColumns(): Record<string, string[]> {
 async function main() {
   const url = process.env.DATABASE_URL;
   if (!url) {
-    console.error("❌  DATABASE_URL is not set in .env.local");
+    // Also runs in CI (.github/workflows/db-verify.yml), where there is no
+    // .env.local and the variable comes from the environment instead.
+    console.error(
+      "❌  DATABASE_URL is not set (checked .env.local and the environment)"
+    );
     process.exit(1);
   }
 
@@ -121,10 +125,17 @@ async function main() {
   if (!ok) {
     console.error(`
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  Schema drift detected — the migration was tracked as
-  applied but the DDL did not execute in the live database.
+  Schema drift detected — the live database is missing
+  columns that schema.ts declares.
 
-  To fix, apply the missing columns manually, then re-run:
+  Either a migration was never applied to this database, or
+  it was tracked as applied but the DDL did not execute.
+
+  Check for pending migrations first:
+    npm run db:migrate     (prompts for the endpoint id)
+
+  If nothing is pending, the DDL silently failed — apply the
+  missing columns manually, then re-run:
     npm run db:verify
 
   Never run db:push against prod. See MIGRATIONS.md.

@@ -10,13 +10,21 @@ cd packages/db
 npm run db:generate   # schema.ts changed -> emit a reviewed SQL migration file
 npm run db:migrate    # apply pending migrations, then verify live DB matches schema
 npm run db:verify     # standalone schema check — fails loudly if drift is detected
-npm run db:push       # DEV ONLY - schema-diff, no history (see warning below)
+npm run db:push       # DO NOT RUN - no safe target exists (see warning below)
 npm run db:studio     # browse the DB
 ```
 
 `DATABASE_URL` is read from `.env.local` in this directory (see `drizzle.config.ts`).
-Point it at the branch you intend to change. **Dev and prod are separate Neon
-branches — migrate each one separately, dev first.**
+
+> **There is only one Neon branch, and it is production.**
+> `packages/db/.env.local` holds the same connection string as Vercel's
+> Production `DATABASE_URL`. Local development, Vercel Preview, and Vercel
+> Production all read and write the same database.
+>
+> Every `db:*` command in this file is therefore a **production** operation the
+> moment you run it. There is no staging step and nothing to practise on. The
+> confirmation prompt described below is not one safeguard among several — it is
+> the only one.
 
 ### The confirmation prompt
 
@@ -47,21 +55,81 @@ string actually resolves to, or the command refuses.
 
 ## The rule
 
-- **Prod (and any DB with data you can't lose): `generate` + `migrate` only.**
-  Every change is a committed, reviewed SQL file applied in order and tracked.
-- **`db:push` is for throwaway dev branches only. Never point it at prod.**
-  `push` does a schema-diff and will silently offer a destructive drop/recreate
-  for type conversions (it tried exactly this on the `transcript_status`
-  text->enum change). That is fine on disposable data, unacceptable on prod.
+- **`generate` + `migrate` only.** Every change is a committed, reviewed SQL file
+  applied in order and tracked. With a single branch this is not the
+  conservative option, it is the only correct one.
+- **Never run `db:push`.** It does a schema-diff with no history and will
+  silently offer a destructive drop/recreate for type conversions (it tried
+  exactly this on the `transcript_status` text->enum change). That is tolerable
+  on disposable data — and there is no disposable data here, because the only
+  branch is production. The script still exists for the day a dev branch does;
+  until then treat it as unrunnable.
+- **Every migration must be backward compatible**, because the currently
+  deployed code keeps serving traffic against the schema you just changed. Add a
+  column, deploy the code that uses it, drop the old column in a *later*
+  migration. Never rename or drop in the same step as the code change.
 
-## Day-to-day dev workflow
+## Day-to-day workflow
 
 1. Edit `src/schema.ts`.
-2. While the shape is still churning, `npm run db:push` against a disposable dev
-   branch to iterate fast.
-3. Once the change settles: `npm run db:generate`, review the emitted
-   `drizzle/NNNN_*.sql`, commit it with the code.
-4. Apply with `npm run db:migrate` (dev branch first, then prod at deploy time).
+2. `npm run db:generate`, then **read the emitted `drizzle/NNNN_*.sql`**. This
+   review is where a destructive change gets caught; there is no later gate.
+3. Commit the SQL file together with the code that needs it. CI blocks a
+   `schema.ts` change that arrives without one.
+4. `npm run db:migrate` — it prints the target and makes you type the endpoint id
+   back. Read it. This writes to production.
+5. Push the branch. Its Vercel preview hits the database you just migrated, so
+   exercise the changed path there before merging.
+
+### If you want a safe place to iterate
+
+Neon branches are cheap and near-instant, and a branch is a copy-on-write
+snapshot of production data. Creating one, pointing `.env.local` at it, and
+using `db:push` freely against it restores the fast iteration loop this doc used
+to describe. Nothing in the repo depends on there being only one branch — the
+only thing that must keep pointing at production is Vercel's `DATABASE_URL`.
+
+## Automated verification (CI)
+
+`.github/workflows/db-verify.yml` runs `db:verify` against **production** after
+every production deploy of rough-cut or wallet, once daily on a schedule, and on
+demand via workflow_dispatch. It is **not** a required status check — it reports
+on a deploy that already happened, so blocking a merge on it would be
+meaningless.
+
+It exists because CI's other migration guard only proves a `.sql` file was
+*committed*. Nothing proved it was *applied* — and since Drizzle builds an
+explicit column list rather than emitting `SELECT *`, an unapplied migration
+breaks every query against the affected table, not just the new field. The first
+signal used to be a user hitting a 500.
+
+**CI never applies a migration.** Applying stays manual, behind the confirmation
+prompt above. Automating prod writes would require a write-capable
+`DATABASE_URL` in GitHub Actions secrets, reachable by every third-party action
+in every workflow — and Dependabot bumps those weekly.
+
+### Setting up `PROD_DATABASE_URL_RO`
+
+The workflow skips with a visible warning until this secret exists. It must be a
+**read-only** role, so that the worst case of a compromised workflow is a leaked
+list of column names rather than a dropped table.
+
+On the production Neon branch:
+
+```sql
+CREATE ROLE ci_verify WITH LOGIN PASSWORD '<generated>';
+GRANT CONNECT ON DATABASE neondb TO ci_verify;
+GRANT USAGE ON SCHEMA public TO ci_verify;
+-- verify.ts only reads information_schema, which needs no table grants at all.
+-- Deliberately no SELECT on public tables: the check reads metadata, not rows,
+-- so this role can never see user data.
+```
+
+Then add the connection string for that role as a repository secret named
+`PROD_DATABASE_URL_RO` (Settings -> Secrets and variables -> Actions).
+
+Confirm it is really read-only before trusting it — from a scratch psql session
+as `ci_verify`, `CREATE TABLE t (id int);` must fail.
 
 ## First-deploy baseline (one-time, production)
 

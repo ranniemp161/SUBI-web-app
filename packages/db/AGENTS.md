@@ -22,20 +22,32 @@ Run from `packages/db` (all drizzle-kit commands must run from here — this is
 where `drizzle.config.ts` lives):
 ```bash
 npm run db:generate   # schema.ts changed -> emit a reviewed SQL migration file
-npm run db:migrate    # apply pending migrations (prod-safe, tracked in __drizzle_migrations)
-npm run db:push       # DEV ONLY - schema-diff, no history, can silently drop/recreate columns
+npm run db:migrate    # apply pending migrations (tracked in __drizzle_migrations) - WRITES TO PROD
+npm run db:verify     # read-only check that the live schema matches schema.ts
+npm run db:push       # DO NOT RUN - no safe target; can silently drop/recreate columns
 npm run db:studio     # browse the DB
 ```
 
 ## Conventions
-- **`generate` + `migrate` is the only prod-safe path.** `push` is for
-  disposable dev branches only — never point it at prod (see MIGRATIONS.md for
-  the destructive drop/recreate it attempted on a real type conversion).
-- Dev and prod are **separate Neon branches** — migrate each one separately,
-  dev first. `db:migrate` and `db:push` now run `scripts/preflight.ts` first,
-  which prints the target endpoint and refuses to continue until you type it
-  back — the target comes from whatever `.env.local` last pointed at, and
-  nothing else in the chain reports which database it touched.
+- **There is exactly one Neon branch and it is production.** `.env.local` holds
+  the same connection string as Vercel's Production `DATABASE_URL`, so local
+  dev, Preview, and Production share one database. Every `db:*` command writes
+  to production the moment it runs — there is no staging target.
+- **`generate` + `migrate` is the only path.** Never run `db:push`: it does a
+  schema-diff with no history and will silently offer a destructive
+  drop/recreate for type conversions (see MIGRATIONS.md for the one it attempted
+  on a real type conversion). With no disposable branch, it has no safe target.
+- **Migrations must be backward compatible** — deployed code keeps serving
+  traffic against the schema mid-change. Add, deploy, then drop in a *later*
+  migration; never rename or drop in the same step as the code change.
+- `db:migrate` and `db:push` run `scripts/preflight.ts` first, which prints the
+  target endpoint and refuses to continue until you type it back. The target is
+  whatever `.env.local` last pointed at and nothing else in the chain reports
+  which database it touched, so this prompt is the only safeguard, not one of
+  several.
+- `.github/workflows/db-verify.yml` re-checks the live schema after every
+  production deploy using a **read-only** role. CI never writes to the database;
+  applying migrations stays manual and local.
 - `users.balance_micros` is a cached balance; the source of truth is
   `SUM(credit_ledger.delta_micros)`. A DB `CHECK` (`users_balance_micros_nonneg`) makes
   concurrent spends safe without transactions — an overdraft raises Postgres

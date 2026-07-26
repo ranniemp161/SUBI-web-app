@@ -1,0 +1,110 @@
+name: DB Verify
+
+# Asserts that the live production schema actually has every column the shipped
+# code expects. This is the counterpart to the migration guard in ci.yml: that
+# guard proves a migration file was *committed*, this proves it was *applied*.
+#
+# Why it matters here specifically: Drizzle does not emit `SELECT *` — it builds
+# an explicit column list from schema.ts. A migration that was generated and
+# merged but never run therefore does not degrade one feature, it makes every
+# query against that table fail. Without this workflow the first signal is a
+# user hitting a 500.
+#
+# READ ONLY. This never applies a migration. Applying stays manual behind the
+# type-the-endpoint-back prompt in packages/db/scripts/preflight.ts (see
+# packages/db/MIGRATIONS.md) — automating prod writes from CI would put a
+# write-capable credential in Actions, where every third-party action in every
+# workflow could reach it. The secret below must be a read-only Neon role.
+#
+# Deliberately NOT in required_status_checks: it reports on a deploy that has
+# already happened, so blocking a merge on it is meaningless.
+#
+# NOTE: `deployment_status` workflows only run from the file as it exists on the
+# DEFAULT branch, so this does nothing until it lands on main.
+
+on:
+  deployment_status:
+  # Catches drift that no deploy caused — most likely a migration applied to the
+  # wrong Neon branch, which is invisible to every other check in the repo.
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+concurrency:
+  # rough-cut and wallet deploy the same commit seconds apart and share one
+  # database, so both would otherwise run an identical check. Keying on the SHA
+  # collapses them into a single run.
+  group: db-verify-${{ github.event.deployment.sha || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  # Job id is NOT `check` — that name is claimed by ci.yml and is the context
+  # branch protection matches on main.
+  verify:
+    # Matched by substring rather than the exact environment name
+    # ("Production – subi-web-app-rough-cut"), which contains an en dash that is
+    # very easy to mistype into a filter that silently never matches.
+    # founders-frame is excluded: it does not use @repo/db.
+    if: >-
+      github.event_name != 'deployment_status' ||
+      (github.event.deployment_status.state == 'success' &&
+       startsWith(github.event.deployment_status.environment, 'Production') &&
+       (contains(github.event.deployment_status.environment, 'rough-cut') ||
+        contains(github.event.deployment_status.environment, 'wallet')))
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Verify the schema against the code that is actually live, not
+          # against whatever main has drifted to since the deploy started.
+          ref: ${{ github.event.deployment.sha || github.ref }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Same pattern as the E2E bypass check: skip visibly rather than fail red
+      # on every deploy until the secret exists. A check that is red for a reason
+      # you cannot act on just teaches you to ignore it.
+      - name: Check for read-only database URL
+        id: creds
+        env:
+          DATABASE_URL_RO: ${{ secrets.PROD_DATABASE_URL_RO }}
+        run: |
+          if [ -z "$DATABASE_URL_RO" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=DB Verify skipped::PROD_DATABASE_URL_RO is not set. Create a read-only Neon role on the production branch and add its connection string as a repository secret. See packages/db/MIGRATIONS.md."
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # verify.ts calls dotenv config({ path: ".env.local" }), which is absent
+      # here and is a no-op when missing — dotenv does not override variables
+      # already present in the environment, so DATABASE_URL below is what wins.
+      - name: Verify live schema matches schema.ts
+        if: steps.creds.outputs.configured == 'true'
+        working-directory: packages/db
+        env:
+          DATABASE_URL: ${{ secrets.PROD_DATABASE_URL_RO }}
+        run: npm run db:verify
+
+      - name: Explain a failure
+        if: failure() && steps.creds.outputs.configured == 'true'
+        run: |
+          echo "::error title=Production schema is behind the code::A column that schema.ts declares is missing from the production database."
+          echo ""
+          echo "Most likely: a migration was generated and merged, but never applied."
+          echo ""
+          echo "Fix, from a machine with the write credential:"
+          echo "  cd packages/db"
+          echo "  # point .env.local at the PRODUCTION Neon branch"
+          echo "  npm run db:migrate    # prompts for the endpoint id before running"
+          echo ""
+          echo "Do not run db:push against production. See packages/db/MIGRATIONS.md."
