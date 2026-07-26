@@ -41,3 +41,12 @@ updates:
       actions:
         patterns:
           - "*"
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # Same rule as npm above: a major action bump (e.g. checkout v4 -> v7) can
+      # carry breaking changes, so it should arrive as its own PR rather than
+      # bundled into a routine weekly group that gets merged on a green tick.
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
