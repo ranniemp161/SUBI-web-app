@@ -34,9 +34,15 @@ jobs:
   migrate:
     runs-on: ubuntu-latest
     # Bind to a GitHub Environment so DATABASE_URL is scoped per target and so
-    # `production` can carry a required-reviewer gate (configure in repo
+    # db-production can carry a required-reviewer gate (configure in repo
     # Settings -> Environments).
-    environment: ${{ inputs.target }}
+    #
+    # Prefixed with `db-` on purpose. Vercel already owns GitHub Environments
+    # named "Production" and "Preview" for its deployments. A bare `production`
+    # here would either collide with Vercel's or sit next to it as a confusingly
+    # similar name; the prefix avoids both and makes the scope of the secret
+    # obvious: it holds a database credential, not a deployment target.
+    environment: db-${{ inputs.target }}
 
     steps:
       - name: Check confirmation
