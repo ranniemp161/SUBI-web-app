@@ -10,21 +10,44 @@ cd packages/db
 npm run db:generate   # schema.ts changed -> emit a reviewed SQL migration file
 npm run db:migrate    # apply pending migrations, then verify live DB matches schema
 npm run db:verify     # standalone schema check — fails loudly if drift is detected
-npm run db:push       # DO NOT RUN - no safe target exists (see warning below)
+npm run db:push       # dev branch only - schema-diff, no history (see below)
 npm run db:studio     # browse the DB
 ```
 
-`DATABASE_URL` is read from `.env.local` in this directory (see `drizzle.config.ts`).
+## Which database you are pointing at
 
-> **There is only one Neon branch, and it is production.**
-> `packages/db/.env.local` holds the same connection string as Vercel's
-> Production `DATABASE_URL`. Local development, Vercel Preview, and Vercel
-> Production all read and write the same database.
->
-> Every `db:*` command in this file is therefore a **production** operation the
-> moment you run it. There is no staging step and nothing to practise on. The
-> confirmation prompt described below is not one safeguard among several — it is
-> the only one.
+Two Neon branches in project `SUBI-APP` (`gentle-meadow-01487691`):
+
+| Branch | Endpoint | Used by |
+|---|---|---|
+| `production` | `ep-restless-wind-aou4pefe` | Vercel Production **and Vercel Preview** |
+| `dev` | `ep-holy-hall-aoe13azt` | your machine only |
+
+`DATABASE_URL` is read from `.env.local` in this directory (see
+`drizzle.config.ts`), and **`.env.local` points at `dev`. Leave it that way.**
+The default target of every `db:*` command should always be the branch where a
+mistake costs nothing.
+
+### Reaching production deliberately
+
+`dotenv` does not override variables already present in the environment, so an
+inline `DATABASE_URL` beats `.env.local` in `drizzle.config.ts`, `preflight.ts`
+and `verify.ts` alike. Name production explicitly, one command at a time:
+
+```bash
+DATABASE_URL="$(neonctl connection-string production \
+  --project-id gentle-meadow-01487691 --role-name neondb_owner \
+  --database-name neondb --pooled)" npm run db:migrate
+```
+
+Production is then reachable only by asking for it — never by forgetting to
+change a file back. Do not "temporarily" edit `.env.local` to point at
+production; that is the failure mode this layout exists to prevent.
+
+> **Vercel Preview still uses the `production` branch.** Only your local machine
+> moved to `dev`. Until preview branching is set up, a preview deployment reads
+> and writes real production data, so **every migration must still be backward
+> compatible** — see the rule below.
 
 ### The confirmation prompt
 
@@ -55,39 +78,45 @@ string actually resolves to, or the command refuses.
 
 ## The rule
 
-- **`generate` + `migrate` only.** Every change is a committed, reviewed SQL file
-  applied in order and tracked. With a single branch this is not the
-  conservative option, it is the only correct one.
-- **Never run `db:push`.** It does a schema-diff with no history and will
+- **Production gets `generate` + `migrate` only.** Every change reaching
+  `production` is a committed, reviewed SQL file applied in order and tracked.
+- **`db:push` is for `dev` only.** It does a schema-diff with no history and will
   silently offer a destructive drop/recreate for type conversions (it tried
-  exactly this on the `transcript_status` text->enum change). That is tolerable
-  on disposable data — and there is no disposable data here, because the only
-  branch is production. The script still exists for the day a dev branch does;
-  until then treat it as unrunnable.
-- **Every migration must be backward compatible**, because the currently
-  deployed code keeps serving traffic against the schema you just changed. Add a
-  column, deploy the code that uses it, drop the old column in a *later*
-  migration. Never rename or drop in the same step as the code change.
+  exactly this on the `transcript_status` text->enum change). Fine on `dev`,
+  never against `production`.
+- **Every migration must be backward compatible.** Deployed code keeps serving
+  traffic against the schema you just changed, and Vercel Preview reads
+  `production` too. Add a column, deploy the code that uses it, drop the old
+  column in a *later* migration. Never rename or drop in the same step as the
+  code change.
 
 ## Day-to-day workflow
 
 1. Edit `src/schema.ts`.
-2. `npm run db:generate`, then **read the emitted `drizzle/NNNN_*.sql`**. This
-   review is where a destructive change gets caught; there is no later gate.
-3. Commit the SQL file together with the code that needs it. CI blocks a
+2. While the shape is still churning, `npm run db:push` against `dev` to iterate
+   fast. `.env.local` already points there, so this needs no arguments.
+3. Once it settles: `npm run db:generate`, then **read the emitted
+   `drizzle/NNNN_*.sql`**. This review is where a destructive change gets caught.
+4. Commit the SQL file together with the code that needs it. CI blocks a
    `schema.ts` change that arrives without one.
-4. `npm run db:migrate` — it prints the target and makes you type the endpoint id
-   back. Read it. This writes to production.
-5. Push the branch. Its Vercel preview hits the database you just migrated, so
-   exercise the changed path there before merging.
+5. Apply to `dev` first — `npm run db:migrate` — to confirm the migration runs
+   cleanly on a database that already has `dev`'s data in it.
+6. Apply to production with the explicit `DATABASE_URL=...` form above. Preflight
+   prints the target and makes you type the endpoint id back. Read it.
+7. Push the branch and exercise the changed path on its Vercel preview, which
+   reads `production`.
 
-### If you want a safe place to iterate
+### Keeping `dev` fresh
 
-Neon branches are cheap and near-instant, and a branch is a copy-on-write
-snapshot of production data. Creating one, pointing `.env.local` at it, and
-using `db:push` freely against it restores the fast iteration loop this doc used
-to describe. Nothing in the repo depends on there being only one branch — the
-only thing that must keep pointing at production is Vercel's `DATABASE_URL`.
+`dev` drifts from production as real usage accumulates. When it gets stale
+enough to stop being a useful rehearsal, reset it:
+
+```bash
+neonctl branches reset dev --project-id gentle-meadow-01487691 --parent
+```
+
+That discards everything on `dev` and re-snapshots production, so do not keep
+anything there you care about.
 
 ## Automated verification (CI)
 
