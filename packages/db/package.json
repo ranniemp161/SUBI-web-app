@@ -10,9 +10,9 @@
   },
   "scripts": {
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate && tsx scripts/verify.ts",
+    "db:migrate": "tsx scripts/preflight.ts migrate && drizzle-kit migrate && tsx scripts/verify.ts",
     "db:verify": "tsx scripts/verify.ts",
-    "db:push": "drizzle-kit push",
+    "db:push": "tsx scripts/preflight.ts push && drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "topup-demo-account": "tsx scripts/topup-demo-account.ts"
   },

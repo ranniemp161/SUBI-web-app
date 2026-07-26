@@ -14,6 +14,7 @@ tracked by an append-only ledger.
 | `src/index.ts` | `db` singleton (Neon HTTP driver) + `withDbRetry` (timeout/retry wrapper around retryable connection failures) |
 | `drizzle/*.sql` | Committed, reviewed migration history (source of truth for schema changes) |
 | `drizzle.config.ts` | Reads `DATABASE_URL` from `.env.local` in this directory |
+| `scripts/preflight.ts` | Prints the target host/endpoint/database and requires you to type the endpoint id back before `db:migrate` or `db:push` runs. Set `MIGRATE_CONFIRM=<endpoint>` to skip it in a script |
 | `MIGRATIONS.md` | Full migration runbook — read before touching schema or running any `db:*` command |
 
 ## Commands
@@ -31,7 +32,10 @@ npm run db:studio     # browse the DB
   disposable dev branches only — never point it at prod (see MIGRATIONS.md for
   the destructive drop/recreate it attempted on a real type conversion).
 - Dev and prod are **separate Neon branches** — migrate each one separately,
-  dev first.
+  dev first. `db:migrate` and `db:push` now run `scripts/preflight.ts` first,
+  which prints the target endpoint and refuses to continue until you type it
+  back — the target comes from whatever `.env.local` last pointed at, and
+  nothing else in the chain reports which database it touched.
 - `users.balance_micros` is a cached balance; the source of truth is
   `SUM(credit_ledger.delta_micros)`. A DB `CHECK` (`users_balance_micros_nonneg`) makes
   concurrent spends safe without transactions — an overdraft raises Postgres
