@@ -69,7 +69,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
 
       - name: Install dependencies
@@ -107,9 +107,13 @@ jobs:
           echo ""
           echo "Most likely: a migration was generated and merged, but never applied."
           echo ""
-          echo "Fix, from a machine with the write credential:"
-          echo "  cd packages/db"
-          echo "  # point .env.local at the PRODUCTION Neon branch"
-          echo "  npm run db:migrate    # prompts for the endpoint id before running"
+          echo "Fix, from a machine with the write credential. Name production"
+          echo "explicitly — do NOT repoint .env.local, which stays on the dev branch:"
           echo ""
-          echo "Do not run db:push against production. See packages/db/MIGRATIONS.md."
+          echo "  cd packages/db"
+          echo "  DATABASE_URL=\"\$(neonctl connection-string production \\"
+          echo "    --project-id gentle-meadow-01487691 --role-name neondb_owner \\"
+          echo "    --database-name neondb --pooled)\" npm run db:migrate"
+          echo ""
+          echo "It prompts for the endpoint id before running."
+          echo "Never run db:push against production. See packages/db/MIGRATIONS.md."
