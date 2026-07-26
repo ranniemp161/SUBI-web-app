@@ -18,6 +18,33 @@ npm run db:studio     # browse the DB
 Point it at the branch you intend to change. **Dev and prod are separate Neon
 branches — migrate each one separately, dev first.**
 
+### The confirmation prompt
+
+`db:migrate` and `db:push` run `scripts/preflight.ts` before drizzle-kit touches
+anything. It prints the target and makes you type the endpoint id back:
+
+```
+  ┌─────────────────────────────────────────────
+  │  About to run: migrate
+  │  Host        : ep-cool-name-123456.us-east-2.aws.neon.tech
+  │  Endpoint    : ep-cool-name-123456
+  │  Database    : neondb
+  │  User        : neondb_owner
+  └─────────────────────────────────────────────
+
+Type the endpoint id to continue (ep-cool-name-123456):
+```
+
+This exists because the target is whatever `.env.local` last pointed at, and
+neither `drizzle-kit` nor `db:verify` prints the host — so before this, running
+a migration against the wrong Neon branch produced no signal at all. Typing the
+id back is deliberate: a `y/N` prompt gets answered from muscle memory, and the
+whole point is to make you read the target.
+
+The password is never printed. For a scripted run, set
+`MIGRATE_CONFIRM=<endpoint-id>`; it must match the endpoint the connection
+string actually resolves to, or the command refuses.
+
 ## The rule
 
 - **Prod (and any DB with data you can't lose): `generate` + `migrate` only.**
