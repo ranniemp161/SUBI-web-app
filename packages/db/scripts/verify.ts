@@ -150,9 +150,13 @@ async function main() {
   Check for pending migrations first:
     npm run db:migrate     (prompts for the endpoint id)
 
-  If nothing is pending, the DDL silently failed — apply the
-  missing columns manually, then re-run:
-    npm run db:verify
+  If nothing is pending, the DDL silently failed. Write a
+  corrective migration rather than patching columns by hand —
+  a hand-applied column can differ from the intended one in
+  type, default, constraints or indexes, and leaves migration
+  history claiming work that was never done:
+    npm run db:generate   # review the emitted SQL
+    npm run db:migrate
 
   Never run db:push against prod. See MIGRATIONS.md.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);

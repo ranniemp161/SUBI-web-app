@@ -42,6 +42,12 @@ concurrency:
   group: db-verify-${{ github.event.deployment.sha || github.sha }}
   cancel-in-progress: true
 
+# This job reads a repository and a database and writes to neither. Granting it
+# anything more would undercut the least-privilege argument the whole workflow
+# rests on.
+permissions:
+  contents: read
+
 jobs:
   # Job id is NOT `check` — that name is claimed by ci.yml and is the context
   # branch protection matches on main.
@@ -63,6 +69,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          # actions/checkout leaves GITHUB_TOKEN in .git/config by default. This
+          # job runs `npm ci` afterwards, so a compromised dependency could read
+          # it. Nothing here pushes, so drop it.
+          persist-credentials: false
           # Verify the schema against the code that is actually live, not
           # against whatever main has drifted to since the deploy started.
           ref: ${{ github.event.deployment.sha || github.ref }}
