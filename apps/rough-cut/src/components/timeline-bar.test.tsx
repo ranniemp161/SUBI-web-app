@@ -15,10 +15,11 @@ vi.mock("@/lib/waveform", () => ({ extractWaveform: vi.fn() }));
 vi.mock("@/lib/thumbnails", () => ({ extractFilmstrip: vi.fn() }));
 
 // jsdom implements neither the pointer-capture trio nor ResizeObserver nor a
-// PointerEvent constructor, all of which the hand-tool pan logic calls
-// unconditionally — without these polyfills the pan interactions below throw
-// before any assertion runs. Mirrors the polyfill block in
-// dashboard/[id]/page.test.tsx (Radix Select tests).
+// PointerEvent constructor. The Hand tool's pan logic calls the first and third
+// unconditionally, and Radix measures the toolbar tooltips' arrows with the
+// second — without these polyfills the interactions below throw before any
+// assertion runs. Mirrors the polyfill block in dashboard/[id]/page.test.tsx
+// (Radix Select tests).
 beforeAll(() => {
   Element.prototype.hasPointerCapture = vi.fn(() => false);
   Element.prototype.setPointerCapture = vi.fn();
@@ -44,12 +45,7 @@ beforeAll(() => {
   }
 });
 
-afterEach(() => {
-  cleanup();
-  // A test that fails mid-drag could otherwise leave Space "held" for the
-  // next test (the listener lives on window, outside React's cleanup).
-  fireEvent.keyUp(window, { code: "Space" });
-});
+afterEach(cleanup);
 
 const EDL: EDL = {
   segments: [
@@ -95,30 +91,137 @@ function pointerDrag(el: HTMLElement, fromX: number, toX: number) {
   fireEvent.pointerUp(el, { clientX: toX, pointerId: 1 });
 }
 
-describe("TimelineBar — hand-tool pan", () => {
-  it("holding Space and dragging pans the scroller instead of scrubbing or selecting", () => {
+function getToolButtons() {
+  return {
+    select: screen.getByRole("button", { name: /^select$/i }),
+    hand: screen.getByRole("button", { name: /^hand$/i }),
+  };
+}
+
+describe("TimelineBar — Select / Hand tools", () => {
+  it("starts on the Select tool, so a drag scrubs rather than pans", () => {
+    const props = makeProps();
+    const { container } = render(<TimelineBar {...props} />);
+    const scroller = getScroller(container);
+    const { select, hand } = getToolButtons();
+
+    expect(select).toHaveAttribute("aria-pressed", "true");
+    expect(hand).toHaveAttribute("aria-pressed", "false");
+
+    pointerDrag(scroller, 100, 60);
+    expect(scroller.scrollLeft).toBe(0);
+  });
+
+  it("pressing H picks the Hand tool and dragging then pans instead of scrubbing or selecting", () => {
     const props = makeProps();
     const { container } = render(<TimelineBar {...props} />);
     const scroller = getScroller(container);
 
-    fireEvent.keyDown(window, { code: "Space" });
-    pointerDrag(scroller, 100, 60);
+    fireEvent.keyDown(window, { code: "KeyH" });
 
+    const { select, hand } = getToolButtons();
+    expect(hand).toHaveAttribute("aria-pressed", "true");
+    expect(select).toHaveAttribute("aria-pressed", "false");
+
+    pointerDrag(scroller, 100, 60);
     expect(scroller.scrollLeft).toBe(40); // 0 - (60 - 100)
     expect(props.onSeek).not.toHaveBeenCalled();
     expect(props.onSelectSegment).not.toHaveBeenCalled();
   });
 
-  it("releases the pan tool on window blur so a stuck Space can't leave it armed", () => {
+  it("pressing A returns to Select and turns the Hand tool off", () => {
+    const props = makeProps();
+    const { container } = render(<TimelineBar {...props} />);
+    const scroller = getScroller(container);
+
+    fireEvent.keyDown(window, { code: "KeyH" });
+    fireEvent.keyDown(window, { code: "KeyA" });
+
+    const { select, hand } = getToolButtons();
+    expect(select).toHaveAttribute("aria-pressed", "true");
+    expect(hand).toHaveAttribute("aria-pressed", "false");
+
+    pointerDrag(scroller, 100, 60);
+    expect(scroller.scrollLeft).toBe(0);
+
+    const keepClip = screen.getByTitle(/keep — click to select/i);
+    fireEvent.click(keepClip);
+    expect(props.onSelectSegment).toHaveBeenCalledTimes(1);
+  });
+
+  it("the tool buttons pick a tool directly, and stay mutually exclusive", () => {
+    const props = makeProps();
+    const { container } = render(<TimelineBar {...props} />);
+    const scroller = getScroller(container);
+    const { select, hand } = getToolButtons();
+
+    fireEvent.click(hand);
+    expect(hand).toHaveAttribute("aria-pressed", "true");
+    expect(select).toHaveAttribute("aria-pressed", "false");
+    pointerDrag(scroller, 100, 70);
+    expect(scroller.scrollLeft).toBe(30);
+    expect(props.onSelectSegment).not.toHaveBeenCalled();
+
+    fireEvent.click(select);
+    expect(select).toHaveAttribute("aria-pressed", "true");
+    expect(hand).toHaveAttribute("aria-pressed", "false");
+
+    const keepClip = screen.getByTitle(/keep — click to select/i);
+    fireEvent.click(keepClip);
+    expect(props.onSelectSegment).toHaveBeenCalledTimes(1);
+  });
+
+  it("Space no longer arms the pan — it is play/pause only now", () => {
     const props = makeProps();
     const { container } = render(<TimelineBar {...props} />);
     const scroller = getScroller(container);
 
     fireEvent.keyDown(window, { code: "Space" });
-    fireEvent(window, new Event("blur"));
     pointerDrag(scroller, 100, 60);
 
     expect(scroller.scrollLeft).toBe(0);
+    expect(getToolButtons().select).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("ignores H and A while the user is typing in a form field", () => {
+    const props = makeProps();
+    render(<TimelineBar {...props} />);
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    input.focus();
+
+    fireEvent.keyDown(input, { code: "KeyH" });
+    expect(getToolButtons().hand).toHaveAttribute("aria-pressed", "false");
+
+    input.remove();
+  });
+
+  it("leaves Cmd/Ctrl+A alone so select-all still reaches the browser", () => {
+    const props = makeProps();
+    render(<TimelineBar {...props} />);
+
+    fireEvent.keyDown(window, { code: "KeyH" });
+    fireEvent.keyDown(window, { code: "KeyA", metaKey: true });
+    expect(getToolButtons().hand).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.keyDown(window, { code: "KeyA", ctrlKey: true });
+    expect(getToolButtons().hand).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("a window blur ends an in-flight pan drag but keeps the Hand tool chosen", () => {
+    const props = makeProps();
+    const { container } = render(<TimelineBar {...props} />);
+    const scroller = getScroller(container);
+
+    fireEvent.keyDown(window, { code: "KeyH" });
+    fireEvent.pointerDown(scroller, { clientX: 100, pointerId: 1 });
+    fireEvent(window, new Event("blur"));
+    fireEvent.pointerMove(scroller, { clientX: 40, pointerId: 1 });
+
+    expect(scroller.scrollLeft).toBe(0);
+    // The tool is sticky — an alt-tab must not silently drop the user back
+    // into Select mid-edit.
+    expect(getToolButtons().hand).toHaveAttribute("aria-pressed", "true");
   });
 
   it("stops panning on pointercancel so a later move doesn't keep scrolling", () => {
@@ -126,7 +229,7 @@ describe("TimelineBar — hand-tool pan", () => {
     const { container } = render(<TimelineBar {...props} />);
     const scroller = getScroller(container);
 
-    fireEvent.keyDown(window, { code: "Space" });
+    fireEvent.keyDown(window, { code: "KeyH" });
     fireEvent.pointerDown(scroller, { clientX: 100, pointerId: 1 });
     fireEvent.pointerCancel(scroller, { clientX: 100, pointerId: 1 });
     fireEvent.pointerMove(scroller, { clientX: 40, pointerId: 1 });
@@ -134,24 +237,15 @@ describe("TimelineBar — hand-tool pan", () => {
     expect(scroller.scrollLeft).toBe(0);
   });
 
-  it("the Hand tool button pans without holding Space, and toggling it off restores normal clicking", () => {
-    const props = makeProps();
-    const { container } = render(<TimelineBar {...props} />);
-    const scroller = getScroller(container);
-    const handButton = screen.getByRole("button", { name: /hand/i });
+  it("shows the shortcut hint on a tool button when it takes focus", async () => {
+    render(<TimelineBar {...makeProps()} />);
 
-    fireEvent.click(handButton);
-    expect(handButton).toHaveAttribute("aria-pressed", "true");
-    pointerDrag(scroller, 100, 70);
-    expect(scroller.scrollLeft).toBe(30);
-    expect(props.onSelectSegment).not.toHaveBeenCalled();
+    getToolButtons().hand.focus();
 
-    fireEvent.click(handButton);
-    expect(handButton).toHaveAttribute("aria-pressed", "false");
-
-    const keepClip = screen.getByTitle(/keep — click to select/i);
-    fireEvent.click(keepClip);
-    expect(props.onSelectSegment).toHaveBeenCalledTimes(1);
+    // Radix opens on focus as well as hover; jsdom can't produce a faithful
+    // pointer hover, so focus is what this asserts through.
+    expect(await screen.findByText("Pan")).toBeInTheDocument();
+    expect(screen.getByText("H")).toBeInTheDocument();
   });
 });
 

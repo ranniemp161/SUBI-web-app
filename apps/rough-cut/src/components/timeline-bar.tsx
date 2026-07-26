@@ -20,7 +20,9 @@ import {
   ArrowRightToLine,
   RotateCcw,
   Hand,
+  MousePointer2,
 } from "lucide-react";
+import { Tooltip, TooltipProvider } from "@repo/ui";
 import {
   totalDuration,
   roundMs,
@@ -45,6 +47,9 @@ export interface TimelineHandle {
   zoomOut: () => void;
   zoomFit: () => void;
 }
+
+/** The two timeline tools, mutually exclusive: Select (A) or Hand/pan (H). */
+export type TimelineTool = "select" | "hand";
 
 interface TimelineBarProps {
   edl: EDL;
@@ -166,21 +171,18 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
   const [filmstrip, setFilmstrip] = useState<Filmstrip | null>(null);
   const [snapEnabled, setSnapEnabled] = useState(true);
   const [view, setView] = useState({ scrollLeft: 0, width: 0 });
-  // Hand-tool pan: hold Space, or toggle the Hand button, to drag the
-  // timeline horizontally instead of scrubbing/selecting/trimming. Mirrored
-  // into refs so the pointer handlers (registered once) always read the
-  // latest value.
-  const [isSpaceHeld, setIsSpaceHeld] = useState(false);
-  const [handToolActive, setHandToolActive] = useState(false);
+  // Which tool the timeline is in (Descript's model): Select scrubs, selects and
+  // trims; Hand drags the timeline horizontally instead. A tool stays on until
+  // the other is chosen — by its button, or by pressing A / H. Mirrored into a
+  // ref so the pointer handlers (registered once) always read the latest value.
+  const [tool, setTool] = useState<TimelineTool>("select");
   const [isPanning, setIsPanning] = useState(false);
-  const isSpaceHeldRef = useRef(false);
-  const handToolActiveRef = useRef(false);
-  handToolActiveRef.current = handToolActive;
+  const toolRef = useRef<TimelineTool>("select");
+  toolRef.current = tool;
   const isPanningRef = useRef(false);
   const panStartRef = useRef({ clientX: 0, scrollLeft: 0 });
-  // Either source arms the pan tool; used for both the pointer-handler guard
-  // and the cursor styling.
-  const panArmed = isSpaceHeld || handToolActive;
+  // Drives both the pointer-handler guard and the grab cursor.
+  const panArmed = tool === "hand";
   // A cut clip the user has selected but not yet confirmed restoring — a click
   // no longer restores instantly, it surfaces a Restore button first.
   const [selectedCutStart, setSelectedCutStart] = useState<number | null>(null);
@@ -331,11 +333,15 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
     return () => scroller.removeEventListener("wheel", onWheel);
   }, []);
 
-  // Hold Space anywhere on the page to arm the hand tool (Descript-style pan).
-  // Ignored while typing in a form field so Space still types a space there.
-  // Escape dismisses the cut-restore confirmation; a window blur (alt-tab,
-  // devtools focus, etc.) releases a held Space so pan can't get stuck armed
-  // with no keyup to clear it.
+  // Tool switching, Descript's rules: H picks the Hand (pan), A picks Select.
+  // A tool is sticky — it stays until the other is chosen — so unlike the old
+  // hold-Space-to-pan there's no hidden mode and no keyup to miss. Space is now
+  // play/pause only, owned by the studio page's shortcut map.
+  //
+  // Ignored while typing in a form field, so "hand" still types those letters.
+  // Escape dismisses the cut-restore confirmation. A window blur (alt-tab,
+  // devtools focus, etc.) ends an in-flight drag, since a pointerup that lands
+  // on another window never reaches us; the chosen tool deliberately survives.
   useEffect(() => {
     function isTypingTarget(target: EventTarget | null) {
       if (!(target instanceof HTMLElement)) return false;
@@ -350,35 +356,28 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
         setSelectedCutStart(null);
         return;
       }
-      if (e.code !== "Space" || e.repeat || isTypingTarget(e.target)) return;
-      isSpaceHeldRef.current = true;
-      setIsSpaceHeld(true);
-      e.preventDefault();
+      // Let OS/browser chords through untouched — Cmd/Ctrl+A is select-all.
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.repeat || isTypingTarget(e.target)) return;
+      if (e.code === "KeyH") setTool("hand");
+      else if (e.code === "KeyA") setTool("select");
     }
-    function releaseSpace() {
-      isSpaceHeldRef.current = false;
-      setIsSpaceHeld(false);
+    function endDrag() {
       isPanningRef.current = false;
       setIsPanning(false);
     }
-    function onKeyUp(e: KeyboardEvent) {
-      if (e.code !== "Space") return;
-      releaseSpace();
-    }
     window.addEventListener("keydown", onKeyDown);
-    window.addEventListener("keyup", onKeyUp);
-    window.addEventListener("blur", releaseSpace);
+    window.addEventListener("blur", endDrag);
     return () => {
       window.removeEventListener("keydown", onKeyDown);
-      window.removeEventListener("keyup", onKeyUp);
-      window.removeEventListener("blur", releaseSpace);
+      window.removeEventListener("blur", endDrag);
     };
   }, []);
 
   // Pan drag — attached with capture so it wins over scrub/click/trim handlers
   // further down the tree while the hand tool is armed.
   const handlePanPointerDown = useCallback((e: React.PointerEvent) => {
-    if (!isSpaceHeldRef.current && !handToolActiveRef.current) return;
+    if (toolRef.current !== "hand") return;
     e.stopPropagation();
     e.preventDefault();
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
@@ -512,7 +511,7 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
   // Keep the playhead in view during playback. The Hand tool suspends
   // auto-follow so the user's manual pan isn't fought by the recenter.
   useEffect(() => {
-    if (!isPlaying || handToolActive) return;
+    if (!isPlaying || panArmed) return;
     const scroller = scrollRef.current;
     if (!scroller) return;
     const x = currentTime * pxPerSec;
@@ -521,7 +520,7 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
     if (x < left + 40 || x > right - 40) {
       scroller.scrollLeft = x - scroller.clientWidth / 2;
     }
-  }, [currentTime, isPlaying, pxPerSec, handToolActive]);
+  }, [currentTime, isPlaying, pxPerSec, panArmed]);
 
   const timeFromClientX = useCallback(
     (clientX: number) => {
@@ -717,104 +716,132 @@ const TimelineBar = forwardRef<TimelineHandle, TimelineBarProps>(function Timeli
     "flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-foreground/70 transition-colors hover:bg-foreground/10 hover:text-foreground/90";
   const zoomBtn =
     "flex h-7 w-7 items-center justify-center rounded-md border border-foreground/10 text-foreground/60 hover:bg-foreground/10 hover:text-foreground/90";
+  // Shared by every on/off control in the toolbar (Select, Hand, Snap).
+  const toggleBtn = (active: boolean) =>
+    `flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors ${
+      active
+        ? "bg-accent/20 text-accent"
+        : "text-foreground/50 hover:bg-foreground/10 hover:text-foreground/80"
+    }`;
 
   return (
     <div className="flex flex-col border-t border-foreground/10 bg-background">
       {/* Toolbar */}
-      <div className="flex items-center justify-between border-b border-foreground/5 px-4 py-2">
-        <div className="flex items-center gap-1">
-          <button
-            type="button"
-            onClick={() => onCutToPlayhead("left")}
-            title="Cut left of playhead (Q)"
-            className={actionBtn}
-          >
-            <ArrowLeftToLine className="h-3.5 w-3.5" /> Cut left
-          </button>
-          <button
-            type="button"
-            onClick={() => onCutToPlayhead("right")}
-            title="Cut right of playhead (W)"
-            className={actionBtn}
-          >
-            <ArrowRightToLine className="h-3.5 w-3.5" /> Cut right
-          </button>
-          <button
-            type="button"
-            onClick={onSplit}
-            title="Split clip at playhead (S)"
-            className={actionBtn}
-          >
-            <Scissors className="h-3.5 w-3.5" /> Split
-          </button>
-          <button
-            type="button"
-            onClick={onDeleteSelected}
-            disabled={!canDelete}
-            title={
-              canDelete ? "Delete selected clip (Delete)" : "Select a clip to delete"
-            }
-            className={canDelete ? actionBtn : toolBtn}
-          >
-            <Trash2 className="h-3.5 w-3.5" /> Delete
-          </button>
-          <button
-            type="button"
-            onClick={() => setSnapEnabled((s) => !s)}
-            aria-pressed={snapEnabled}
-            title="Toggle snapping to word edges"
-            className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors ${
-              snapEnabled
-                ? "bg-accent/20 text-accent"
-                : "text-foreground/50 hover:bg-foreground/10 hover:text-foreground/80"
-            }`}
-          >
-            <Magnet className="h-3.5 w-3.5" /> Snap
-          </button>
-          <button
-            type="button"
-            onClick={() => setHandToolActive((h) => !h)}
-            aria-pressed={handToolActive}
-            title="Hand tool — drag to pan without holding Space"
-            className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors ${
-              handToolActive
-                ? "bg-accent/20 text-accent"
-                : "text-foreground/50 hover:bg-foreground/10 hover:text-foreground/80"
-            }`}
-          >
-            <Hand className="h-3.5 w-3.5" /> Hand
-          </button>
-        </div>
+      <TooltipProvider>
+        <div className="flex items-center justify-between border-b border-foreground/5 px-4 py-2">
+          <div className="flex items-center gap-1">
+            {/* Tool group: exactly one of Select / Hand is active at a time. */}
+            <Tooltip label="Select" keys="A">
+              <button
+                type="button"
+                onClick={() => setTool("select")}
+                aria-pressed={tool === "select"}
+                className={toggleBtn(tool === "select")}
+              >
+                <MousePointer2 className="h-3.5 w-3.5" /> Select
+              </button>
+            </Tooltip>
+            <Tooltip label="Pan" keys="H">
+              <button
+                type="button"
+                onClick={() => setTool("hand")}
+                aria-pressed={tool === "hand"}
+                className={toggleBtn(tool === "hand")}
+              >
+                <Hand className="h-3.5 w-3.5" /> Hand
+              </button>
+            </Tooltip>
 
-        <div className="flex items-center gap-3">
-          <span className="flex items-center gap-1.5 text-xs text-foreground/40">
-            {isDecodingWaveform ? (
-              "Decoding audio…"
-            ) : waveform ? (
-              <>
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> Audio decoded
-              </>
-            ) : sourceFile ? (
-              "Waveform unavailable"
-            ) : null}
-          </span>
-          <div className="flex items-center gap-1.5">
-            <button type="button" aria-label="Zoom out" onClick={zoomOut} className={zoomBtn}>
-              <Minus className="h-3.5 w-3.5" />
-            </button>
-            <button
-              type="button"
-              onClick={zoomFit}
-              className="rounded-md border border-foreground/10 px-2 py-1 text-xs text-foreground/60 hover:bg-foreground/10 hover:text-foreground/90"
+            <span className="mx-1 h-5 w-px bg-foreground/10" />
+
+            <Tooltip label="Cut left of playhead" keys="Q">
+              <button
+                type="button"
+                onClick={() => onCutToPlayhead("left")}
+                className={actionBtn}
+              >
+                <ArrowLeftToLine className="h-3.5 w-3.5" /> Cut left
+              </button>
+            </Tooltip>
+            <Tooltip label="Cut right of playhead" keys="W">
+              <button
+                type="button"
+                onClick={() => onCutToPlayhead("right")}
+                className={actionBtn}
+              >
+                <ArrowRightToLine className="h-3.5 w-3.5" /> Cut right
+              </button>
+            </Tooltip>
+            <Tooltip label="Split clip at playhead" keys="S">
+              <button type="button" onClick={onSplit} className={actionBtn}>
+                <Scissors className="h-3.5 w-3.5" /> Split
+              </button>
+            </Tooltip>
+            <Tooltip
+              label={canDelete ? "Delete selected clip" : "Select a clip to delete"}
+              keys={canDelete ? "Del" : undefined}
             >
-              Fit
-            </button>
-            <button type="button" aria-label="Zoom in" onClick={zoomIn} className={zoomBtn}>
-              <Plus className="h-3.5 w-3.5" />
-            </button>
+              {/* Wrapped: a disabled button swallows pointer events, so Radix
+                  would never see the hover that explains why it's disabled. */}
+              <span className="inline-flex">
+                <button
+                  type="button"
+                  onClick={onDeleteSelected}
+                  disabled={!canDelete}
+                  className={canDelete ? actionBtn : toolBtn}
+                >
+                  <Trash2 className="h-3.5 w-3.5" /> Delete
+                </button>
+              </span>
+            </Tooltip>
+            <Tooltip label="Toggle snapping to word edges">
+              <button
+                type="button"
+                onClick={() => setSnapEnabled((s) => !s)}
+                aria-pressed={snapEnabled}
+                className={toggleBtn(snapEnabled)}
+              >
+                <Magnet className="h-3.5 w-3.5" /> Snap
+              </button>
+            </Tooltip>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <span className="flex items-center gap-1.5 text-xs text-foreground/40">
+              {isDecodingWaveform ? (
+                "Decoding audio…"
+              ) : waveform ? (
+                <>
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> Audio decoded
+                </>
+              ) : sourceFile ? (
+                "Waveform unavailable"
+              ) : null}
+            </span>
+            <div className="flex items-center gap-1.5">
+              <Tooltip label="Zoom out" keys="−">
+                <button type="button" aria-label="Zoom out" onClick={zoomOut} className={zoomBtn}>
+                  <Minus className="h-3.5 w-3.5" />
+                </button>
+              </Tooltip>
+              <Tooltip label="Fit timeline to view" keys="0">
+                <button
+                  type="button"
+                  onClick={zoomFit}
+                  className="rounded-md border border-foreground/10 px-2 py-1 text-xs text-foreground/60 hover:bg-foreground/10 hover:text-foreground/90"
+                >
+                  Fit
+                </button>
+              </Tooltip>
+              <Tooltip label="Zoom in" keys="=">
+                <button type="button" aria-label="Zoom in" onClick={zoomIn} className={zoomBtn}>
+                  <Plus className="h-3.5 w-3.5" />
+                </button>
+              </Tooltip>
+            </div>
           </div>
         </div>
-      </div>
+      </TooltipProvider>
 
       {/* Tracks */}
       <div className="flex">

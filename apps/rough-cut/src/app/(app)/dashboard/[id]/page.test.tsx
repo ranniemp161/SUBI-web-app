@@ -1135,12 +1135,15 @@ describe("EditorPage — removed AI-run surfaces (AC-6)", () => {
 // ---------------------------------------------------------------------------
 // Global keyboard shortcuts — Space auto-repeat guard
 //
-// The timeline's hand-tool pan (timeline-bar.tsx) lets a user hold Space to
-// drag-pan. Holding a key fires repeated "keydown" events (the OS's normal
-// key-repeat), and this handler used to call togglePlay() on every one of
-// them with no e.repeat guard — so holding Space to pan also rapid-fired
-// play/pause the whole time. Covers the fix at page.tsx's global keydown
-// handler (the `if (e.key === " " && e.repeat) return;` line).
+// Holding a key fires repeated "keydown" events (the OS's normal key-repeat),
+// and this handler used to call togglePlay() on every one of them with no
+// e.repeat guard — so resting on Space rapid-fired play/pause the whole time.
+// Covers the fix at page.tsx's global keydown handler (the
+// `if (e.key === " " && e.repeat) return;` line).
+//
+// Space used to double as the timeline's pan arm, which is what surfaced this
+// originally; panning now lives on the Hand tool (H), and Space is play/pause
+// and nothing else. The repeat guard still earns its keep on its own.
 // ---------------------------------------------------------------------------
 describe("EditorPage — global keyboard shortcuts (Space repeat guard)", () => {
   async function renderWithSource(project: typeof READY_PROJECT) {
@@ -1159,7 +1162,7 @@ describe("EditorPage — global keyboard shortcuts (Space repeat guard)", () => 
     expect(togglePlayMock).toHaveBeenCalledTimes(1);
   });
 
-  it("ignores auto-repeat Space keydowns so holding it to pan doesn't rapid-fire play/pause", async () => {
+  it("ignores auto-repeat Space keydowns so resting on the key doesn't rapid-fire play/pause", async () => {
     await renderWithSource(READY_PROJECT);
 
     fireEvent.keyDown(window, { key: " ", code: "Space" }); // real press
