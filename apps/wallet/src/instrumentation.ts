@@ -11,6 +11,6 @@ export async function register() {
   }
 }
 
-// Reports errors Next.js surfaces from server components / route handlers.
-// (Handlers that catch their own errors won't reach this — see lib/observability.)
+// Reports errors Next.js surfaces from server components / route handlers —
+// which here includes the Stripe webhook and the auto-recharge cron.
 export const onRequestError = Sentry.captureRequestError;
