@@ -103,6 +103,28 @@ npm -w @repo/rough-cut typecheck
 - **ESLint & Mocking**: When mocking components with `forwardRef` in tests, avoid anonymous arrow functions. Use named function expressions (e.g. `forwardRef(function VideoPlayerStub() {})`) to satisfy `react/display-name`. Do not declare unused arguments in callback parameters (e.g. `props`, `ref`, `url`, `init`) to satisfy `@typescript-eslint/no-unused-vars`.
 - **Dropdowns/menus**: build on Radix (`@radix-ui/react-select` for a value picker, `@radix-ui/react-dropdown-menu` for an action menu), never hand-roll outside-click/Escape/focus logic — the same precedent `packages/ui/src/confirm-dialog.tsx` set for dialogs. The export cluster's old `StyledSelect`/`ExportFormatMenu` Radix pair was consolidated into `src/components/export-modal.tsx` (a plain custom dialog, not Radix); still use Radix for any new standalone dropdown or menu control.
 
+## E2E
+Playwright specs live in `e2e/`, run by `.github/workflows/e2e.yml` against the
+real Vercel preview deployment on `deployment_status` (advisory, not a required
+check). `npm -w @repo/rough-cut run e2e` runs them locally against `localhost:3000`.
+
+**The suite is unauthenticated and read-only, deliberately.** Vercel scopes
+`DATABASE_URL`, `CLERK_SECRET_KEY` and `STRIPE_SECRET_KEY` to *"Production and
+Preview"* in both apps, so a preview deployment talks to the **production**
+database. A signed-in tier would create real users and real rows in production
+on every pull request.
+
+An authenticated tier (`auth.setup.ts` + `dashboard.auth.spec.ts`, using
+`@clerk/testing`) was written and then deleted for exactly that reason — do not
+reinstate it, and do not add `E2E_CLERK_*` repository secrets, until Preview has
+its own Neon branch and Clerk instance. Until then the highest-value assertions
+are the ones already there: that the Clerk gate in `proxy.ts` really rejects an
+anonymous visitor on a deployed build, which no unit test can prove.
+
+`e2e/global-setup.ts` aborts the run if the target is Vercel's Deployment
+Protection login page rather than the app — without it, status-only assertions
+pass against a login screen and the suite reports green while testing nothing.
+
 ## Agent skills
 - Declined: Radix UI tooling (`radix-ui-design-system` skill, `radix-mcp-server` MCP) — Radix's own docs plus the local `confirm-dialog.tsx`/`StyledSelect` precedent are enough for now.
 

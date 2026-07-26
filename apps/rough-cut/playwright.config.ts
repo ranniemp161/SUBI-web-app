@@ -4,14 +4,17 @@ import { defineConfig, devices } from "@playwright/test";
  * Runs against either a local dev server (default) or a deployed Vercel
  * preview (`PLAYWRIGHT_BASE_URL`, set by .github/workflows/e2e.yml).
  *
- * Two tiers of coverage, because they have very different setup costs:
+ * Unauthenticated only, on purpose. Vercel scopes DATABASE_URL, CLERK_SECRET_KEY
+ * and STRIPE_SECRET_KEY to "Production and Preview" in both apps, so a preview
+ * deployment talks to the *production* database. A signed-in test tier would
+ * therefore create real users and real rows in production on every pull request.
  *
- *   smoke         — no auth, no secrets. Asserts the public surface renders and,
- *                   more importantly, that the Clerk gate in src/proxy.ts is
- *                   actually live on a real deployment. Always runs.
- *   authenticated — signs in as a real Clerk test user via @clerk/testing.
- *                   Only runs when the credentials below are present, so the
- *                   suite stays green before that test user exists.
+ * An authenticated tier was written and then deleted for exactly that reason.
+ * Before reinstating it, Preview needs its own Neon branch and Clerk instance —
+ * see `apps/rough-cut/AGENTS.md` under "E2E".
+ *
+ * Every assertion here is a read: GETs on public pages, plus checks that the
+ * Clerk gate in src/proxy.ts actually rejects. Nothing writes.
  */
 
 const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000";
@@ -19,15 +22,6 @@ const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000";
 // Vercel preview deployments sit behind Deployment Protection. This header is
 // how an automated client gets through; locally it is simply absent.
 const bypassSecret = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
-
-export const hasClerkCredentials = Boolean(
-  process.env.CLERK_SECRET_KEY &&
-    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY &&
-    process.env.E2E_CLERK_USER_IDENTIFIER &&
-    process.env.E2E_CLERK_USER_PASSWORD
-);
-
-export const STORAGE_STATE = "e2e/.auth/user.json";
 
 export default defineConfig({
   testDir: "./e2e",
@@ -62,23 +56,5 @@ export default defineConfig({
       testMatch: /.*\.smoke\.spec\.ts/,
       use: { ...devices["Desktop Chrome"] },
     },
-    ...(hasClerkCredentials
-      ? [
-          {
-            name: "setup",
-            testMatch: /auth\.setup\.ts/,
-            use: { ...devices["Desktop Chrome"] },
-          },
-          {
-            name: "authenticated",
-            testMatch: /.*\.auth\.spec\.ts/,
-            dependencies: ["setup"],
-            use: {
-              ...devices["Desktop Chrome"],
-              storageState: STORAGE_STATE,
-            },
-          },
-        ]
-      : []),
   ],
 });
