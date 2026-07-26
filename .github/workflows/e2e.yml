@@ -69,12 +69,11 @@ jobs:
         env:
           PLAYWRIGHT_BASE_URL: ${{ github.event.deployment_status.environment_url }}
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
-          # When these are absent the authenticated project is skipped entirely
-          # and only the unauthenticated smoke tier runs — see playwright.config.ts.
-          CLERK_SECRET_KEY: ${{ secrets.E2E_CLERK_SECRET_KEY }}
-          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.E2E_CLERK_PUBLISHABLE_KEY }}
-          E2E_CLERK_USER_IDENTIFIER: ${{ secrets.E2E_CLERK_USER_IDENTIFIER }}
-          E2E_CLERK_USER_PASSWORD: ${{ secrets.E2E_CLERK_USER_PASSWORD }}
+          # No Clerk credentials here on purpose. Preview deployments share the
+          # production database (DATABASE_URL is scoped "Production and Preview"),
+          # so a signed-in test tier would create real users and real rows in
+          # production on every pull request. The suite is read-only by design;
+          # see the header of apps/rough-cut/playwright.config.ts.
         run: npx playwright test
 
       - name: Upload report
