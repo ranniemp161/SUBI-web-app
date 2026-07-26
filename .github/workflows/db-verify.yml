@@ -19,8 +19,13 @@ name: DB Verify
 # Deliberately NOT in required_status_checks: it reports on a deploy that has
 # already happened, so blocking a merge on it is meaningless.
 #
-# NOTE: `deployment_status` workflows only run from the file as it exists on the
-# DEFAULT branch, so this does nothing until it lands on main.
+# NOTE on triggers, verified on the PR that introduced this file:
+#   deployment_status  runs the workflow as it exists at the DEPLOYED SHA, so it
+#                      does fire on pull request branches. Every PR will show a
+#                      skipped `verify` job for each Preview deployment — that is
+#                      the environment filter below doing its job, not a fault.
+#   schedule /         require the file to be on the DEFAULT branch. Neither
+#   workflow_dispatch  works until this merges to main.
 
 on:
   deployment_status:
