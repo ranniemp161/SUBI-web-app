@@ -114,22 +114,56 @@ The workflow skips with a visible warning until this secret exists. It must be a
 **read-only** role, so that the worst case of a compromised workflow is a leaked
 list of column names rather than a dropped table.
 
-On the production Neon branch:
+On the production Neon branch, via the **SQL Editor** — not the Roles tab and not
+`neonctl roles create`, because roles created through Neon's console, API or CLI
+are granted `neon_superuser`:
 
 ```sql
 CREATE ROLE ci_verify WITH LOGIN PASSWORD '<generated>';
 GRANT CONNECT ON DATABASE neondb TO ci_verify;
 GRANT USAGE ON SCHEMA public TO ci_verify;
--- verify.ts only reads information_schema, which needs no table grants at all.
--- Deliberately no SELECT on public tables: the check reads metadata, not rows,
--- so this role can never see user data.
+-- Deliberately no SELECT on any table. This role confirms that a column exists;
+-- it cannot read a single row. See the pg_catalog note below for why that works.
 ```
 
 Then add the connection string for that role as a repository secret named
 `PROD_DATABASE_URL_RO` (Settings -> Secrets and variables -> Actions).
 
-Confirm it is really read-only before trusting it — from a scratch psql session
-as `ci_verify`, `CREATE TABLE t (id int);` must fail.
+### Why `verify.ts` reads `pg_catalog` and not `information_schema`
+
+The SQL standard requires `information_schema` views to expose only objects the
+current role holds some privilege on. A role with no table grants therefore sees
+**zero rows** there, and every table looks like it is missing — which is exactly
+what happened the first time `ci_verify` ran (all four tables reported missing
+against a perfectly healthy database).
+
+`pg_catalog` applies no such filter. Reading it is what allows the CI role to
+hold `CONNECT` and `USAGE` and nothing else. **Do not change that query back to
+`information_schema`** — it would appear to work when run as an owner and then
+silently force you to grant `SELECT` on every table to CI.
+
+### Confirming the role is really read-only
+
+Grants are easy to get wrong in the permissive direction, so check rather than
+assume. As `ci_verify`, all four of these must fail:
+
+```sql
+SELECT * FROM users LIMIT 1;        -- permission denied for table users
+SELECT * FROM credit_ledger LIMIT 1;-- permission denied for table credit_ledger
+CREATE TABLE should_not_exist(id int); -- permission denied for schema public
+DROP TABLE projects;                -- must be owner of table projects
+```
+
+And this must report `false, true, 0, false`:
+
+```sql
+SELECT has_schema_privilege('ci_verify','public','CREATE')    AS create_on_public,
+       has_database_privilege('ci_verify','neondb','CONNECT') AS can_connect,
+       (SELECT count(*) FROM pg_auth_members m
+          JOIN pg_roles u ON u.oid = m.member
+         WHERE u.rolname = 'ci_verify')                       AS memberships,
+       (SELECT rolsuper FROM pg_roles WHERE rolname='ci_verify') AS is_super;
+```
 
 ## First-deploy baseline (one-time, production)
 

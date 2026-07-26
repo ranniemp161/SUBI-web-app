@@ -85,11 +85,27 @@ async function main() {
   const sql = neon(url);
 
   // One round-trip: fetch all columns for the tables we care about.
+  //
+  // Reads pg_catalog, NOT information_schema. The SQL standard requires
+  // information_schema views to show only objects the current role holds some
+  // privilege on, so a role with no table grants sees zero rows there and every
+  // table looks "missing". pg_catalog applies no such filter.
+  //
+  // That difference is what lets the CI role (ci_verify, used by
+  // .github/workflows/db-verify.yml) hold CONNECT and USAGE and nothing else:
+  // it can confirm a column exists without being able to read a single row.
+  // Switching this query back to information_schema would silently require
+  // granting SELECT on every table to CI.
   const rows = await sql`
-    SELECT table_name, column_name
-    FROM information_schema.columns
-    WHERE table_schema = 'public'
-      AND table_name = ANY(${tableNames})
+    SELECT c.relname AS table_name, a.attname AS column_name
+    FROM pg_catalog.pg_attribute a
+    JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public'
+      AND c.relkind IN ('r', 'p')   -- ordinary + partitioned tables
+      AND a.attnum > 0              -- exclude system columns
+      AND NOT a.attisdropped
+      AND c.relname = ANY(${tableNames})
   `;
 
   // Build a lookup: tableName -> Set<columnName>
