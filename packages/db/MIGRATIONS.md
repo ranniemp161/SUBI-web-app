@@ -10,13 +10,44 @@ cd packages/db
 npm run db:generate   # schema.ts changed -> emit a reviewed SQL migration file
 npm run db:migrate    # apply pending migrations, then verify live DB matches schema
 npm run db:verify     # standalone schema check — fails loudly if drift is detected
-npm run db:push       # DEV ONLY - schema-diff, no history (see warning below)
+npm run db:push       # dev branch only - schema-diff, no history (see below)
 npm run db:studio     # browse the DB
 ```
 
-`DATABASE_URL` is read from `.env.local` in this directory (see `drizzle.config.ts`).
-Point it at the branch you intend to change. **Dev and prod are separate Neon
-branches — migrate each one separately, dev first.**
+## Which database you are pointing at
+
+Two Neon branches in project `SUBI-APP` (`gentle-meadow-01487691`):
+
+| Branch | Endpoint | Used by |
+|---|---|---|
+| `production` | `ep-restless-wind-aou4pefe` | Vercel Production **and Vercel Preview** |
+| `dev` | `ep-holy-hall-aoe13azt` | your machine only |
+
+`DATABASE_URL` is read from `.env.local` in this directory (see
+`drizzle.config.ts`), and **`.env.local` points at `dev`. Leave it that way.**
+The default target of every `db:*` command should always be the branch where a
+mistake costs nothing.
+
+### Reaching production deliberately
+
+`dotenv` does not override variables already present in the environment, so an
+inline `DATABASE_URL` beats `.env.local` in `drizzle.config.ts`, `preflight.ts`
+and `verify.ts` alike. Name production explicitly, one command at a time:
+
+```bash
+DATABASE_URL="$(neonctl connection-string production \
+  --project-id gentle-meadow-01487691 --role-name neondb_owner \
+  --database-name neondb --pooled)" npm run db:migrate
+```
+
+Production is then reachable only by asking for it — never by forgetting to
+change a file back. Do not "temporarily" edit `.env.local` to point at
+production; that is the failure mode this layout exists to prevent.
+
+> **Vercel Preview still uses the `production` branch.** Only your local machine
+> moved to `dev`. Until preview branching is set up, a preview deployment reads
+> and writes real production data, so **every migration must still be backward
+> compatible** — see the rule below.
 
 ### The confirmation prompt
 
@@ -47,21 +78,121 @@ string actually resolves to, or the command refuses.
 
 ## The rule
 
-- **Prod (and any DB with data you can't lose): `generate` + `migrate` only.**
-  Every change is a committed, reviewed SQL file applied in order and tracked.
-- **`db:push` is for throwaway dev branches only. Never point it at prod.**
-  `push` does a schema-diff and will silently offer a destructive drop/recreate
-  for type conversions (it tried exactly this on the `transcript_status`
-  text->enum change). That is fine on disposable data, unacceptable on prod.
+- **Production gets `generate` + `migrate` only.** Every change reaching
+  `production` is a committed, reviewed SQL file applied in order and tracked.
+- **`db:push` is for `dev` only.** It does a schema-diff with no history and will
+  silently offer a destructive drop/recreate for type conversions (it tried
+  exactly this on the `transcript_status` text->enum change). Fine on `dev`,
+  never against `production`.
+- **Every migration must be backward compatible.** Deployed code keeps serving
+  traffic against the schema you just changed, and Vercel Preview reads
+  `production` too. Add a column, deploy the code that uses it, drop the old
+  column in a *later* migration. Never rename or drop in the same step as the
+  code change.
 
-## Day-to-day dev workflow
+## Day-to-day workflow
 
 1. Edit `src/schema.ts`.
-2. While the shape is still churning, `npm run db:push` against a disposable dev
-   branch to iterate fast.
-3. Once the change settles: `npm run db:generate`, review the emitted
-   `drizzle/NNNN_*.sql`, commit it with the code.
-4. Apply with `npm run db:migrate` (dev branch first, then prod at deploy time).
+2. While the shape is still churning, `npm run db:push` against `dev` to iterate
+   fast. `.env.local` already points there, so this needs no arguments.
+3. Once it settles: `npm run db:generate`, then **read the emitted
+   `drizzle/NNNN_*.sql`**. This review is where a destructive change gets caught.
+4. Commit the SQL file together with the code that needs it. CI blocks a
+   `schema.ts` change that arrives without one.
+5. Apply to `dev` first — `npm run db:migrate` — to confirm the migration runs
+   cleanly on a database that already has `dev`'s data in it.
+6. Apply to production with the explicit `DATABASE_URL=...` form above. Preflight
+   prints the target and makes you type the endpoint id back. Read it.
+7. Push the branch and exercise the changed path on its Vercel preview, which
+   reads `production`.
+
+### Keeping `dev` fresh
+
+`dev` drifts from production as real usage accumulates. When it gets stale
+enough to stop being a useful rehearsal, reset it:
+
+```bash
+neonctl branches reset dev --project-id gentle-meadow-01487691 --parent
+```
+
+That discards everything on `dev` and re-snapshots production, so do not keep
+anything there you care about.
+
+## Automated verification (CI)
+
+`.github/workflows/db-verify.yml` runs `db:verify` against **production** after
+every production deploy of rough-cut or wallet, once daily on a schedule, and on
+demand via workflow_dispatch. It is **not** a required status check — it reports
+on a deploy that already happened, so blocking a merge on it would be
+meaningless.
+
+It exists because CI's other migration guard only proves a `.sql` file was
+*committed*. Nothing proved it was *applied* — and since Drizzle builds an
+explicit column list rather than emitting `SELECT *`, an unapplied migration
+breaks every query against the affected table, not just the new field. The first
+signal used to be a user hitting a 500.
+
+**CI never applies a migration.** Applying stays manual, behind the confirmation
+prompt above. Automating prod writes would require a write-capable
+`DATABASE_URL` in GitHub Actions secrets, reachable by every third-party action
+in every workflow — and Dependabot bumps those weekly.
+
+### Setting up `PROD_DATABASE_URL_RO`
+
+The workflow skips with a visible warning until this secret exists. It must be a
+**read-only** role, so that the worst case of a compromised workflow is a leaked
+list of column names rather than a dropped table.
+
+On the production Neon branch, via the **SQL Editor** — not the Roles tab and not
+`neonctl roles create`, because roles created through Neon's console, API or CLI
+are granted `neon_superuser`:
+
+```sql
+CREATE ROLE ci_verify WITH LOGIN PASSWORD '<generated>';
+GRANT CONNECT ON DATABASE neondb TO ci_verify;
+GRANT USAGE ON SCHEMA public TO ci_verify;
+-- Deliberately no SELECT on any table. This role confirms that a column exists;
+-- it cannot read a single row. See the pg_catalog note below for why that works.
+```
+
+Then add the connection string for that role as a repository secret named
+`PROD_DATABASE_URL_RO` (Settings -> Secrets and variables -> Actions).
+
+### Why `verify.ts` reads `pg_catalog` and not `information_schema`
+
+The SQL standard requires `information_schema` views to expose only objects the
+current role holds some privilege on. A role with no table grants therefore sees
+**zero rows** there, and every table looks like it is missing — which is exactly
+what happened the first time `ci_verify` ran (all four tables reported missing
+against a perfectly healthy database).
+
+`pg_catalog` applies no such filter. Reading it is what allows the CI role to
+hold `CONNECT` and `USAGE` and nothing else. **Do not change that query back to
+`information_schema`** — it would appear to work when run as an owner and then
+silently force you to grant `SELECT` on every table to CI.
+
+### Confirming the role is really read-only
+
+Grants are easy to get wrong in the permissive direction, so check rather than
+assume. As `ci_verify`, all four of these must fail:
+
+```sql
+SELECT * FROM users LIMIT 1;        -- permission denied for table users
+SELECT * FROM credit_ledger LIMIT 1;-- permission denied for table credit_ledger
+CREATE TABLE should_not_exist(id int); -- permission denied for schema public
+DROP TABLE projects;                -- must be owner of table projects
+```
+
+And this must report `false, true, 0, false`:
+
+```sql
+SELECT has_schema_privilege('ci_verify','public','CREATE')    AS create_on_public,
+       has_database_privilege('ci_verify','neondb','CONNECT') AS can_connect,
+       (SELECT count(*) FROM pg_auth_members m
+          JOIN pg_roles u ON u.oid = m.member
+         WHERE u.rolname = 'ci_verify')                       AS memberships,
+       (SELECT rolsuper FROM pg_roles WHERE rolname='ci_verify') AS is_super;
+```
 
 ## First-deploy baseline (one-time, production)
 
