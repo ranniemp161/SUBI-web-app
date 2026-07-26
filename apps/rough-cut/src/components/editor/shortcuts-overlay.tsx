@@ -11,6 +11,7 @@ const SHORTCUTS: { keys: string; label: string }[] = [
   { keys: "Home / End", label: "Jump to start / end" },
   { keys: "Click word", label: "Seek to that word" },
   { keys: "Shift-click + Delete", label: "Cut selected words" },
+  { keys: "A / H", label: "Select tool / Hand (pan) tool" },
   { keys: "Q / W", label: "Trim clip to playhead — left / right" },
   { keys: "S", label: "Split clip at playhead" },
   { keys: "Click clip + Delete", label: "Select a clip, then delete it" },

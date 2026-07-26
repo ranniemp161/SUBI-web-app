@@ -10,6 +10,13 @@ export {
 
 export { ConfirmDialog, type ConfirmDialogProps } from "./confirm-dialog";
 
+export {
+  Tooltip,
+  TooltipProvider,
+  type TooltipProps,
+  type TooltipProviderProps,
+} from "./tooltip";
+
 /**
  * Merge conditional class names and de-conflict Tailwind utilities.
  *
