@@ -5,19 +5,19 @@
       "source": "JavaScript-Mastery-Pro/skills",
       "sourceType": "github",
       "skillPath": "skills/architect/SKILL.md",
-      "computedHash": "0057be41fa70a33945d4926d640214bcf8a2198948d7ae7191f5b84d28a1288a"
+      "computedHash": "3ebf1912f90b09b0ccd255f20385864f5f35ec74690dc2d6a9c2ff3a43a0a2e3"
     },
     "audit": {
       "source": "JavaScript-Mastery-Pro/skills",
       "sourceType": "github",
       "skillPath": "skills/audit/SKILL.md",
-      "computedHash": "5b60620ebf728520b05b55a4597b0d9b4929fde59a0a5ffcc65d5b2152a147af"
+      "computedHash": "40f113126fc74025afe274015dee8a20f27c98327d228eba7689a21eb702d894"
     },
     "check": {
       "source": "JavaScript-Mastery-Pro/skills",
       "sourceType": "github",
       "skillPath": "skills/check/SKILL.md",
-      "computedHash": "1adf43a7c702ba97cfb921fdfcea11ee52a82e640455276e2ab92725de12e002"
+      "computedHash": "d8222ab9774be7eaddca37f59f429448ce68425be5ac962fcbac2e333f56a76a"
     },
     "debug": {
       "source": "JavaScript-Mastery-Pro/skills",
@@ -29,79 +29,31 @@
       "source": "JavaScript-Mastery-Pro/skills",
       "sourceType": "github",
       "skillPath": "skills/develop/SKILL.md",
-      "computedHash": "347bf4525bef85dce384b168e3b8a23f7d9e6beb0a2f0ac176c172b500007c87"
+      "computedHash": "9a6a49118aeb5447b9a1a0b146561e80852432eafa4d774fdde39ff3d6f86138"
     },
     "document": {
       "source": "JavaScript-Mastery-Pro/skills",
       "sourceType": "github",
       "skillPath": "skills/document/SKILL.md",
-      "computedHash": "0ea55a12207018021f36c07fad4e2a5cf4c9bf6f4cd38faa2b04941ce9106629"
-    },
-    "harden": {
-      "source": "JavaScript-Mastery-Pro/pilot",
-      "sourceType": "github",
-      "skillPath": "skills/harden/SKILL.md",
-      "computedHash": "c587d60cff99144b4194809a0969fbfe070bd052800baf21c530f9a285d62595"
-    },
-    "imprint": {
-      "source": "JavaScript-Mastery-Pro/skills",
-      "sourceType": "github",
-      "skillPath": "skills/imprint/SKILL.md",
-      "computedHash": "ee690f88ca7b099220f8f895b12ef84ed7a2e1a1ce988d92ccd82fac4cfe3e36"
-    },
-    "recover": {
-      "source": "JavaScript-Mastery-Pro/skills",
-      "sourceType": "github",
-      "skillPath": "skills/recover/SKILL.md",
-      "computedHash": "d789f53babb890247275f793cd72eac3295159819db878fdae5f1dbd21ff7d83"
-    },
-    "remember": {
-      "source": "JavaScript-Mastery-Pro/skills",
-      "sourceType": "github",
-      "skillPath": "skills/remember/SKILL.md",
-      "computedHash": "5ab74d5ccf24c96c61292920fd980341b97846f52114710e18c519923cf874a1"
-    },
-    "review": {
-      "source": "JavaScript-Mastery-Pro/pilot",
-      "sourceType": "github",
-      "skillPath": "skills/review/SKILL.md",
-      "computedHash": "8341c4ca2e4785b921da212302704263f5b54f8e692d37c1b5efa9df903455be"
-    },
-    "roadmap": {
-      "source": "JavaScript-Mastery-Pro/pilot",
-      "sourceType": "github",
-      "skillPath": "skills/roadmap/SKILL.md",
-      "computedHash": "cea2696713f56bdafb3702857dcadcb66f92487233012884f83862f4b1f33679"
+      "computedHash": "afb19698d824c6cb58abebfc96cdb1779cfa80543883d22fdbbd95989f7c78c7"
     },
     "scope": {
       "source": "JavaScript-Mastery-Pro/skills",
       "sourceType": "github",
       "skillPath": "skills/scope/SKILL.md",
-      "computedHash": "3abf142321a168e1d597421944d9262bb561bcd73e8c82e451e5fb1c9e6d3940"
-    },
-    "status": {
-      "source": "JavaScript-Mastery-Pro/pilot",
-      "sourceType": "github",
-      "skillPath": "skills/status/SKILL.md",
-      "computedHash": "633e8e6e103b8a32752c455b3a9cc89063adb7f7165dfa605c1fa665d41cf845"
+      "computedHash": "00208bf2cb91a11ad5834cd32705392a5dac356a4aa980f9807b8f0b94ee0e4c"
     },
     "sync": {
       "source": "JavaScript-Mastery-Pro/skills",
       "sourceType": "github",
       "skillPath": "skills/sync/SKILL.md",
-      "computedHash": "4b8077a41e31dcf98d43357271018f99694aa03fe703137f5003842d223ac008"
+      "computedHash": "8570b5210e79088fc74081be24f5f18df13992c3334b27a74a6b72c6446952bb"
     },
     "test": {
       "source": "JavaScript-Mastery-Pro/skills",
       "sourceType": "github",
       "skillPath": "skills/test/SKILL.md",
-      "computedHash": "88d0ed4e8fe3d12f900f4466068d92f9d64ad9dcb834499ea6d89ee08a23c4c6"
-    },
-    "verify": {
-      "source": "JavaScript-Mastery-Pro/pilot",
-      "sourceType": "github",
-      "skillPath": "skills/verify/SKILL.md",
-      "computedHash": "99514d949e9b638a1e4a7abcfd7179e71ff07c9a4dfbaff3769184170c60dc74"
+      "computedHash": "c6923eca067329ab86293def4a61aefe1492f4eaf511e36903614242442c1974"
     }
   }
 }

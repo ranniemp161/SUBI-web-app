@@ -1,0 +1,36 @@
+# Line endings
+# ------------
+# Store every text file with LF in the repo, and check it out as LF on every
+# platform. This is what stops a repo move (or a clone on another machine)
+# from showing hundreds of files as "modified" when only the endings changed.
+# Overrides core.autocrlf, and travels with the repo, so it applies to CI and
+# to anyone who clones this.
+* text=auto eol=lf
+
+# Files that genuinely need CRLF (Windows shells refuse to run LF .bat/.cmd)
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+
+# Binary assets — never inspect, convert, or diff these
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.webp  binary
+*.avif  binary
+*.mp4   binary
+*.webm  binary
+*.mov   binary
+*.mp3   binary
+*.wav   binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+*.otf   binary
+*.pdf   binary
+
+# Generated files — collapse them in GitHub diffs so a dependency bump PR
+# doesn't open with 500KB of lockfile churn.
+package-lock.json linguist-generated=true -diff
+*.tsbuildinfo     linguist-generated=true -diff
