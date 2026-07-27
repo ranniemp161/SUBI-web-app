@@ -54,6 +54,7 @@ next-env.d.ts
 
 # local-only ops scripts — must never be committed/deployed
 packages/db/scripts/topup-demo-account.ts
+packages/db/scripts/grant-credits.ts
 
 # AI agent skills — local workflow tooling, not shared via git
 .claude/
@@ -62,6 +63,7 @@ packages/db/scripts/topup-demo-account.ts
 #project design files
 .ui-design/
 
-#docs
-docs/
+# docs — ONLY the generated site output is ignored.
+# docs/adr, docs/specs, docs/scope and docs/roadmap are the agent workflow's
+# durable state (see jsmastery-pro/skills). They must stay tracked.
 docs/.vitepress/dist/
