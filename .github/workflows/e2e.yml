@@ -5,9 +5,11 @@ name: E2E
 # that blocks merge has nobody but you to unblock it. Promote it to required
 # once it has proven stable.
 #
-# NOTE: `deployment_status` workflows only run from the file as it exists on the
-# DEFAULT branch. This will therefore not run on the PR that introduces it —
-# only on PRs opened after it lands on main.
+# NOTE: `deployment_status` runs the workflow as it exists at the DEPLOYED SHA,
+# so edits to this file DO take effect on the pull request that makes them.
+# (An earlier version of this comment claimed the opposite; verified otherwise
+# on #90.) The triggers that genuinely require the file to be on the default
+# branch are `schedule` and `workflow_dispatch`, neither of which is used here.
 on:
   deployment_status:
 
