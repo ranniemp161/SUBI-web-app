@@ -1,7 +1,7 @@
 # 0002. Founder's Frame Landing Page Design and Copy
 
 **Date**: 2026-07-17
-**Status**: In Progress
+**Status**: Accepted
 
 ## Summary
 

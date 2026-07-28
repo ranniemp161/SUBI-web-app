@@ -20,7 +20,7 @@ npm run test        # turbo test
 Scope any command to one workspace with `-w`, e.g. `npm run dev -w @repo/rough-cut` or `npm run dev -w wallet`.
 
 ## Build approach
-Tracer Bullet — vertical slices; each feature built end-to-end through every layer, working. (Set by `/roadmap`; see `docs/roadmap/rough-cut/roadmap.md`.)
+Tracer Bullet — vertical slices; each feature built end-to-end through every layer, working. (Set by `/scope`; see `docs/scope/index.md` and the `**Build approach:**` line on each workspace scope.)
 
 ## Rules
 - Ports are pinned: rough-cut = 3000, wallet = 3001, founders-frame = 3002. Cross-app URLs must go through each app's `src/lib/env.ts`, never a raw `process.env.NEXT_PUBLIC_*` read.
