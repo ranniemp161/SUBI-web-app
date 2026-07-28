@@ -1,0 +1,60 @@
+name: Cleanup PR caches
+
+# GitHub caps Actions cache at 10GB per repository. Cache writes are branch
+# scoped, so every PR branch mints its own copy of the npm cache (~380MB here)
+# rather than sharing main's. Once a PR closes, its branch can never reuse that
+# cache again, but the entry sits there until GitHub evicts something to make
+# room — and eviction is least-recently-used, so what gets thrown out is often
+# main's cache, the one entry every future run actually wants.
+#
+# This deletes a PR's caches as soon as it closes, so the 10GB holds the caches
+# that are still reachable instead of a graveyard of merged branches.
+#
+# Note: on a pull_request event from a fork, GITHUB_TOKEN is read only and this
+# job will no-op. That is fine for a solo repo; revisit if outside contributors
+# ever open PRs.
+
+on:
+  pull_request:
+    types: [closed]
+
+# Deleting caches is the only thing this workflow may do.
+permissions:
+  actions: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      # No checkout needed — this only talks to the REST API.
+      - name: Delete caches created by this PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          # A PR's caches are keyed to its merge ref, not to the head branch
+          # name. Deleting by head branch would silently match nothing.
+          REF: refs/pull/${{ github.event.pull_request.number }}/merge
+        run: |
+          echo "Searching for caches on $REF"
+
+          ids=$(gh api "/repos/$REPO/actions/caches?ref=$REF" \
+                  --jq '.actions_caches[].id' 2>/dev/null || true)
+
+          if [ -z "$ids" ]; then
+            echo "No caches found for this PR. Nothing to do."
+            exit 0
+          fi
+
+          count=0
+          for id in $ids; do
+            # Tolerate individual failures: a cache can be evicted by GitHub
+            # between the list call and the delete call, and a 404 here is not
+            # a problem worth failing a cleanup job over.
+            if gh api --method DELETE "/repos/$REPO/actions/caches/$id" 2>/dev/null; then
+              count=$((count + 1))
+            else
+              echo "Could not delete cache $id (already gone?), continuing."
+            fi
+          done
+
+          echo "Deleted $count cache(s) for PR #${{ github.event.pull_request.number }}."
