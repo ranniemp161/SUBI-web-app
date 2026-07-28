@@ -6,9 +6,15 @@ flow. A fully static export: no accounts, no database, no API.
 
 **Build approach:** Tracer Bullet (vertical slices; each feature built end to end
 through every layer, working).
-**Workflow:** Alpha (after `/develop`, run `/check verify`). A marketing site with
-no data layer does not carry a test suite; the browser pass is the check that
-matters. A feature's own tier tag (e.g. `· Beta`) overrides this.
+**Workflow:** Alpha (after `/develop`, run `/check verify`). This app carries no
+feature level test suite: a static export with no data layer has little unit
+surface, so the browser pass is the check that carries the meaning here. That is a
+statement about `/test`, not about CI. The repo wide gates still apply and are not
+optional: `lint` and `typecheck` run for this workspace in the required `check`
+job, and this app's Vercel production build is a required check on `main` too.
+Turbo runs no `test` task here only because the workspace declares no `test`
+script; adding one puts it straight into the gate. A feature's own tier tag (e.g.
+`· Beta`) overrides the tier, never the gates.
 
 _You are in charge. Every box below is a suggestion, not a gate: run any, skip
 any, and mark a feature `done` when you decide it is._
@@ -56,13 +62,14 @@ code in `src/app/privacy/page.tsx`, `src/app/terms/page.tsx`, `src/app/about/pag
   - [x] Integrate packages/ui and implement page sections (AC-1)
   - [x] Wire up CTA deep-links and custom 404 page (AC-2, AC-4)
 - [x] Verify it: /check verify Founder's Frame Landing Page
-- Test it: skipped, deliberately. This app has no test setup: it is a static
-  export with no data layer, and the Alpha tier closes on `/check verify`. If the
-  cross app call to action links ever need locking down, that is the test worth
-  writing first.
+- Test it: no feature level tests, deliberately. This app has no test files of its
+  own, so the Alpha tier closes on `/check verify`. If the cross app call to action
+  links ever need locking down, that is the test worth writing first.
 
-The site is live and its Vercel production build is a required check on `main`, so
-a broken build cannot merge. Type errors fail that build as of 2026-07-28.
+This is not an exemption from CI. The workspace still runs lint and typecheck in
+the required `check` job, and its Vercel production build is a required check on
+`main`, so a broken build cannot merge. Type errors fail that build as of
+2026-07-28.
 
 ## Slice 2
 

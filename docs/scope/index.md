@@ -20,10 +20,11 @@ through every layer, working).
   "USD denominated Wallet" feature, one ecosystem wide capability rather than a
   set of app local slices.
 - **This replaced `docs/roadmap/`** on 2026-07-28. The roadmap files are frozen
-  history now: they still hold the full record of Rough Cut slices 1 to 8 and the
-  Wallet build, which is worth reading, but nothing new goes there. Every still
-  open item was moved into the scope files above. See the header on each roadmap
-  file.
+  history now: they still hold the record of Rough Cut Slices 1 to 7 and the Wallet
+  build, which is worth reading, but nothing new goes there. Every still open item
+  moved into the scope files above, including Rough Cut's Slice 6, which was in
+  flight and kept its number. New Rough Cut work resumes at Slice 8. See the header
+  on each roadmap file.
 - Specs live in `docs/specs/<workspace>/`, owned by `/architect`. The older
   `docs/adr/` tree is the same idea under the previous naming, still linked from
   the features it governs.

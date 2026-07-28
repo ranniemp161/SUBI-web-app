@@ -111,7 +111,10 @@ money moving paths fail closed under load, and a schema change cannot merge with
 its migration.
 code in `apps/rough-cut/instrumentation*.ts`, `src/lib/rate-limit.ts`, `packages/db/scripts/preflight.ts`, `.github/workflows/db-verify.yml`, `.github/workflows/e2e.yml`
 
-## Slice 6
+## Slice 6 (carried forward from the frozen roadmap)
+
+This slice was in flight when the roadmap was retired, so it moved here and kept
+its number. Slices 1 to 5 and Slice 7 closed in the roadmap and are not repeated.
 
 ### 1. Studio auto cut flow · in-progress
 Client requested UX redesign, evolved twice. ADR 0003 first shipped the auto run
@@ -234,6 +237,7 @@ grid with the detected source frame rate.
   scope or shipped off plan, `/develop` and `/sync` leave it alone) and `dropped`.
 - **Workflow tier tag** beside a heading (e.g. `· GA`) overrides the project
   default for that one feature; no tag means it inherits.
-- Slices 1 to 7 shipped before this file existed. Their full record lives in the
-  frozen [docs/roadmap/rough-cut/roadmap.md](../../roadmap/rough-cut/roadmap.md);
-  the slice numbers here continue from it so the history stays readable.
+- **Slice numbering continues the frozen roadmap.** Slices 1 to 5 and Slice 7
+  closed in [docs/roadmap/rough-cut/roadmap.md](../../roadmap/rough-cut/roadmap.md)
+  and are not repeated here. Slice 6 was in flight and moved here with its number.
+  Slices 8 and 9 are the first planned in this file.
