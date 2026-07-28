@@ -18,8 +18,8 @@ so every page is prerendered HTML served as files. Runs on port 3002 in dev.
 
 | File | Owns |
 |---|---|
-| `next.config.ts` | `output: 'export'` (static site, no server at runtime), `images.unoptimized: true` (Next's image optimizer needs a server), and `typescript.ignoreBuildErrors: true` |
-| `src/lib/env.ts` | The two cross-app URLs (`NEXT_PUBLIC_ROUGH_CUT_APP_URL`, `NEXT_PUBLIC_WALLET_APP_URL`) and their production fallbacks (`myfirstcut.app`, `myframecredits.app`). The only place in this app allowed to read `process.env` |
+| `next.config.ts` | `output: 'export'` (static site, no server at runtime) and `images.unoptimized: true` (Next's image optimizer needs a server) |
+| `src/lib/env.ts` | The two cross-app URLs (`NEXT_PUBLIC_ROUGH_CUT_APP_URL`, `NEXT_PUBLIC_WALLET_APP_URL`) and their fallbacks, which switch on `NODE_ENV`: the production domains (`myfirstcut.app`, `myframecredits.app`) in a production build, `localhost:3000` / `localhost:3001` otherwise. The only place in this app allowed to read `process.env` |
 | `src/app/globals.css` | Imports `@repo/ui/styles/theme.css`, then adds this app's own theme layer: `--color-brand` (bright yellow), `--color-surface`, the float/breathe/liquid keyframe animations, and the `glass-panel` / `glow-panel` / `bg-grid-pattern` utility classes |
 | `src/app/page.tsx` | The landing page: hero, product showcase, and the calls to action that deep-link into Ruff Cut |
 | `src/app/mentorship/page.tsx`, `src/app/mentorship/apply/page.tsx` | The mentorship pitch and the booking page that mounts the Calendly widget |
@@ -52,8 +52,11 @@ nothing here.
 - **Cross-app links always go through `src/lib/env.ts`**, matching the
   ecosystem rule in the root `AGENTS.md`. Note the difference from the other two
   apps though: their `env.ts` throws at import time when a URL is missing, while
-  this one silently falls back to the production domain, because a static export
-  has no server to fail loudly on.
+  this one silently falls back, because a static export has no server to fail
+  loudly on. The fallback switches on `NODE_ENV` — the production domain in a
+  production build, `localhost` otherwise — so a missing env var in a real build
+  still points somewhere sane, and a missing one locally does not send you to
+  production.
 - **Shared theme tokens come from `@repo/ui`, shared components do not.** The app
   imports `@repo/ui/styles/theme.css` in `globals.css` and layers its own brand
   tokens on top. It is a marketing site with its own visual language, so it does

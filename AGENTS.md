@@ -24,7 +24,7 @@ Tracer Bullet — vertical slices; each feature built end-to-end through every l
 
 ## Rules
 - Ports are pinned: rough-cut = 3000, wallet = 3001, founders-frame = 3002. Cross-app URLs must go through each app's `src/lib/env.ts`, never a raw `process.env.NEXT_PUBLIC_*` read.
-- Production domains: rough-cut = `myfirstcut.app`, wallet = `myframecredits.app`; founders-frame is the marketing site. These are the fallbacks each app's `env.ts` uses when the URL env var is unset.
+- Production domains: rough-cut = `myfirstcut.app`, wallet = `myframecredits.app`; founders-frame is the marketing site. How a missing URL env var is handled differs per app: rough-cut and wallet throw at import time, founders-frame falls back to the production domain in a production build and to `localhost` otherwise.
 - Schema changes go through `packages/db` only (`db:generate` + `db:migrate`, prod-safe); `db:push` is dev-only, never prod. See `packages/db/AGENTS.md`.
 - Currency is US dollars stored as `micros` (1,000,000 micros = $1) — a universal unit multiple future apps can spend against a shared ledger in `@repo/db`.
 - The Wallet app (`apps/wallet`) is the sole authority on Stripe billing; other apps never process payments directly, they deep-link to Wallet.
@@ -43,7 +43,7 @@ Tracer Bullet — vertical slices; each feature built end-to-end through every l
 3. Make the change, committing as you go. Keep fixing mistakes on the *same* branch — don't open a new branch for a correction to work that hasn't merged yet.
 4. Before pushing, run the same checks CI runs: `npm run lint && npm run typecheck && npm run test`
 5. Push and open a PR: `git push -u origin <branch-name>` then `gh pr create`
-6. Wait for the `check` CI job to go green on the PR.
+6. Wait for **every required status check** to go green on the PR, not just `check` — the Vercel production builds and the secret scan are gates too. `gh pr view <n> --json statusCheckRollup` lists what reported; the branch-protection API (above) says which of those actually block the merge.
 7. Merge the PR (`gh pr merge` or the GitHub UI). No second reviewer is required (solo project), but CI must be green — this is enforced server-side, not optional.
 8. After merge: `git checkout main && git pull`, then delete the local branch (`git branch -d <branch-name>`).
 
