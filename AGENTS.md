@@ -11,7 +11,7 @@ Turborepo monorepo (npm workspaces: `apps/*`, `packages/*`). Node 22, TypeScript
 
 ## Commands
 ```bash
-npm run dev         # turbo dev — runs all apps (rough-cut :3000, wallet :3001)
+npm run dev         # turbo dev — runs all apps (rough-cut :3000, wallet :3001, founders-frame :3002)
 npm run build       # turbo build
 npm run lint        # turbo lint
 npm run typecheck   # turbo typecheck
@@ -23,18 +23,19 @@ Scope any command to one workspace with `-w`, e.g. `npm run dev -w @repo/rough-c
 Tracer Bullet — vertical slices; each feature built end-to-end through every layer, working. (Set by `/roadmap`; see `docs/roadmap/rough-cut/roadmap.md`.)
 
 ## Rules
-- Ports are pinned: rough-cut = 3000, wallet = 3001. Cross-app URLs must go through each app's `src/lib/env.ts`, never a raw `process.env.NEXT_PUBLIC_*` read.
+- Ports are pinned: rough-cut = 3000, wallet = 3001, founders-frame = 3002. Cross-app URLs must go through each app's `src/lib/env.ts`, never a raw `process.env.NEXT_PUBLIC_*` read.
+- Production domains: rough-cut = `myfirstcut.app`, wallet = `myframecredits.app`; founders-frame is the marketing site. These are the fallbacks each app's `env.ts` uses when the URL env var is unset.
 - Schema changes go through `packages/db` only (`db:generate` + `db:migrate`, prod-safe); `db:push` is dev-only, never prod. See `packages/db/AGENTS.md`.
 - Currency is US dollars stored as `micros` (1,000,000 micros = $1) — a universal unit multiple future apps can spend against a shared ledger in `@repo/db`.
 - The Wallet app (`apps/wallet`) is the sole authority on Stripe billing; other apps never process payments directly, they deep-link to Wallet.
 - **Lint & Mocking**: When mocking components with `forwardRef` in tests, avoid anonymous arrow functions. Always use a named function expression (e.g., `forwardRef(function MyStub() { ... })`) to prevent `react/display-name` ESLint errors. Omit unused parameters in mock implementations (like `props`, `ref`, `url`, `init`) to avoid `@typescript-eslint/no-unused-vars` warnings/errors.
 - **Next.js 16 Middleware**: In Next.js 16, the global routing interception file has been renamed from `middleware.ts` to `proxy.ts`. Do not flag `proxy.ts` as an error or attempt to rename it to `middleware.ts`.
 - **IP Rate Limiting**: The `getClientIp` function in `ip-rate-limit.ts` trusts the first entry of the `X-Forwarded-For` header. The application must be deployed on Vercel Edge or a provider that properly sanitizes the `X-Forwarded-For` header to prevent IP spoofing.
-- **Vercel Hobby plan caps cron jobs at once per day.** `vercel.json`'s `/api/cron/autorecharge` runs `0 5 * * *` (not every few minutes as originally built) because the client-preview deploy is on Hobby. This is an intentional, documented tradeoff (see `docs/adr/_root/0002-usd-wallet/0002-auto-recharge.md` Follow-up) — not a bug. Restore a tighter cadence once the project is on a plan without the daily cap.
+- **Vercel Hobby plan caps cron jobs at once per day.** `vercel.json`'s `/api/cron/autorecharge` runs `0 5 * * *` (not every few minutes as originally built) because the deploy is on Hobby. This is an intentional, documented tradeoff (see `docs/adr/_root/0002-usd-wallet/0002-auto-recharge.md` Follow-up) — not a bug. Restore a tighter cadence once the project is on a plan without the daily cap.
 - **A server secret set in Vercel is not automatically visible to the build.** `turbo.json`'s `build` task only forwards env vars it lists by name (see the `env` array). A secret missing from that list reads as `undefined` during `next build` even though it is set in the Vercel project, with no error. `PUSHER_APP_ID`/`PUSHER_SECRET` were added there after hitting this; add any new server secret the build step needs to the same list.
 
 ## Git workflow
-`main` is branch-protected: direct pushes are blocked (including for admins), and a PR can only merge once the `check` CI job (lint + typecheck + test) is green. Every change — AI-made or human-made — goes through a branch and a PR. No exceptions, no `--no-verify`.
+`main` is branch-protected: direct pushes are blocked (including for admins), and a PR can only merge once every required status check is green. Three are required today — `check` (the CI job: lint + typecheck + test), `Vercel – subi-web-app-rough-cut`, and `GitGuardian Security Checks` — and the list lives in GitHub's branch protection settings, not in this repo; read it from the API rather than trusting this line (`gh api repos/:owner/:repo/branches/main/protection --jq '.required_status_checks.contexts'`). Every change — AI-made or human-made — goes through a branch and a PR. No exceptions, no `--no-verify`.
 
 **Steps for every change:**
 1. Sync first: `git checkout main && git pull`
@@ -66,6 +67,7 @@ Stored in `docs/adr/`. Format: `docs/adr/NNNN-title.md`.
 ## Context files
 - [apps/rough-cut/AGENTS.md](./apps/rough-cut/AGENTS.md) — video transcription + AI cutting product app
 - [apps/wallet/AGENTS.md](./apps/wallet/AGENTS.md) — centralized billing/credits app
+- [apps/founders-frame/AGENTS.md](./apps/founders-frame/AGENTS.md) — static marketing site (no accounts, no DB)
 - [packages/db/AGENTS.md](./packages/db/AGENTS.md) — shared Drizzle schema, migrations, DB connection
 - [packages/ui/AGENTS.md](./packages/ui/AGENTS.md) — thin shared design tokens + cn() helper
 - [packages/server-shared/AGENTS.md](./packages/server-shared/AGENTS.md) — shared rate limiting and error reporting
