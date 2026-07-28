@@ -62,12 +62,15 @@ nothing here.
   on scroll. `FadeIn` is the standard wrapper: it uses `whileInView` with
   `viewport={{ once: true }}` so an element animates in a single time.
 
+- **`next build` type checks this app for real**, same as the other two. It used
+  to carry `typescript.ignoreBuildErrors: true`, which meant a type error could
+  ship; that escape hatch is gone and must not come back. `tsc --noEmit` (the
+  `typecheck` script) and the build check slightly different sets, since only the
+  build sees the generated route types under `.next/types`, so both are worth
+  running.
+
 ## Gotchas
 
-- **`typescript.ignoreBuildErrors: true` means `next build` will not fail on a
-  type error.** The `typecheck` script (`tsc --noEmit`) is the only thing that
-  catches one, and it is what CI runs, so never treat a green build here as
-  proof the types are sound.
 - **`FadeIn.tsx` defines its own local copy of `cn()`** instead of importing the
   one from `@repo/ui`. The app depends on `@repo/ui` but currently pulls only
   the CSS from it. Prefer the shared `cn()` in new components.
