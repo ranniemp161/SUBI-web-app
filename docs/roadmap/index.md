@@ -1,4 +1,12 @@
-# Roadmap — SUBI ecosystem (monorepo)
+# Roadmap — SUBI ecosystem (monorepo) · FROZEN 2026-07-28
+
+> **This tree is history. Do not add to it.**
+> The live plan is [docs/scope/index.md](../scope/index.md). Every still open item
+> here was moved into the scope files on 2026-07-28: Rough Cut's Studio auto cut
+> flow and its deferred prune item, the ecosystem's two deferred pricing and
+> notification decisions, and the ten `existing` capabilities. What stays here is
+> the full build record of Rough Cut slices 1 to 8 and the Wallet build, which is
+> worth reading and not worth copying forward.
 
 Maps every workspace roadmap in this repo. Each app plans its own slices; repo-wide concerns (shared `packages/db`, the wallet billing portal, cross-app conventions) live in `_root`.
 

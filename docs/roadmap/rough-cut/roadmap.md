@@ -1,4 +1,11 @@
-# Roadmap — Rough Cut App
+# Roadmap — Rough Cut App · FROZEN 2026-07-28
+
+> **This file is history. Do not add to it.**
+> The live plan is [docs/scope/rough-cut/scope.md](../../scope/rough-cut/scope.md).
+> Slices 1 to 7 below shipped and their record stays here. Feature 7 (Studio auto
+> cut flow), the deferred prune item, the accepted risks, and the ten `existing`
+> capabilities were all carried into the scope file on 2026-07-28. The scope file
+> numbers its slices from 8 onward so the two read as one history.
 
 The core product: browser-based video transcription and AI-assisted rough cutting. Users upload a video, its audio is transcribed, the transcript drives an editable timeline, and export runs client-side in the browser.
 
