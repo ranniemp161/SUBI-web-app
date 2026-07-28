@@ -1,4 +1,11 @@
-# Roadmap — Ecosystem (repo-wide)
+# Roadmap — Ecosystem (repo-wide) · FROZEN 2026-07-28
+
+> **This file is history. Do not add to it.**
+> The live plan is [docs/scope/_root/scope.md](../../scope/_root/scope.md). The USD
+> denominated Wallet build record stays here in full (including the `/harden`
+> findings closed out during it). The two deferred decisions, the demo only free
+> credits gate, and the open member grant question were carried into the scope file
+> on 2026-07-28.
 
 Features that span the whole ecosystem (shared `packages/db`, the wallet billing portal, cross-app concerns). App-specific work lives in its own roadmap (for example `docs/roadmap/rough-cut/`).
 
