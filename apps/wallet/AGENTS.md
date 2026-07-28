@@ -22,8 +22,9 @@ Centralized billing/credits portal for the SUBI app ecosystem (per ADRs `0001` a
 ## Commands
 ```bash
 npm run dev -w wallet     # next dev -p 3001 (port pinned)
+npm run test -w wallet    # vitest run
 ```
-Tests run via the root `npm run test` (turbo); no wallet-scoped test script is defined yet.
+Tests also run via the root `npm run test` (turbo), which picks this script up.
 
 ## Conventions
 - Stripe is the sole billing authority for the whole ecosystem — no other app processes payments directly (see ADR `0001`).
