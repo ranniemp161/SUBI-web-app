@@ -122,7 +122,7 @@ describe("POST /api/webhooks/clerk — request guards", () => {
   });
 });
 
-describe("POST /api/webhooks/clerk — user.created handling", () => {
+describe("POST /api/webhooks/clerk — user provisioning", () => {
   it("provisions a user row when created", async () => {
     state.verifyImpl = () => ({
       type: "user.created",
@@ -188,6 +188,30 @@ describe("POST /api/webhooks/clerk — user.created handling", () => {
     const res = await POST(req({}));
     expect(res.status).toBe(200);
     expect(state.provisionCalls).toEqual([]);
+  });
+
+  it("provisions after a previously unverified primary email is verified", async () => {
+    state.verifyImpl = () => ({
+      type: "user.updated",
+      data: {
+        id: "user_4",
+        email_addresses: [
+          {
+            id: "e1",
+            email_address: "verified@example.com",
+            verification: { status: "verified" },
+          },
+        ],
+        primary_email_address_id: "e1",
+      },
+    });
+
+    const res = await POST(req({}));
+
+    expect(res.status).toBe(200);
+    expect(state.provisionCalls).toEqual([
+      { clerkId: "user_4", email: "verified@example.com" },
+    ]);
   });
 
   it("skips provisioning and returns 200 when no email_addresses are present", async () => {
