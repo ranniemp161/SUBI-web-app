@@ -74,4 +74,30 @@ describe("provisionUser", () => {
       isMember: false,
     });
   });
+
+  it("updates email and isMember together on conflict, so the row can't drift", async () => {
+    process.env.MEMBER_ALLOWLIST_EMAIL = "demo@example.com";
+
+    // Existing row, now re-provisioned from a user.updated event whose verified
+    // primary address is the allowlisted one.
+    await provisionUser("clerk_123", "demo@example.com");
+
+    expect(state.onConflictDoUpdateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        set: { email: "demo@example.com", isMember: true },
+      })
+    );
+  });
+
+  it("revokes membership on conflict when the primary email moves off the allowlist", async () => {
+    process.env.MEMBER_ALLOWLIST_EMAIL = "demo@example.com";
+
+    await provisionUser("clerk_123", "moved-on@example.com");
+
+    expect(state.onConflictDoUpdateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        set: { email: "moved-on@example.com", isMember: false },
+      })
+    );
+  });
 });

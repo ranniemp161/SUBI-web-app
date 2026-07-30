@@ -105,8 +105,11 @@ export async function POST(request: Request) {
       )?.email_address ?? "";
 
     if (!email) {
-      console.error(
-        `[Clerk Webhook] user.created for ${userId} has no resolvable email — skipping provisioning.`
+      // Expected and common: Clerk emits user.created (and often a user.updated)
+      // before the email code is entered. Provisioning happens on the later
+      // event that carries the verified address, so this is not an error.
+      console.warn(
+        `[Clerk Webhook] ${event.type} for ${userId} has no verified primary email — skipping provisioning.`
       );
       return NextResponse.json({ received: true });
     }
