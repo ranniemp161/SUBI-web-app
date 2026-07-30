@@ -78,7 +78,10 @@ export async function POST(request: Request) {
     );
   }
 
-  if (event.type === "user.created") {
+  // Clerk creates the user before an email-code sign-up is verified. The
+  // following user.updated event carries the verified primary address, so
+  // both events must be considered for provisioning.
+  if (event.type === "user.created" || event.type === "user.updated") {
     const userId = event.data.id as string;
 
     const emailAddresses = event.data.email_addresses as
