@@ -1,4 +1,3 @@
-import { sql } from "drizzle-orm";
 import { db } from "@repo/db";
 import { users, type User } from "@repo/db/schema";
 
@@ -18,7 +17,13 @@ export function isAllowlistedMember(email: string): boolean {
 /**
  * Idempotently ensure a users row exists for this Clerk user.
  *
- * This creates a user record so they can use the application.
+ * Called from the Clerk webhook on both `user.created` and `user.updated`,
+ * so it runs again on every profile change — not just once at sign-up.
+ * On conflict, `email` and `isMember` are written together from the verified
+ * primary address in the event, keeping the row consistent with Clerk. That
+ * means membership follows the current email: changing the primary address to
+ * (or away from) MEMBER_ALLOWLIST_EMAIL grants or revokes it. The caller must
+ * only ever pass an address Clerk reports as primary AND verified.
  */
 export async function provisionUser(
   clerkId: string,
@@ -37,7 +42,7 @@ export async function provisionUser(
     .values({ clerkId, email, isMember })
     .onConflictDoUpdate({
       target: users.clerkId,
-      set: { email: sql`${users.email}`, isMember },
+      set: { email, isMember },
     })
     .returning();
 
