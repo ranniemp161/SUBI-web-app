@@ -1,24 +1,23 @@
-"use client";
-
 import { SignUp } from "@clerk/nextjs";
-import { useAuth } from "@clerk/nextjs";
-import { useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { auth } from "@clerk/nextjs/server";
+import { redirect } from "next/navigation";
 
 /**
  * Clerk owns the full sign-up state machine. This component automatically
  * collects every required Clerk field and only accepts an email code while
  * email verification is still pending.
+ *
+ * A server component, mirroring the sign-in page: the session resolves before
+ * anything renders, so a signed-in visitor never sees the form. The previous
+ * client version read useAuth() without waiting for isLoaded, so userId was
+ * undefined on the first pass — it painted the whole Clerk card and only then
+ * redirected. That flash is what this shape removes.
  */
-export default function SignUpPage() {
-  const { userId } = useAuth();
-  const router = useRouter();
-
-  useEffect(() => {
-    if (userId) router.push("/dashboard");
-  }, [router, userId]);
-
-  if (userId) return null;
+export default async function SignUpPage() {
+  const { userId } = await auth();
+  if (userId) {
+    redirect("/dashboard");
+  }
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-background px-4">

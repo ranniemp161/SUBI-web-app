@@ -8,7 +8,14 @@ import { ipRateLimit } from "@/lib/ip-rate-limit";
 // signature below is the real gate; this is just a volume/cost ceiling, kept
 // high since Clerk's own infra may proxy through few IPs and can burst
 // during real signup spikes.
-const WEBHOOK_LIMIT = 120;
+//
+// Raised from 120 when this handler took on user.updated alongside
+// user.created: user.updated fires on every profile change, not just at
+// sign-up, so the same handful of Clerk IPs now push materially more traffic
+// through one bucket. Exceeding it is not data loss — svix retries a 429 with
+// backoff — but each retry delays provisioning, and the limiter is failClosed,
+// so headroom is cheaper than the stall.
+const WEBHOOK_LIMIT = 240;
 const WEBHOOK_WINDOW_SECONDS = 60;
 
 /**

@@ -106,7 +106,7 @@ describe("POST /api/webhooks/clerk — request guards", () => {
     const res = await POST(req({}, { ip: "198.51.100.20" }));
     expect(res.status).toBe(429);
     // Note: the test mock now intercepts ipRateLimit, which takes the Request object directly
-    expect(ipRateLimit).toHaveBeenCalledWith(expect.any(Request), "webhook-clerk", 120, 60, { failClosed: true });
+    expect(ipRateLimit).toHaveBeenCalledWith(expect.any(Request), "webhook-clerk", 240, 60, { failClosed: true });
     expect(state.verifyImpl).toHaveBeenCalled();
   });
 
