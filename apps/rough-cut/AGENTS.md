@@ -129,6 +129,24 @@ pass against a login screen and the suite reports green while testing nothing.
 - Declined: Radix UI tooling (`radix-ui-design-system` skill, `radix-mcp-server` MCP) — Radix's own docs plus the local `confirm-dialog.tsx`/`StyledSelect` precedent are enough for now.
 
 ## Gotchas
+- **The AI Cut prompt has two builders and they must render pause markers identically.**
+  `buildUserMessage` (the analysis pass) and `buildVerifyUserMessage` (the verification pass)
+  in `lib/ai-rough-cut.ts` both emit `<pause N.Ns>` for silences at or above
+  `PAUSE_MARKER_SECONDS` (0.5s, deliberately the same threshold `retake-detection.ts` splits
+  sentences on), via the shared `pauseMarkerBefore`. Changing one builder alone already caused
+  a real bug: the analysis pass gained pause markers while the verification pass stayed blind
+  to them, and because that pass breaks ties toward `"restore": true`, it undid the very cuts
+  the markers existed to justify. A marker carries **no word index** and is never inside a cut
+  span (both rubrics state this, and boundary markers render outside the `>>>CUT:` delimiters),
+  so the word numbering `sanitizeAiRanges` and `applyAiCuts` share can never shift.
+- **The AI Cut passes log three structured lines; read them before tuning anything.**
+  `[ai-cut] usage` (per Gemini call: prompt, thinking, and output token counts plus
+  `finishReason`), `[ai-cut] funnel` (how many proposed ranges survived each filter, from
+  `sanitizeAiRangesWithFunnel`), and `[ai-cut] verify` (candidates sent, verdicts returned,
+  `unresolved`, restored). Three independent filters can drop a cut, so a run's final count
+  alone cannot say which one pruned it. The thinking budgets (24,576 analysis, 2,048 verify)
+  and the absent `maxOutputTokens` are all still unmeasured; these lines are how you pick
+  those numbers instead of guessing.
 - Deepgram's transcription callback isn't signed — a per-project random token
   (`transcriptCallbackToken`) is the real gate, checked after the IP rate limit.
 - On localhost (no public callback URL) transcription reads the transcript
