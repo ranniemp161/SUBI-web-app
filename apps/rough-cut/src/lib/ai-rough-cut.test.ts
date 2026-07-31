@@ -72,7 +72,7 @@ describe("buildVerifyUserMessage", () => {
   it("renders the cut span between delimiters with surrounding context", () => {
     const words = CONTIGUOUS;
     expect(buildVerifyUserMessage(words, [candidate(2, 3)])).toBe(
-      "Candidate startWordIndex=2 (category: retake):\nw0 w1 >>>CUT: w2 w3 <<< w4"
+      "Candidate 1 (category: retake):\nw0 w1 >>>CUT: w2 w3 <<< w4"
     );
   });
 
@@ -122,5 +122,20 @@ describe("buildVerifyUserMessage", () => {
   it("separates multiple candidates with a blank line", () => {
     const message = buildVerifyUserMessage(CONTIGUOUS, [candidate(1, 1), candidate(3, 3)]);
     expect(message.split("\n\n")).toHaveLength(2);
+  });
+
+  it("numbers candidates 1..N in order, not by word index", () => {
+    // The ordinal is the key the model echoes back; if it ever drifted from
+    // array position, verdicts would resolve to the wrong range.
+    const message = buildVerifyUserMessage(CONTIGUOUS, [
+      candidate(3, 3),
+      candidate(1, 1),
+      candidate(4, 4),
+    ]);
+    expect(message).toContain("Candidate 1 (");
+    expect(message).toContain("Candidate 2 (");
+    expect(message).toContain("Candidate 3 (");
+    expect(message).not.toContain("Candidate 0 (");
+    expect(message).not.toContain("startWordIndex");
   });
 });

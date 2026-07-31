@@ -7,7 +7,7 @@
  * back at them, which it does reliably — timestamps it would have to invent.
  *
  * Everything here runs on both sides: the server validates model output with
- * `sanitizeAiRanges` before storing it, and the editor maps the stored ranges
+ * `sanitizeAiRangesWithFunnel` before storing it, and the editor maps the stored ranges
  * onto the EDL with `applyAiCuts`. Both sides derive indices from the same
  * deterministic `sanitizeWords` pass, so they always agree.
  */
@@ -96,6 +96,38 @@ const MIN_CUT_CONFIDENCE = 0.5;
 export const MIN_MODEL_CONFIDENCE = 0.5;
 
 /**
+ * How many ranges survived each stage of `sanitizeAiRanges`. Three independent
+ * filters can drop a cut and today they're indistinguishable from outside —
+ * a pass that returns 4 ranges looks the same whether Gemini proposed 4 or
+ * proposed 40 and the confidence floors ate 36. Logged per run
+ * (`ai-rough-cut.ts`) so the next tuning decision is about whichever stage is
+ * actually pruning, and so a threshold change has a before/after to compare.
+ */
+export interface AiRangeFunnel {
+  /** Entries in the raw model array, before any validation. */
+  received: number;
+  /** Survived schema validation and the word-count bounds check. */
+  parsed: number;
+  /** After overlapping/adjacent spans were coalesced. */
+  merged: number;
+  /** Survived MIN_CUT_CONFIDENCE (the ASR's certainty about the words). */
+  asrConfident: number;
+  /** Survived MIN_MODEL_CONFIDENCE (Gemini's certainty about the judgment). */
+  modelConfident: number;
+  /** Finally returned, after the MAX_AI_RANGES cap. */
+  returned: number;
+}
+
+const EMPTY_FUNNEL: AiRangeFunnel = {
+  received: 0,
+  parsed: 0,
+  merged: 0,
+  asrConfident: 0,
+  modelConfident: 0,
+  returned: 0,
+};
+
+/**
  * Turn raw model output (untrusted JSON) into ranges that are safe to store
  * and apply: drop malformed entries, clamp ends to the word count, drop
  * inverted or out-of-range spans, drop spans the ASR itself wasn't confident
@@ -104,8 +136,25 @@ export const MIN_MODEL_CONFIDENCE = 0.5;
  * just yields [].
  */
 export function sanitizeAiRanges(candidates: unknown, words: TranscriptWord[]): AiCutRange[] {
+  return sanitizeAiRangesWithFunnel(candidates, words).ranges;
+}
+
+/**
+ * `sanitizeAiRanges` plus per-stage counts. Separate entry point rather than a
+ * changed return shape so the common callers (and their tests) stay untouched;
+ * only the server pass, which logs the funnel, needs the counts.
+ */
+export function sanitizeAiRangesWithFunnel(
+  candidates: unknown,
+  words: TranscriptWord[]
+): { ranges: AiCutRange[]; funnel: AiRangeFunnel } {
   const wordCount = words.length;
-  if (!Array.isArray(candidates) || wordCount <= 0) return [];
+  if (!Array.isArray(candidates) || wordCount <= 0) {
+    return {
+      ranges: [],
+      funnel: { ...EMPTY_FUNNEL, received: Array.isArray(candidates) ? candidates.length : 0 },
+    };
+  }
 
   const valid: AiCutRange[] = [];
   for (const candidate of candidates) {
@@ -146,7 +195,19 @@ export function sanitizeAiRanges(candidates: unknown, words: TranscriptWord[]): 
     (range) => range.modelConfidence === undefined || range.modelConfidence >= MIN_MODEL_CONFIDENCE
   );
 
-  return modelConfident.slice(0, MAX_AI_RANGES);
+  const ranges = modelConfident.slice(0, MAX_AI_RANGES);
+
+  return {
+    ranges,
+    funnel: {
+      received: candidates.length,
+      parsed: valid.length,
+      merged: merged.length,
+      asrConfident: confident.length,
+      modelConfident: modelConfident.length,
+      returned: ranges.length,
+    },
+  };
 }
 
 /**
