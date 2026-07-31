@@ -147,6 +147,23 @@ pass against a login screen and the suite reports green while testing nothing.
   alone cannot say which one pruned it. The thinking budgets (24,576 analysis, 2,048 verify)
   and the absent `maxOutputTokens` are all still unmeasured; these lines are how you pick
   those numbers instead of guessing.
+- **Repeated phrases are split across three detectors, and only one of them sees any given case.**
+  `repetition-detection.ts` catches an exact adjacent repeat only when a pause of at least
+  `PHRASE_PAUSE_SECONDS` (0.35s) separates the two instances; below that it deliberately keeps
+  the words, because fluid run on repetition is delivery ("that is leverage that is leverage"),
+  a rule calibrated with the user on real footage. `retake-detection.ts` never fires on this
+  shape at all: it compares whole sentences against other sentences, and fast restarts never
+  split into separate sentences, so repetition inside one sentence is invisible to it. Every
+  fluid repeat therefore falls to the AI rubric alone, which is why rules 3 and 5 in
+  `ai-rough-cut.ts` carry the emphasis versus restart chain test. Measured, not assumed: at a
+  0.5s gap the mechanical pass cuts a three attempt chain correctly, at 0.34s it cuts nothing.
+  When a repeat survives that should not have, check which of the three owns that case before
+  changing any threshold.
+- **In the AI rubric, rule 5 outranks rule 3 even though the list says "in priority order".**
+  A repeat where every delivery completes is emphasis and is kept; a chain that only resolves
+  on its final repetition is a restart and every earlier attempt is cut. Both rules state the
+  precedence explicitly because the header's ordering implies the opposite. Do not "fix" that
+  apparent contradiction by reordering the rules.
 - Deepgram's transcription callback isn't signed — a per-project random token
   (`transcriptCallbackToken`) is the real gate, checked after the IP rate limit.
 - On localhost (no public callback URL) transcription reads the transcript
