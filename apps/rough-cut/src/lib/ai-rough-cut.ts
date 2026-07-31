@@ -145,14 +145,19 @@ Identify spans to REMOVE, by category:
 Editing rules, in priority order:
 1. KEEP THE LAST COMPLETE TAKE. Speakers often re-attempt a sentence 2–5 times; every earlier attempt is discarded even if it sounds fluent. A retry may reword the sentence — match intent, not exact words. A <pause> immediately before a re-attempt is strong evidence of a reset.
 2. Retakes are often PARTIAL: a re-attempt may replace only the tail of the previous sentence. Cut from the word where the delivery diverged; keep the shared beginning.
-3. The same punchline delivered several times in a row is a line re-read: keep the final read, cut the earlier ones.
+3. The same line delivered several times in a row is a re-read: keep the final delivery, cut every earlier one. This holds for any number of attempts — three or four identical starts in a row is common — and whether or not a pause separates them. Cut them as a single span ending where the kept attempt begins. Check rule 5 before applying this: if every delivery completes, the run is emphasis and rule 5 governs instead.
 4. An explicit spoken marker like "start again" or "take two" means everything since the last clean, kept sentence is discarded — and the marker itself is a "direction" cut.
-5. NEVER cut deliberate rhetorical repetition. If a repeated phrase completes cleanly and is not followed by a restart, it is emphasis ("who marched, who protested — are also victims") and must be kept.
+5. NEVER cut deliberate rhetorical repetition. Where this rule and rule 3 disagree, THIS ONE WINS, even though rule 3 sits higher in the list — a repeat that completes on every delivery is kept. The test is whether the repeated phrase COMPLETES. If it completes cleanly and is not followed by a restart, it is emphasis ("who marched, who protested — are also victims") and must be kept. If it breaks off unfinished and the speaker starts it again, it is a restart chain, not emphasis: rule 3 applies and every attempt before the completing one is cut. A phrase that only resolves on its final repetition ("the problem of X, the problem of X, the problem of X is that…") is a restart chain no matter how fluidly it was delivered.
 6. NEVER cut a repetition that could be a proper noun, brand, or fixed phrase (a movement literally named "March and March" is not a stutter).
 7. Cut fragments left hanging before a long pause — a <pause> of 1s or more directly after an incomplete clause ("and I think everyone…", "why is…") means the speaker abandoned it.
 8. Only clear mistakes and directions. Never cut for style, pacing, length, or opinion. If unsure, keep.
 9. startWordIndex and endWordIndex are inclusive and must cover the whole mistake span, nothing more. The kept take must never be inside a cut. "note" is a short (under 15 words) reason a human can skim.
 10. "modelConfidence" is your own certainty, 0.0-1.0, that this span is genuinely a mistake and not a defensible read of intact speech. An explicit marker (rule 4) or an exact doubled word is 1.0. A partial/reworded retake or a subtle stumble is lower. Use the full range — don't default to 1.0.
+
+Telling emphasis from a restart chain — they look alike, so decide with these:
+- KEEP as emphasis when every repetition is grammatically finished; the run builds to a resolution ("they marched, they protested, and they won"); the repetitions vary in wording or tail rather than restarting identically; they read as a list, often joined by "and" or commas.
+- CUT all but the last when the repeated phrase breaks off with nothing following it; only the final attempt continues into a predicate; each attempt restarts the same words verbatim from the same starting point.
+- If you genuinely cannot tell, treat it as emphasis: keep it, or report it with modelConfidence below 0.8 so it gets a second look. Never report an ambiguous repeat above 0.8.
 
 Worked examples (abridged from real footage):
 
@@ -170,10 +175,15 @@ Example C — direction cut, emphasis kept:
 cuts: [{"startWordIndex":0,"endWordIndex":4,"category":"direction","note":"Spoken editing note","modelConfidence":1.0}]
 ("they marched they protested" completes cleanly — deliberate emphasis, kept.)
 
-Example D — genuinely ambiguous, score it low rather than dropping it:
-[100]we [101]need [102]to [103]move [104]faster [105]we [106]need [107]to [108]move [109]much [110]faster
-cuts: [{"startWordIndex":100,"endWordIndex":104,"category":"retake","note":"Possible reworded retake, but may be a deliberate build","modelConfidence":0.6}]
-(No pause and no restart marker — this could be emphasis rather than a re-attempt. Report it with low confidence; do not silently drop it and do not inflate it to 1.0.)
+Example D — a restart chain: repeated attempts that never complete, then one that does:
+[200]I [201]think [202]the [203]problem [204]of [205]Israel [206]I [207]think [208]the [209]problem [210]of [211]Israel [212]I [213]think [214]the [215]problem [216]of [217]Israel [218]is [219]that [220]nobody [221]agrees
+cuts: [{"startWordIndex":200,"endWordIndex":211,"category":"retake","note":"Two abandoned attempts; the third completes the sentence","modelConfidence":0.95}]
+(Neither of the first two attempts completes — nothing follows "Israel" — and each is immediately restarted. Only the third resolves, into "is that…", so it is the keeper. Cut every earlier attempt as ONE span, however many there are, with or without a pause between them. This is rule 3, not rule 5: emphasis completes, a restart chain does not.)
+
+Example E — genuinely ambiguous, score it low rather than dropping it:
+[300]we [301]need [302]to [303]move [304]faster [305]we [306]need [307]to [308]move [309]much [310]faster
+cuts: [{"startWordIndex":300,"endWordIndex":304,"category":"retake","note":"Possible reworded retake, but both attempts complete","modelConfidence":0.6}]
+(Unlike Example D, both attempts complete and neither is abandoned, so rule 5 genuinely might apply. Report it with low confidence; do not silently drop it and do not inflate it to 1.0.)
 
 Return only JSON matching the schema. If there are no mistakes, return {"cuts": []}.`;
 
