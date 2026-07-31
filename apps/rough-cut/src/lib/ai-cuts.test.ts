@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   sanitizeAiRanges,
+  sanitizeAiRangesWithFunnel,
   applyAiCuts,
   selectBorderlineRanges,
   applyVerifyVerdicts,
@@ -250,3 +251,77 @@ describe("applyAiCuts", () => {
   });
 });
 
+
+describe("sanitizeAiRangesWithFunnel", () => {
+  it("reports every stage for input that passes cleanly", () => {
+    const { ranges, funnel } = sanitizeAiRangesWithFunnel(
+      [{ startWordIndex: 1, endWordIndex: 2, category: "retake", modelConfidence: 0.9 }],
+      TEN_WORDS
+    );
+    expect(ranges).toHaveLength(1);
+    expect(funnel).toEqual({
+      received: 1,
+      parsed: 1,
+      merged: 1,
+      asrConfident: 1,
+      modelConfident: 1,
+      returned: 1,
+    });
+  });
+
+  it("distinguishes malformed entries from confidently-dropped ones", () => {
+    const { funnel } = sanitizeAiRangesWithFunnel(
+      [
+        { startWordIndex: 0, endWordIndex: 1, category: "nonsense" }, // fails schema
+        { startWordIndex: 5, endWordIndex: 4, category: "retake" }, // inverted
+        { startWordIndex: 7, endWordIndex: 8, category: "retake", modelConfidence: 0.2 }, // low
+      ],
+      TEN_WORDS
+    );
+    expect(funnel.received).toBe(3);
+    expect(funnel.parsed).toBe(1);
+    expect(funnel.modelConfident).toBe(0);
+    expect(funnel.returned).toBe(0);
+  });
+
+  it("shows coalescing in the merged count", () => {
+    const { funnel } = sanitizeAiRangesWithFunnel(
+      [
+        { startWordIndex: 1, endWordIndex: 3, category: "retake", modelConfidence: 0.9 },
+        { startWordIndex: 2, endWordIndex: 5, category: "retake", modelConfidence: 0.9 },
+      ],
+      TEN_WORDS
+    );
+    expect(funnel.parsed).toBe(2);
+    expect(funnel.merged).toBe(1);
+  });
+
+  it("attributes an ASR-confidence drop to that stage alone", () => {
+    const garbled: TranscriptWord[] = TEN_WORDS.map((word, i) =>
+      i >= 6 ? { ...word, confidence: 0.1 } : word
+    );
+    const { funnel } = sanitizeAiRangesWithFunnel(
+      [{ startWordIndex: 6, endWordIndex: 8, category: "stumble", modelConfidence: 0.9 }],
+      garbled
+    );
+    expect(funnel.merged).toBe(1);
+    expect(funnel.asrConfident).toBe(0);
+    expect(funnel.modelConfident).toBe(0);
+  });
+
+  it("counts entries received even when nothing is usable", () => {
+    expect(sanitizeAiRangesWithFunnel([1, 2, 3], TEN_WORDS).funnel).toEqual({
+      received: 3,
+      parsed: 0,
+      merged: 0,
+      asrConfident: 0,
+      modelConfident: 0,
+      returned: 0,
+    });
+  });
+
+  it("returns an all-zero funnel for non-array input", () => {
+    expect(sanitizeAiRangesWithFunnel(null, TEN_WORDS).funnel.received).toBe(0);
+    expect(sanitizeAiRangesWithFunnel([{ startWordIndex: 0, endWordIndex: 1, category: "retake" }], []).funnel.returned).toBe(0);
+  });
+});

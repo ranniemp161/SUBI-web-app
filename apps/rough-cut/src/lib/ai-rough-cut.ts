@@ -13,7 +13,7 @@
 
 import { sanitizeWords, type TranscriptWord } from "./edl";
 import {
-  sanitizeAiRanges,
+  sanitizeAiRangesWithFunnel,
   selectBorderlineRanges,
   applyVerifyVerdicts,
   AI_CUT_CATEGORIES,
@@ -87,6 +87,27 @@ interface GeminiResponse {
  *
  * `size` is words for the main pass, candidate spans for verify.
  */
+/**
+ * Fail loudly when Gemini ran out of output budget mid-JSON.
+ *
+ * Thinking tokens bill as output and count against the same budget, so a dense
+ * transcript can exhaust it and return a truncated object. That parsed as
+ * "Gemini returned non-JSON output" — a message that points at the model's
+ * formatting rather than at the real cause, after the user has already waited
+ * up to REQUEST_TIMEOUT_MS. The pass still fails either way (and the route
+ * still refunds); this just names the reason.
+ *
+ * Deliberately not paired with an explicit `maxOutputTokens` yet: picking that
+ * number needs the usage data `logUsage` has only just started collecting.
+ */
+function assertNotTruncated(payload: GeminiResponse) {
+  if (payload?.candidates?.[0]?.finishReason === "MAX_TOKENS") {
+    throw new Error(
+      "Gemini hit its output limit before finishing the JSON — the transcript has too many cuts for one pass."
+    );
+  }
+}
+
 function logUsage(pass: "main" | "verify", size: number, payload: GeminiResponse) {
   const usage = payload.usageMetadata;
   console.info(
@@ -263,7 +284,7 @@ For each candidate, decide: if this span were removed, would the surrounding wor
 
 When genuinely unsure, prefer "restore": true — the human editor reviews every cut either way, but a wrongly restored line is far less costly than a wrongly deleted one.
 
-Return one verdict per candidate, identified by its startWordIndex. Return only JSON matching the schema.`;
+Return one verdict per candidate, identified by its candidate number (the integer after "Candidate"). Return only JSON matching the schema.`;
 
 /** Gemini's structured-output schema for the verification pass. */
 const VERIFY_RESPONSE_SCHEMA = {
@@ -274,10 +295,10 @@ const VERIFY_RESPONSE_SCHEMA = {
       items: {
         type: "OBJECT",
         properties: {
-          startWordIndex: { type: "INTEGER" },
+          candidate: { type: "INTEGER" },
           restore: { type: "BOOLEAN" },
         },
-        required: ["startWordIndex", "restore"],
+        required: ["candidate", "restore"],
       },
     },
   },
@@ -296,9 +317,16 @@ const VERIFY_RESPONSE_SCHEMA = {
  * pause-evidenced cuts the main pass is now able to find. Boundary markers sit
  * outside the delimiters, never inside the span, matching the main rubric's
  * rule that a marker is never part of a cut.
+ *
+ * Candidates are numbered 1..N and the model echoes that ordinal back, rather
+ * than the `startWordIndex` it used to be asked for. A transcript index is a
+ * larger, arbitrary number the model has to copy correctly from a header, and
+ * a miscopy fails silently — the verdict matches no range and the cut simply
+ * stays, with nothing logged. A small ordinal is easier to get right and, when
+ * it is still wrong, is out of range and therefore detectable.
  */
 export function buildVerifyUserMessage(clean: TranscriptWord[], candidates: AiCutRange[]): string {
-  const blocks = candidates.map((candidate) => {
+  const blocks = candidates.map((candidate, i) => {
     const beforeStart = Math.max(0, candidate.startWordIndex - VERIFY_CONTEXT_WORDS);
     const afterEnd = Math.min(clean.length - 1, candidate.endWordIndex + VERIFY_CONTEXT_WORDS);
     const before = renderWords(clean, beforeStart, candidate.startWordIndex - 1);
@@ -307,7 +335,7 @@ export function buildVerifyUserMessage(clean: TranscriptWord[], candidates: AiCu
     const intoCut = pauseMarkerBefore(clean, candidate.startWordIndex);
     const outOfCut = pauseMarkerBefore(clean, candidate.endWordIndex + 1);
     return [
-      `Candidate startWordIndex=${candidate.startWordIndex} (category: ${candidate.category}${candidate.note ? `, note: "${candidate.note}"` : ""}):`,
+      `Candidate ${i + 1} (category: ${candidate.category}${candidate.note ? `, note: "${candidate.note}"` : ""}):`,
       [before, intoCut, `>>>CUT: ${cut} <<<`, outOfCut, after].filter(Boolean).join(" "),
     ].join("\n");
   });
@@ -362,20 +390,53 @@ async function verifyBorderlineCuts(
 
     const payload = (await response.json()) as GeminiResponse;
     logUsage("verify", candidates.length, payload);
+    // Throws into this function's own catch, which fails open — a truncated
+    // verify response leaves every cut standing rather than acting on half a
+    // verdict list.
+    assertNotTruncated(payload);
     const text = payload?.candidates?.[0]?.content?.parts?.[0]?.text;
     if (typeof text !== "string") {
       throw new Error("Gemini verify response had no text candidate.");
     }
 
-    const parsed = JSON.parse(text) as { verdicts?: { startWordIndex?: unknown; restore?: unknown }[] };
+    const parsed = JSON.parse(text) as { verdicts?: { candidate?: unknown; restore?: unknown }[] };
+    const verdicts = parsed.verdicts ?? [];
+
+    // Resolve each ordinal back to the range it names. `applyVerifyVerdicts`
+    // still keys on startWordIndex (unique per range after coalescing) — the
+    // ordinal is purely the wire format, so that tested helper is untouched.
     const restoreStartIndices = new Set<number>();
-    for (const verdict of parsed.verdicts ?? []) {
-      if (typeof verdict.startWordIndex === "number" && verdict.restore === true) {
-        restoreStartIndices.add(verdict.startWordIndex);
+    let unresolved = 0;
+    for (const verdict of verdicts) {
+      const ordinal = verdict.candidate;
+      const range =
+        typeof ordinal === "number" && Number.isInteger(ordinal)
+          ? candidates[ordinal - 1]
+          : undefined;
+      if (!range) {
+        unresolved++;
+        continue;
       }
+      if (verdict.restore === true) restoreStartIndices.add(range.startWordIndex);
     }
 
-    return applyVerifyVerdicts(ranges, restoreStartIndices);
+    const verified = applyVerifyVerdicts(ranges, restoreStartIndices);
+    console.info(
+      "[ai-cut] verify",
+      JSON.stringify({
+        sent: candidates.length,
+        verdicts: verdicts.length,
+        // A verdict naming no candidate means the model miscopied an ordinal
+        // or invented one. Harmless (the cut just stands) but previously
+        // invisible — it looked identical to a deliberate "keep the cut".
+        unresolved,
+        restored: restoreStartIndices.size,
+        rangesIn: ranges.length,
+        rangesOut: verified.length,
+      })
+    );
+
+    return verified;
   } catch (error) {
     reportError("AI cut verification pass failed", error);
     return ranges;
@@ -435,6 +496,7 @@ export async function runAiRoughCut(
 
   const payload = (await response.json()) as GeminiResponse;
   logUsage("main", clean.length, payload);
+  assertNotTruncated(payload);
   const text = payload?.candidates?.[0]?.content?.parts?.[0]?.text;
   if (typeof text !== "string") {
     throw new Error("Gemini response had no text candidate.");
@@ -448,7 +510,8 @@ export async function runAiRoughCut(
   }
 
   const cuts = (parsed as { cuts?: unknown })?.cuts;
-  const sanitized = sanitizeAiRanges(cuts, clean);
+  const { ranges: sanitized, funnel } = sanitizeAiRangesWithFunnel(cuts, clean);
+  console.info("[ai-cut] funnel", JSON.stringify({ words: clean.length, ...funnel }));
   const ranges = await verifyBorderlineCuts(clean, sanitized, onPhase);
   return {
     ranges,
