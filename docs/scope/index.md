@@ -12,10 +12,15 @@ through every layer, working).
 | `_root` (ecosystem wide) | [_root/scope.md](_root/scope.md) | Beta | 1 done, 1 existing, 2 deferred, 1 open question |
 | `apps/rough-cut` | [rough-cut/scope.md](rough-cut/scope.md) | Beta | 1 done, 3 in-progress, 12 existing, 5 deferred |
 | `apps/founders-frame` | [founders-frame/scope.md](founders-frame/scope.md) | Alpha | 1 done, 1 planned, 2 existing |
+| `apps/broll` | [broll/scope.md](broll/scope.md) | Alpha | 1 done (Phase 0 spikes), 6 planned |
 | `apps/wallet` | tracked under `_root` | see `_root` | the Wallet app **is** the ecosystem wide billing feature |
 
 ## Notes
 
+- `apps/broll` has a scope but **no workspace yet** — Phase 0 was a throwaway
+  prototype outside this repo, and the `apps/broll` directory does not exist until
+  Phase 1 scaffolds it. The scope is listed because the design is settled and the
+  spikes are done, not because there is code.
 - `apps/wallet` has no scope of its own. Its build is the `_root` scope's
   "USD denominated Wallet" feature, one ecosystem wide capability rather than a
   set of app local slices.
