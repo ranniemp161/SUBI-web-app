@@ -1,0 +1,22 @@
+{
+  "name": "@repo/transcript",
+  "version": "0.1.0",
+  "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./frame-math": "./src/frame-math.ts",
+    "./timebase": "./src/timebase.ts",
+    "./document": "./src/document.ts",
+    "./build": "./src/build.ts",
+    "./read": "./src/read.ts",
+    "./write": "./src/write.ts"
+  },
+  "scripts": {
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "zod": "^4.4.3"
+  }
+}
