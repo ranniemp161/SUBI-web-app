@@ -1425,22 +1425,40 @@ export default function EditorPage() {
       ) {
         return;
       }
-      setProject((prev) =>
-        prev
-          ? { ...prev, sourceFpsNum: fps.numerator, sourceFpsDen: fps.denominator }
-          : prev
-      );
       try {
-        await fetch(`/api/projects/${id}`, {
+        const response = await fetch(`/api/projects/${id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ sourceFps: fps }),
         });
+        // `fetch` only rejects on a network failure, so a 4xx or 5xx lands
+        // here rather than in the catch and has to be checked explicitly.
+        if (!response.ok) {
+          console.warn(
+            "Failed to persist the detected source frame rate:",
+            response.status
+          );
+          return;
+        }
+        // Mirrored locally only once the row really carries the rate, so the
+        // guard above can never report a rate as stored that the server does
+        // not have. That ordering is defensive rather than load bearing today:
+        // `setSourceFile` has exactly one call site, the reselect prompt, and
+        // that prompt only renders while `sourceFile` is null — so a mounted
+        // session reselects once and the guard never runs a second time. A
+        // reload refetches the project, sees the columns still null, and
+        // retries. Add a second reselect path and this ordering starts
+        // mattering, which is why it is written the safe way round now.
+        setProject((prev) =>
+          prev
+            ? { ...prev, sourceFpsNum: fps.numerator, sourceFpsDen: fps.denominator }
+            : prev
+        );
       } catch (error) {
         // Best-effort, like the word-alignment write above: a failed PATCH
         // leaves the columns null, the transcript route keeps refusing with
-        // its reselect message, and the next reselect tries again. Nothing in
-        // this tab depends on the write having landed.
+        // its reselect message, and the next reselect really does try again.
+        // Nothing in this tab depends on the write having landed.
         console.warn("Failed to persist the detected source frame rate:", error);
       }
     },
