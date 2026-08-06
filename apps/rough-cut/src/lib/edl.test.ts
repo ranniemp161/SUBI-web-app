@@ -671,6 +671,92 @@ describe("absorbCutResidue", () => {
   });
 });
 
+// The mirror of the block above, and the shape restoring a word produces.
+// A cut made by the AI, retake or repetition pass has boundaries from that
+// pass, not from the word grid, so restoring a word at its edge leaves a
+// fragment of the old cut with no speech in it — a few frames the timeline
+// shows as their own unselectable clip. Measured on real projects before this
+// rule existed: 89 such slivers across five transcripts, 5ms to 215ms.
+describe("absorbCutResidue — a short wordless cut stranded between keeps", () => {
+  /** A leftover fragment of an AI cut, sitting between two kept spans. */
+  function edlWithCutSliver(sliver: { start: number; end: number }): EDL {
+    return {
+      segments: [
+        { start: 0, end: sliver.start, status: "keep", reason: null },
+        { start: sliver.start, end: sliver.end, status: "cut", reason: "ai" },
+        { start: sliver.end, end: 10, status: "keep", reason: null },
+      ],
+    };
+  }
+
+  it("heals the sliver back into the timeline, leaving one continuous clip", () => {
+    const result = absorbCutResidue(edlWithCutSliver({ start: 4, end: 4.05 }), []);
+    expect(result.segments).toEqual([
+      { start: 0, end: 10, status: "keep", reason: null },
+    ]);
+  });
+
+  it("leaves a deliberate silence cut alone, the thing size has to tell it from", () => {
+    // 1.1s, the shape the two survivors in the real-data scan had.
+    const edl = edlWithCutSliver({ start: 4, end: 5.1 });
+    expect(absorbCutResidue(edl, []).segments).toEqual(edl.segments);
+  });
+
+  it("keeps a cut that still holds a word, however short", () => {
+    const edl = edlWithCutSliver({ start: 4, end: 4.08 });
+    const words = [{ word: "yes", start: 4.01, end: 4.07, confidence: 0.9 }];
+    expect(absorbCutResidue(edl, words).segments).toEqual(edl.segments);
+  });
+
+  it("leaves a short cut alone when it is not flanked by keeps on both sides", () => {
+    const edl: EDL = {
+      segments: [
+        { start: 0, end: 4, status: "keep", reason: null },
+        { start: 4, end: 4.05, status: "cut", reason: "ai" },
+        { start: 4.05, end: 6, status: "cut", reason: "silence" },
+        { start: 6, end: 10, status: "keep", reason: null },
+      ],
+    };
+    expect(absorbCutResidue(edl, []).segments).toEqual(edl.segments);
+  });
+
+  it("does not touch a sliver outside the edited span", () => {
+    const edl = edlWithCutSliver({ start: 4, end: 4.05 });
+    const elsewhere = { start: 8, end: 9 };
+    expect(absorbCutResidue(edl, [], elsewhere).segments).toEqual(edl.segments);
+  });
+
+  it("closes the real restore path end to end, leaving no orphan fragment", () => {
+    // An AI cut spanning two words; the user restores only the second one.
+    const words = [
+      { word: "um", start: 10.05, end: 10.5, confidence: 0.9 },
+      { word: "actually", start: 10.6, end: 11.9, confidence: 0.9 },
+    ];
+    const edl: EDL = {
+      segments: [
+        { start: 0, end: 10, status: "keep", reason: null },
+        { start: 10, end: 12, status: "cut", reason: "ai" },
+        { start: 12, end: 20, status: "keep", reason: null },
+      ],
+    };
+
+    const restored = restoreWords(edl, [words[1]], words);
+    const swept = absorbCutResidue(restored, words, changedSpan(edl, restored));
+
+    // The fragment between the restored word and the cut's old right edge is
+    // gone; "um" is still cut, because that segment still holds a word.
+    const orphans = swept.segments.filter((seg, i) => {
+      if (seg.status !== "cut") return false;
+      const left = swept.segments[i - 1];
+      const right = swept.segments[i + 1];
+      if (left?.status !== "keep" || right?.status !== "keep") return false;
+      return !words.some((w) => w.start < seg.end && w.end > seg.start);
+    });
+    expect(orphans).toEqual([]);
+    expect(swept.segments.some((s) => s.status === "cut")).toBe(true);
+  });
+});
+
 describe("absorbCutResidue — span scoping", () => {
   const edl: EDL = {
     segments: [
