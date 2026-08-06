@@ -14,6 +14,8 @@ function makeProps(overrides: Partial<React.ComponentProps<typeof ExportModal>> 
     onExportFcpxml: vi.fn(),
     onExportCmx3600: vi.fn(),
     onExportXmeml: vi.fn(),
+    onExportTranscript: vi.fn(),
+    onExportSubtitles: vi.fn(),
     busy: false,
     ...overrides,
   };
@@ -32,13 +34,83 @@ describe("ExportModal — visibility", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("shows the dialog and all four format choices when open", () => {
+  it("shows the dialog and all six format choices when open", () => {
     render(<ExportModal {...makeProps()} />);
     expect(screen.getByText("Export Project")).toBeInTheDocument();
     expect(screen.getByText("Video (MP4)")).toBeInTheDocument();
     expect(screen.getByText("DaVinci Resolve")).toBeInTheDocument();
     expect(screen.getByText("Premiere Pro")).toBeInTheDocument();
     expect(screen.getByText("Final Cut Pro")).toBeInTheDocument();
+    expect(screen.getByText("Timed transcript")).toBeInTheDocument();
+    expect(screen.getByText("Subtitles")).toBeInTheDocument();
+  });
+});
+
+describe("ExportModal — subtitles", () => {
+  it("defaults to SubRip and passes that flavour through", () => {
+    const props = makeProps();
+    render(<ExportModal {...props} />);
+    selectFormat("Subtitles");
+    fireEvent.click(exportNow());
+    expect(props.onExportSubtitles).toHaveBeenCalledWith("srt");
+    expect(props.onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes WebVTT when that flavour is picked", () => {
+    const props = makeProps();
+    render(<ExportModal {...props} />);
+    selectFormat("Subtitles");
+    fireEvent.click(screen.getByRole("button", { name: "WebVTT (.vtt)" }));
+    fireEvent.click(exportNow());
+    expect(props.onExportSubtitles).toHaveBeenCalledWith("vtt");
+  });
+
+  it("offers the flavour picker only while subtitles are selected", () => {
+    render(<ExportModal {...makeProps()} />);
+    expect(screen.queryByRole("button", { name: "SubRip (.srt)" })).not.toBeInTheDocument();
+    selectFormat("Subtitles");
+    expect(screen.getByRole("button", { name: "SubRip (.srt)" })).toBeInTheDocument();
+  });
+
+  it("shares the transcript's frame rate gate, since both come from one document", () => {
+    const props = makeProps({
+      transcriptBlockedReason: "Reselect your source video to export a transcript.",
+    });
+    render(<ExportModal {...props} />);
+    selectFormat("Subtitles");
+    expect(exportNow()).toBeDisabled();
+    fireEvent.click(exportNow());
+    expect(props.onExportSubtitles).not.toHaveBeenCalled();
+  });
+});
+
+describe("ExportModal — the timed transcript (spec _root/0001, AC-8)", () => {
+  it("dispatches the transcript handler and closes", () => {
+    const props = makeProps();
+    render(<ExportModal {...props} />);
+    selectFormat("Timed transcript");
+    fireEvent.click(exportNow());
+    expect(props.onExportTranscript).toHaveBeenCalledTimes(1);
+    expect(props.onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("is disabled, with the reason shown, while the frame rate is unknown", () => {
+    const props = makeProps({
+      transcriptBlockedReason: "Reselect your source video to export a transcript.",
+    });
+    render(<ExportModal {...props} />);
+    selectFormat("Timed transcript");
+    expect(exportNow()).toBeDisabled();
+    expect(screen.getByRole("status")).toHaveTextContent(/Reselect your source video/);
+    fireEvent.click(exportNow());
+    expect(props.onExportTranscript).not.toHaveBeenCalled();
+  });
+
+  it("stays available when the timeline formats are blocked — the two gates are separate", () => {
+    const props = makeProps({ exportFormatBlockedReason: "Nothing to export yet" });
+    render(<ExportModal {...props} />);
+    selectFormat("Timed transcript");
+    expect(exportNow()).toBeEnabled();
   });
 });
 

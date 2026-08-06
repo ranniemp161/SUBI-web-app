@@ -20,7 +20,31 @@ const isPublicRoute = createRouteMatcher([
 
 import { NextResponse } from "next/server";
 
+/**
+ * CORS preflights on the transcript route, which must skip the session gate.
+ *
+ * A preflight is sent by the browser with no cookies and no body — that is the
+ * CORS spec, not a choice — so Clerk can never see a session on one and would
+ * always answer 401. The browser then treats the preflight as failed and never
+ * sends the real request, which silently kills every cross origin call b-roll
+ * makes with any non simple header.
+ *
+ * Letting a preflight through leaks nothing. It carries no credentials and
+ * returns no data: the route's own `OPTIONS` handler replies with CORS headers
+ * for the single named b-roll origin and 403s every other origin. The `GET`
+ * itself is untouched and still gated here, then gated again inside the route
+ * by owner check.
+ */
+function isTranscriptPreflight(request: Request & { nextUrl: URL }): boolean {
+  return (
+    request.method === "OPTIONS" &&
+    /^\/api\/projects\/[^/]+\/transcript\/?$/.test(request.nextUrl.pathname)
+  );
+}
+
 export default clerkMiddleware(async (auth, request) => {
+  if (isTranscriptPreflight(request)) return;
+
   // Signed-in users skip the marketing page. This lives here (not in the
   // page via auth()) so the landing page stays fully static and CDN-served;
   // middleware runs before the cache, so the redirect still always fires.

@@ -1,8 +1,20 @@
 import { useState, useEffect } from "react";
-import { X, Video, FileVideo2, FileText, Download, Loader2, Info } from "lucide-react";
+import { X, Video, FileVideo2, FileText, FileJson, Captions, Download, Loader2, Info } from "lucide-react";
 import { cn } from "@repo/ui";
 
-export type ExportFormat = "mp4" | "fcpxml" | "cmx3600" | "xmeml";
+export type ExportFormat =
+  | "mp4"
+  | "fcpxml"
+  | "cmx3600"
+  | "xmeml"
+  | "transcript"
+  | "subtitles";
+
+/**
+ * Subtitle flavour. SRT is the one everything reads; WebVTT keeps each word's
+ * own timing, which SRT has no way to express.
+ */
+export type SubtitleFormat = "srt" | "vtt";
 export type ExportResolution = "source" | 1080 | 720;
 
 interface ExportModalProps {
@@ -12,8 +24,18 @@ interface ExportModalProps {
   onExportFcpxml: () => void;
   onExportCmx3600: () => void;
   onExportXmeml: () => void;
+  onExportTranscript: () => void;
+  onExportSubtitles: (format: SubtitleFormat) => void;
   exportBlockedReason?: string;
   exportFormatBlockedReason?: string;
+  /**
+   * Why the timed transcript is unavailable, or undefined when it is ready.
+   * Separate from `exportFormatBlockedReason` because the transcript is gated
+   * on one condition only — the source frame rate being known (spec
+   * _root/0001, AC-8). A project with nothing kept still exports a valid, empty
+   * transcript; deciding what to do with an empty one belongs downstream.
+   */
+  transcriptBlockedReason?: string;
   busy: boolean;
 }
 
@@ -24,12 +46,16 @@ export function ExportModal({
   onExportFcpxml,
   onExportCmx3600,
   onExportXmeml,
+  onExportTranscript,
+  onExportSubtitles,
   exportBlockedReason,
   exportFormatBlockedReason,
+  transcriptBlockedReason,
   busy,
 }: ExportModalProps) {
   const [format, setFormat] = useState<ExportFormat>("mp4");
   const [resolution, setResolution] = useState<ExportResolution>("source");
+  const [subtitleFormat, setSubtitleFormat] = useState<SubtitleFormat>("srt");
 
   useEffect(() => {
     if (!isOpen) return;
@@ -54,11 +80,21 @@ export function ExportModal({
     } else if (format === "xmeml") {
       onExportXmeml();
       onClose(); // Close immediately for synchronous exports
+    } else if (format === "transcript") {
+      onExportTranscript();
+      onClose(); // Close immediately for synchronous exports
+    } else if (format === "subtitles") {
+      onExportSubtitles(subtitleFormat);
+      onClose(); // Close immediately for synchronous exports
     }
   };
 
   const currentBlockedReason =
-    format === "mp4" ? exportBlockedReason : exportFormatBlockedReason;
+    format === "mp4"
+      ? exportBlockedReason
+      : format === "transcript" || format === "subtitles"
+        ? transcriptBlockedReason
+        : exportFormatBlockedReason;
   const isCurrentFormatDisabled = Boolean(currentBlockedReason);
 
   return (
@@ -161,8 +197,76 @@ export function ExportModal({
                   <div className="text-xs text-foreground/50 mt-0.5">.fcpxml timeline</div>
                 </div>
               </button>
+
+              <button
+                onClick={() => setFormat("transcript")}
+                className={cn(
+                  "flex flex-col items-start gap-2 rounded-xl border p-3 text-left transition-all",
+                  format === "transcript"
+                    ? "border-violet-500 bg-violet-500/10 ring-1 ring-violet-500"
+                    : "border-foreground/10 hover:border-foreground/30 hover:bg-foreground/5",
+                  transcriptBlockedReason ? "opacity-50" : ""
+                )}
+              >
+                <div className={cn("rounded-lg p-2", format === "transcript" ? "bg-violet-500 text-white" : "bg-foreground/10 text-foreground/60")}>
+                  <FileJson className="h-4 w-4" />
+                </div>
+                <div>
+                  <div className={cn("text-sm font-medium", format === "transcript" ? "text-violet-500" : "text-foreground")}>Timed transcript</div>
+                  <div className="text-xs text-foreground/50 mt-0.5">.json, timed to your cut</div>
+                </div>
+              </button>
+
+              <button
+                onClick={() => setFormat("subtitles")}
+                className={cn(
+                  "flex flex-col items-start gap-2 rounded-xl border p-3 text-left transition-all",
+                  format === "subtitles"
+                    ? "border-rose-500 bg-rose-500/10 ring-1 ring-rose-500"
+                    : "border-foreground/10 hover:border-foreground/30 hover:bg-foreground/5",
+                  transcriptBlockedReason ? "opacity-50" : ""
+                )}
+              >
+                <div className={cn("rounded-lg p-2", format === "subtitles" ? "bg-rose-500 text-white" : "bg-foreground/10 text-foreground/60")}>
+                  <Captions className="h-4 w-4" />
+                </div>
+                <div>
+                  <div className={cn("text-sm font-medium", format === "subtitles" ? "text-rose-500" : "text-foreground")}>Subtitles</div>
+                  <div className="text-xs text-foreground/50 mt-0.5">.srt or .vtt captions</div>
+                </div>
+              </button>
             </div>
           </div>
+
+          {format === "subtitles" && (
+            <div className="mb-2 space-y-3">
+              <h3 className="text-sm font-semibold text-foreground/80">Subtitle Format</h3>
+              <div className="flex gap-2">
+                {(["srt", "vtt"] as const).map((option) => (
+                  <button
+                    key={option}
+                    onClick={() => setSubtitleFormat(option)}
+                    className={cn(
+                      "flex-1 rounded-lg border py-2.5 text-sm font-medium transition-all",
+                      subtitleFormat === option
+                        ? "border-rose-500 bg-rose-500 text-white"
+                        : "border-foreground/10 bg-transparent text-foreground hover:bg-foreground/5"
+                    )}
+                  >
+                    {option === "srt" ? "SubRip (.srt)" : "WebVTT (.vtt)"}
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-foreground/50 mt-2">
+                {subtitleFormat === "srt"
+                  ? "Read by everything. One caption per line of speech."
+                  : "Keeps each word's own timing, which .srt cannot store."}
+              </p>
+              <p className="text-xs text-foreground/50">
+                Timed to your final cut, so it lines up with the exported video.
+              </p>
+            </div>
+          )}
 
           {format === "mp4" && (
             <div className="mb-2 space-y-3">

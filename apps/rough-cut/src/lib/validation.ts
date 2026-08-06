@@ -8,6 +8,7 @@
  * reject absurd or malicious payloads, not to constrain legitimate use.
  */
 import { z } from "zod";
+import { videoFpsSchema } from "@repo/transcript/document";
 
 // Matches TranscriptWord in lib/edl.ts.
 const transcriptWordSchema = z.object({
@@ -97,6 +98,13 @@ export const patchProjectSchema = z.strictObject({
    * Only ever sent alongside `transcript` carrying the refined words.
    */
   wordsAligned: z.boolean().optional(),
+  /**
+   * The source video's detected frame rate, sent once by the browser after
+   * `detectVideoFps` resolves on reselect (spec _root/0001, AC-7). Validated
+   * against `@repo/transcript`'s own schema so the wire shape and the stored
+   * shape have exactly one definition.
+   */
+  sourceFps: videoFpsSchema.nullable().optional(),
   durationMs: durationMsSchema.nullable().optional(),
   fileName: z.string().min(1).max(500).optional(),
   fileSize: z.number().min(0).max(100 * 1024 * 1024 * 1024).nullable().optional(),

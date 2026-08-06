@@ -52,6 +52,20 @@ import { buildXmeml } from "@/lib/export/xmeml";
 import { sanitizeFilename, stripExtension } from "@/lib/export/filename";
 import { hasExportableRanges } from "@/lib/export/plan";
 import { type VideoFps } from "@/lib/export/timebase";
+import {
+  buildProjectTranscriptDocument,
+  transcriptFilename,
+  subtitleFilename,
+} from "@/lib/export/transcript-document";
+import {
+  serializeTranscriptDocument,
+  toSrt,
+  toVtt,
+  TRANSCRIPT_MEDIA_TYPE,
+  SRT_MEDIA_TYPE,
+  VTT_MEDIA_TYPE,
+} from "@repo/transcript";
+import type { SubtitleFormat } from "@/components/export-modal";
 import { detectVideoFps } from "@/lib/detect-frame-rate";
 import { detectEmbeddedTimecodeOffset } from "@/lib/detect-embedded-timecode";
 import { downloadTextFile } from "@/lib/download-text-file";
@@ -126,6 +140,15 @@ interface Project {
   aiCutRuns: AiCutRun[];
   /** Whether the word-boundary refinement pass has completed once (spec 0003). */
   wordsAligned: boolean;
+  /**
+   * The detected source frame rate as stored, an exact rational split across
+   * two columns (spec _root/0001). Null on any project not reselected since
+   * that shipped. The editor reads its own `sourceFps` from session state, not
+   * from here — these are what the server needs so the transcript route has a
+   * timebase without a source file in hand.
+   */
+  sourceFpsNum: number | null;
+  sourceFpsDen: number | null;
 }
 
 const MIN_TRANSCRIPT_W = 300;
@@ -1385,6 +1408,45 @@ export default function EditorPage() {
     }
   }, [sourceFile, edl, project, handleCancelExport, exportMaxHeight]);
 
+  // Make the detected frame rate durable (spec _root/0001, AC-7). Until now it
+  // lived only in this tab's state and vanished on reload, which is fine for
+  // the interchange exports (they run in the browser, with the source file in
+  // hand) but not for the transcript route b-roll calls: that runs on the
+  // server, has no source file, and must never serve a document without a
+  // timebase. Written once per project — a no-op when the stored rational
+  // already matches, so a reselect of the same file doesn't churn `updated_at`
+  // and 409 the next autosave for nothing.
+  const persistSourceFps = useCallback(
+    async (fps: VideoFps) => {
+      const stored = projectRef.current;
+      if (
+        stored?.sourceFpsNum === fps.numerator &&
+        stored?.sourceFpsDen === fps.denominator
+      ) {
+        return;
+      }
+      setProject((prev) =>
+        prev
+          ? { ...prev, sourceFpsNum: fps.numerator, sourceFpsDen: fps.denominator }
+          : prev
+      );
+      try {
+        await fetch(`/api/projects/${id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sourceFps: fps }),
+        });
+      } catch (error) {
+        // Best-effort, like the word-alignment write above: a failed PATCH
+        // leaves the columns null, the transcript route keeps refusing with
+        // its reselect message, and the next reselect tries again. Nothing in
+        // this tab depends on the write having landed.
+        console.warn("Failed to persist the detected source frame rate:", error);
+      }
+    },
+    [id]
+  );
+
   // Detect the reselected source's real frame rate, then its embedded start
   // timecode (if any) at that rate, so interchange exports emit frame-
   // accurate, correctly-offset timecode — DaVinci Resolve's strict Media
@@ -1402,6 +1464,7 @@ export default function EditorPage() {
       // there's no point detecting the timecode offset without one — and no
       // DEFAULT_FPS guess is ever fed into an export.
       if (!fps) return;
+      persistSourceFps(fps);
       detectEmbeddedTimecodeOffset(sourceFile, fps).then((offset) => {
         if (!cancelled) setSourceTimecodeOffset(offset);
       });
@@ -1409,7 +1472,7 @@ export default function EditorPage() {
     return () => {
       cancelled = true;
     };
-  }, [sourceFile]);
+  }, [sourceFile, persistSourceFps]);
 
   // Builds an FCPXML / CMX 3600 EDL / FCP7 XML file describing the current
   // EDL's kept segments and downloads it directly — no WebCodecs, no save
@@ -1502,6 +1565,79 @@ export default function EditorPage() {
       description: "Import it in Premiere Pro and relink your source file.",
     });
   }, [edl, project, videoMeta, sourceFps, sourceTimecodeOffset]);
+
+  // The timed transcript (spec _root/0001): the same document b-roll fetches
+  // from `GET /api/projects/:id/transcript`, built by the same builder, so the
+  // download and the route can never describe the cut differently. Gated on
+  // the real frame rate for the same reason the interchange exports are — a
+  // transcript without a timebase is a set of timecodes nobody can trust.
+  const handleExportTranscript = useCallback(() => {
+    if (!sourceFps) {
+      toast.error("Reselect your source video first", {
+        description: "Its frame rate must be known before exporting a transcript.",
+      });
+      return;
+    }
+    if (!edl || !project || !project.transcript) {
+      toast.error("Nothing to export", {
+        description: "This project has no transcript yet.",
+      });
+      return;
+    }
+    const document = buildProjectTranscriptDocument({
+      projectId: project.id,
+      edl,
+      transcript: project.transcript,
+      fps: sourceFps,
+      wordsAligned: project.wordsAligned,
+    });
+    downloadTextFile(
+      serializeTranscriptDocument(document),
+      transcriptFilename(sanitizeFilename(stripExtension(project.fileName))),
+      TRANSCRIPT_MEDIA_TYPE
+    );
+    toast.success("Timed transcript exported", {
+      description: "Its timecodes are relative to your final cut, not the original file.",
+    });
+  }, [edl, project, sourceFps]);
+
+  // Captions, rendered from the same document. Because the document is already
+  // post cut, the file drops straight beside the exported MP4 and lines up with
+  // no re-syncing. SRT is read by everything; WebVTT additionally keeps each
+  // word's own timing, which SRT has no field for.
+  const handleExportSubtitles = useCallback(
+    (subtitleFormat: SubtitleFormat) => {
+      if (!sourceFps) {
+        toast.error("Reselect your source video first", {
+          description: "Its frame rate must be known before exporting subtitles.",
+        });
+        return;
+      }
+      if (!edl || !project || !project.transcript) {
+        toast.error("Nothing to export", {
+          description: "This project has no transcript yet.",
+        });
+        return;
+      }
+      const document = buildProjectTranscriptDocument({
+        projectId: project.id,
+        edl,
+        transcript: project.transcript,
+        fps: sourceFps,
+        wordsAligned: project.wordsAligned,
+      });
+      const isSrt = subtitleFormat === "srt";
+      downloadTextFile(
+        isSrt ? toSrt(document) : toVtt(document),
+        subtitleFilename(sanitizeFilename(stripExtension(project.fileName)), subtitleFormat),
+        isSrt ? SRT_MEDIA_TYPE : VTT_MEDIA_TYPE
+      );
+      toast.success(`${isSrt ? "SubRip" : "WebVTT"} subtitles exported`, {
+        description: "Timed to your final cut, so they line up with the exported video.",
+      });
+    },
+    [edl, project, sourceFps]
+  );
 
   // Warn on tab close/reload only while an export is actively encoding — that's
   // the one state with work worth losing. "starting" has nothing yet, and
@@ -1786,11 +1922,20 @@ export default function EditorPage() {
         onExportFcpxml={handleExportFcpxml}
         onExportCmx3600={handleExportCmx3600}
         onExportXmeml={handleExportXmeml}
+        onExportTranscript={handleExportTranscript}
+        onExportSubtitles={handleExportSubtitles}
         exportFormatBlockedReason={
           !sourceFps
             ? "Reselect your source video to export a timeline — its frame rate isn't known yet."
             : !edl || !hasExportableRanges(edl, sourceFps)
               ? "Nothing to export yet"
+              : undefined
+        }
+        transcriptBlockedReason={
+          !sourceFps
+            ? "Reselect your source video to export a transcript — its frame rate isn't known yet."
+            : !project?.transcript
+              ? "This project has no transcript yet"
               : undefined
         }
       />
@@ -2466,7 +2611,10 @@ function TopBar({
   onExportFcpxml,
   onExportCmx3600,
   onExportXmeml,
+  onExportTranscript,
+  onExportSubtitles,
   exportFormatBlockedReason,
+  transcriptBlockedReason,
 }: {
   fileName: string;
   savedAt: "saved" | "saving";
@@ -2488,8 +2636,14 @@ function TopBar({
   onExportCmx3600?: () => void;
   // Exports the current EDL as an FCP7 XML (xmeml) file for Premiere Pro.
   onExportXmeml?: () => void;
+  // Exports the timed transcript JSON b-roll consumes (spec _root/0001).
+  onExportTranscript?: () => void;
+  // Exports the same document rendered as .srt or .vtt captions.
+  onExportSubtitles?: (format: SubtitleFormat) => void;
   // Non-empty when both format export options should be disabled (no kept EDL yet); doubles as the tooltip.
   exportFormatBlockedReason?: string;
+  // Non-empty when the transcript export is unavailable; doubles as the tooltip.
+  transcriptBlockedReason?: string;
 }) {
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const iconBtn =
@@ -2553,8 +2707,12 @@ function TopBar({
         <button
           type="button"
           onClick={() => setIsExportModalOpen(true)}
-          disabled={exportDisabled && exportFormatDisabled}
-          title={exportDisabled && exportFormatDisabled ? "Export is currently unavailable" : "Export options"}
+          disabled={exportDisabled && exportFormatDisabled && Boolean(transcriptBlockedReason)}
+          title={
+            exportDisabled && exportFormatDisabled && Boolean(transcriptBlockedReason)
+              ? "Export is currently unavailable"
+              : "Export options"
+          }
           className="flex items-center gap-1.5 rounded-lg bg-accent px-4 py-1.5 text-sm font-semibold text-accent-foreground transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:bg-accent/60 disabled:text-accent-foreground/70 disabled:hover:bg-accent/60"
         >
           {busy ? (
@@ -2586,8 +2744,17 @@ function TopBar({
           onExportXmeml?.();
           setIsExportModalOpen(false);
         }}
+        onExportTranscript={() => {
+          onExportTranscript?.();
+          setIsExportModalOpen(false);
+        }}
+        onExportSubtitles={(subtitleFormat) => {
+          onExportSubtitles?.(subtitleFormat);
+          setIsExportModalOpen(false);
+        }}
         exportBlockedReason={exportBlockedReason}
         exportFormatBlockedReason={exportFormatBlockedReason}
+        transcriptBlockedReason={transcriptBlockedReason}
         busy={busy}
       />
     </div>
