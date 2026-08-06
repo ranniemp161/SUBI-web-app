@@ -18,6 +18,7 @@ any, and mark a feature `done` when you decide it is._
 |---|---------|-------|--------|
 | A | Demo only free credits gate | Existing | existing |
 | 1 | USD denominated Wallet | Slice 1 | done |
+| 4 | Transcript contract and `@repo/transcript` | Slice 2 | in-progress |
 | 2 | Auto recharge notification channel | Deferred | planned |
 | 3 | AI Cut differentiated retail rate | Deferred | planned |
 
@@ -53,6 +54,41 @@ ADR [0002](../../adr/_root/0002-usd-wallet/index.md) · code in `packages/db`, `
 The long form build record for this feature, including the `/harden` findings that
 were closed out the same day, is in the frozen roadmap at
 [docs/roadmap/_root/roadmap.md](../../roadmap/_root/roadmap.md).
+
+## Slice 2
+
+### 4. Transcript contract and `@repo/transcript` · in-progress
+
+Enrolled by `/scope` on 2026-08-06, after the fact. The work was driven by b-roll
+and tracked there, but it is ecosystem wide by shape: it creates a **new shared
+package** and migrates the **shared schema**, which is exactly what this scope
+exists to cover. It was invisible here, which is why it is now a row.
+
+**Intent**: One definition of the transcript document that moves between apps, and
+one implementation of the frame arithmetic behind it, so two apps can never round
+the same timecode differently.
+**Done when**: `@repo/transcript` is the only place in the repo that converts time
+to frames, the document has one schema that both validates and types it, and Rough
+Cut can hand a real file to another app.
+
+- [x] Design it (spec) [0001](../../specs/_root/0001-transcript-contract/index.md)
+- [ ] Build it: tracked as **b-roll feature 2's sub boxes**, not repeated here, so
+      there is one place to tick. See
+      [broll/scope.md](../broll/scope.md) · code in
+      [packages/transcript/](../../../packages/transcript/),
+      [packages/db/src/schema.ts](../../../packages/db/src/schema.ts) (migration
+      `0013`, applied to both Neon branches), and
+      [apps/rough-cut/src/lib/export/](../../../apps/rough-cut/src/lib/export/)
+- [ ] Verify it: `/check verify transcript contract` (first pass failed 2026-08-06,
+      see the b-roll row)
+- [ ] Test it: `/test transcript contract`
+
+**Worth knowing before the next shared package:** this one is consumed as raw
+TypeScript, so it compiles under each consuming app's `tsconfig`. Rough Cut targets
+below ES2020, which ruled out `BigInt` inside the package. A future shared package
+inherits the same constraint.
+
+spec [0001](../../specs/_root/0001-transcript-contract/index.md) · status `In Progress`
 
 ## Deferred
 

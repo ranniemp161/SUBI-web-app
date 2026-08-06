@@ -25,7 +25,7 @@ any, and mark a feature `done` when you decide it is._
 | # | Feature | Phase | Status |
 |---|---------|-------|--------|
 | 1 | Spikes: client-side encode + segmentation | Phase 0 | done |
-| 2 | Skeleton: workspace, schema, transcript contract | Phase 1 | planned |
+| 2 | Skeleton: workspace, schema, transcript contract | Phase 1 | in-progress |
 | 3 | Character pipeline | Phase 2 | planned |
 | 4 | Scene planner | Phase 3 | planned |
 | 5 | One template end to end | Phase 4 | planned |
@@ -58,21 +58,73 @@ not code.
 
 ## Phase 1
 
-### 2. Skeleton: workspace, schema, transcript contract · planned
+### 2. Skeleton: workspace, schema, transcript contract · in-progress
 
 **Intent**: Wire `apps/broll` end to end through the shared packages, and build the
 transcript contract that makes the Rough Cut handoff real rather than aspirational.
 **Done when**: a user can create a b-roll project, upload or inherit a transcript,
 and see its parsed segments. No AI yet.
 
-- [ ] Build it: /develop broll skeleton
-  - [ ] Scaffold `apps/broll` on port 3003, Clerk, `env.ts` (AC-7, AC-13)
-  - [ ] Extract `@repo/transcript` — type, parser, and the **hoisted** frame math
-        from rough-cut's `timebase.ts` / `frame-math.ts` (AC-11)
-  - [ ] Build rough-cut's post-EDL word-level transcript JSON export (AC-12)
+- [x] Design it (spec) [_root/0001](../../specs/_root/0001-transcript-contract/index.md).
+      Covers the transcript contract only (the two boxes marked `spec 0001` below).
+      The scaffold and the `broll_*` migration are not governed by it.
+- [ ] Build it: /develop broll skeleton — code in
+      [packages/transcript/](../../../packages/transcript/) and
+      [apps/rough-cut/src/lib/export/](../../../apps/rough-cut/src/lib/export/)
+  - [ ] Scaffold `apps/broll` on port 3003, Clerk, `env.ts` (AC-7, AC-13).
+        **Not started: needs the production domain**, which is the b-roll high
+        level design's open question 4 and is marked blocking Phase 1.
+  - [x] `@repo/transcript`: the package, the frame math moved out of rough-cut
+        behind re-export shims, and the Zod document schema
+        (AC-11; spec 0001 AC-1 to AC-6, AC-14, AC-16)
+  - [x] Frame rate made durable: `projects.source_fps_*` columns, written by the
+        browser at reselect (spec 0001 AC-7). Migration `0013` applied to both
+        Neon branches and verified live.
+  - [x] rough-cut's post-EDL transcript export: the clamp aware collapse, the
+        builder, the export modal entry, and the route b-roll calls
+        (AC-12; spec 0001 AC-8 to AC-13). Verified against ten real projects.
+  - [x] Cross origin preflight fixed (AC-15; spec 0001 AC-15). Found by running
+        the app on 2026-08-06: `proxy.ts` answered every `OPTIONS` with `401`
+        before the route ran, so the preflight handler was unreachable and its
+        unit tests passed only because they called it directly. `proxy.ts` now
+        lets a preflight on this one path through, because a CORS preflight
+        carries no credentials by spec and Clerk can therefore never authorize
+        one. Re driven live: allowed origin `204` with the origin named and
+        credentials allowed, any other origin and a missing origin `403`, `GET`
+        still `401`, and sibling routes plus path tricks
+        (`/transcript/extra`, `/transcript/../../credits`) all still `401`.
+  - [x] Subtitle export (`.srt` and `.vtt`), added on request outside spec 0001.
+        Rendered from the same document, so the captions carry the same post cut
+        timing and drop straight beside the exported MP4. JSON stays the b-roll
+        handoff; the subtitle formats cannot carry the frame rate, the word
+        confidence, or the provenance the planner needs.
   - [ ] Migration: `broll_*` tables, `credit_ledger.broll_project_id` + CHECK,
-        `credit_ledger_reason` values (AC-8, AC-9, AC-10)
-- [ ] Verify it: /check verify broll skeleton
+        `credit_ledger_reason` values (AC-8, AC-9, AC-10). **Not started: the
+        column inventory has no source.** The high level design names the tables
+        and four columns; the companion `broll-generator-spec.md` that defines
+        the rest is not in the repo.
+- [ ] Verify it: /check verify broll skeleton. A runtime pass on 2026-08-06 drove
+      the real server: the auth gate holds, the document path holds (the package
+      was driven through its public export, and ten real projects built clean),
+      and the cross origin preflight now answers correctly after the `proxy.ts`
+      fix above. **Still unverified: the route's success path.** Reaching a `200`
+      needs a real Clerk session, and this repo deliberately keeps its end to end
+      suite signed out because preview and local both talk to the production
+      database. The export modal is unverified for the same reason (it needs sign
+      in plus a local video reselect).
+- [ ] Test it: /test broll skeleton. The pure logic here (frame math, the collapse,
+      the parsers) is exactly what this workspace's Workflow line says carries
+      unit tests, so this box is not optional even at Alpha.
+
+**Decision debt carried by this feature** (all from spec 0001's own follow up
+list, none blocking the boxes already ticked):
+
+- The byte cap and the segment count cap are placeholders sized by arithmetic, not
+  measured against a real ten minute transcript. Two named constants in
+  `packages/transcript/src/document.ts`.
+- `verify.md` for the b-roll high level design still states AC-11 in its
+  unbuildable form (it asks a package to import from an app). Spec 0001 records
+  the corrected wording; the older file has not been amended.
 
 **Bigger than the spec implies.** This phase carries a shared package extraction, a
 new export surface in a *different* app, and two shared-schema migrations. Budget
