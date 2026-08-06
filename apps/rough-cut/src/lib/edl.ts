@@ -365,7 +365,25 @@ export function changedSpan(prev: EDL, next: EDL): TimeRange | null {
 }
 
 /**
- * Sweep out cut residue: kept segments sitting between two cuts that contain
+ * Longest wordless cut that a restore is allowed to heal back into the
+ * timeline (see the second rule in `absorbCutResidue`).
+ *
+ * Sized to sit clearly between the two things it has to tell apart. Restore
+ * residue measured on real projects runs from a few milliseconds to about
+ * 215ms. The shortest silence cut the auto pass can produce is bounded from
+ * below: the gap must exceed `silenceGapSeconds` (0.5s at the most aggressive
+ * preset) and is then padded inward by `silencePadSeconds` on each side,
+ * leaving roughly 0.38s. So a quarter second absorbs every residue seen and
+ * still cannot swallow a deliberate silence cut.
+ */
+export const MAX_RESIDUE_SECONDS = 0.25;
+
+/**
+ * Sweep out cut residue in both directions, so an edit heals cleanly instead
+ * of leaving an unselectable sliver behind.
+ *
+ * **Rule one, a wordless keep between two cuts** becomes cut: kept segments
+ * sitting between two cuts that contain
  * no transcript word (a genuine word — even a short one like "yes" — is never
  * absorbed) and aren't protected by a user restore, regardless of duration.
  * A wordless gap flanked by two cuts has nothing spoken left in it, whether
@@ -375,6 +393,18 @@ export function changedSpan(prev: EDL, next: EDL): TimeRange | null {
  * around — either way there's no content left to justify keeping it playable.
  * Each sliver takes its left neighbour's status/reason so mergeAdjacent heals
  * it into that cut.
+ *
+ * **Rule two, a short wordless cut between two keeps** becomes keep. This is
+ * the mirror image, and the case restoring a word hits. A cut made by the AI,
+ * retake, or repetition pass has boundaries that came from that pass, not from
+ * the word grid, so restoring a word at the edge of one leaves a fragment of
+ * the old cut with no speech left in it — a few frames the timeline shows as
+ * its own unselectable clip. Rule one cannot reach it: the shape is inverted.
+ *
+ * Unlike rule one this **is** duration gated, and has to be. A deliberate
+ * silence cut is also wordless and also sits between two keeps; the only thing
+ * telling them apart is size, hence `MAX_RESIDUE_SECONDS`. A cut holding any
+ * word is never touched at any size, so cutting a short word stays cut.
  *
  * `span` bounds the sweep to where the triggering edit landed (see
  * changedSpan): only slivers overlapping it are touched, so a tiny keep the
@@ -392,23 +422,33 @@ export function absorbCutResidue(
   let changed = false;
 
   const result = segs.map((seg, i) => {
-    if (seg.status !== "keep") return seg;
     if (span && (seg.end <= span.start || seg.start >= span.end)) return seg;
     const left = segs[i - 1];
     const right = segs[i + 1];
-    if (left?.status !== "cut" || right?.status !== "cut") return seg;
-    // A sliver with real speech in it is never absorbed, at any duration —
-    // only a wordless gap flanked by two cuts (nothing spoken left in it once
-    // both neighbors are cut) is unambiguous residue, so MAX_RESIDUE_SECONDS
-    // doesn't gate that case either.
+    // A sliver with real speech in it is never absorbed, in either direction
+    // and at any duration.
     const hasWord = clean.some((w) => w.start < seg.end && w.end > seg.start);
     if (hasWord) return seg;
-    const isProtected = (edl.protectedKeeps ?? []).some(
-      (r) => r.start < seg.end && r.end > seg.start
-    );
-    if (isProtected) return seg;
+
+    if (seg.status === "keep") {
+      if (left?.status !== "cut" || right?.status !== "cut") return seg;
+      // Rule one is not duration gated: a wordless gap with cuts on both sides
+      // has nothing spoken left in it whatever its length.
+      const isProtected = (edl.protectedKeeps ?? []).some(
+        (r) => r.start < seg.end && r.end > seg.start
+      );
+      if (isProtected) return seg;
+      changed = true;
+      return { ...seg, status: "cut" as const, reason: left.reason, split: undefined };
+    }
+
+    // Rule two: a short wordless cut stranded between two keeps.
+    if (left?.status !== "keep" || right?.status !== "keep") return seg;
+    if (seg.end - seg.start > MAX_RESIDUE_SECONDS) return seg;
     changed = true;
-    return { ...seg, status: "cut" as const, reason: left.reason, split: undefined };
+    // reason null so it heals seamlessly into its neighbours, the same way a
+    // restored span does, rather than leaving a labelled boundary behind.
+    return { ...seg, status: "keep" as const, reason: null, split: undefined };
   });
 
   return changed ? { ...edl, segments: mergeAdjacent(result) } : edl;
