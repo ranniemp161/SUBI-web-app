@@ -32,6 +32,7 @@ any, and mark a feature `done` when you decide it is._
 | 2 | Transcript and Timeline Live Sync | Slice 8 | in-progress |
 | 3 | Word Boundary Timestamp Refinement | Slice 8 | done |
 | 4 | Frame Accuracy and Timeline Synchrony | Slice 9 | in-progress |
+| 5 | Timed transcript and subtitle export | Slice 10 | in-progress |
 
 ## Existing
 
@@ -184,6 +185,40 @@ ADR [0004](../../adr/rough-cut/0004-reselect-gated-pipeline/index.md) · code in
   - [x] Frame accurate step controls: step forward/back one frame, repurposing `,`/`.`, confirmed by `requestVideoFrameCallback` where supported, with a regression pass on continuous playback (AC-11 to AC-16)
 - [ ] Verify it: /check verify Frame Accuracy and Timeline Synchrony (blocked 2026-07-24 — no browser-automation tool or sample video in session; all five command checks passed, the real-browser UI/manual steps in verify.md still need a live pass)
 - [x] Test it: /test Frame Accuracy and Timeline Synchrony — `frame-math.test.ts`, `video-player.test.tsx`, `export-modal.test.tsx`, `timeline-bar.test.tsx`, `shortcuts-overlay.test.tsx` cover the feature's whole area, all passing
+
+## Slice 10
+
+### 5. Timed transcript and subtitle export · in-progress
+
+Enrolled by `/scope` on 2026-08-06, after the fact. This shipped into Rough Cut but
+was tracked only under b-roll, so this scope understated what the app now does. The
+export surface and the new API route are Rough Cut's, and they are user facing.
+
+**Intent**: Let a finished cut leave Rough Cut as timing, not just as video: a
+timed transcript another app can plan against, and captions a creator can ship.
+**Done when**: the export dialog offers a timed transcript and subtitle files
+alongside the video and the three NLE formats, every timecode is relative to the
+final cut rather than the original file, and another app can fetch the same
+document over an authorized route.
+
+- [x] Design it (spec) [_root/0001](../../specs/_root/0001-transcript-contract/index.md)
+- [ ] Build it: tracked as **b-roll feature 2's sub boxes**, not repeated here, so
+      there is one place to tick. See [broll/scope.md](../broll/scope.md) · code in
+      `src/lib/export/transcript-collapse.ts`, `src/lib/export/transcript-document.ts`,
+      `src/app/api/projects/[id]/transcript/route.ts`, `src/components/export-modal.tsx`
+- [ ] Verify it: `/check verify timed transcript and subtitle export` (first pass
+      failed 2026-08-06 on the cross origin path, see the b-roll row)
+- [ ] Test it: `/test timed transcript and subtitle export`
+
+Three formats out, one document behind them: JSON carries everything (word timings,
+the exact frame rate, provenance), WebVTT keeps the word grid, SRT keeps only the
+cue text. Long segments split into readable caption cues at real word boundaries,
+never at invented ones.
+
+**Note for whoever touches `timebase.ts` or `frame-math.ts` next:** both are now one
+line re-export shims. The real code moved to `@repo/transcript`. The key files table
+in `apps/rough-cut/AGENTS.md` still describes them as if they hold the arithmetic,
+which stays accurate only while the shims do. `/sync` should reconcile that line.
 
 ## Deferred
 

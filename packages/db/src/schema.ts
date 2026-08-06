@@ -136,6 +136,21 @@ export const projects = pgTable("projects", {
    * picks up refinement on its next reselect.
    */
   wordsAligned: boolean("words_aligned").notNull().default(false),
+  /**
+   * The source video's detected frame rate as an exact rational, so NTSC
+   * 29.97 stays 30000/1001 and long-timeline timecode never drifts (spec
+   * _root/0001, AC-7). Written by the browser when the user reselects the
+   * source file and `detectVideoFps` resolves.
+   *
+   * Rough Cut itself does not read these — it already has the rate in session
+   * state. They exist so the rate survives the tab: the transcript route
+   * (`GET /api/projects/:id/transcript`, which B-Roll calls) runs on the
+   * server with no source file in hand, and a transcript without a timebase is
+   * a transcript whose timecodes cannot be trusted. NULL on every project not
+   * reselected since this shipped, and the route refuses rather than guessing.
+   */
+  sourceFpsNum: integer("source_fps_num"),
+  sourceFpsDen: integer("source_fps_den"),
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
     .notNull(),

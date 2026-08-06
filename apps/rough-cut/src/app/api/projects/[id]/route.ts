@@ -104,6 +104,7 @@ export async function PATCH(
       baseUpdatedAt,
       transcript,
       wordsAligned,
+      sourceFps,
       durationMs,
       fileName,
       fileSize,
@@ -135,6 +136,12 @@ export async function PATCH(
     }
     if (transcript !== undefined) updateData.transcript = transcript;
     if (wordsAligned !== undefined) updateData.wordsAligned = wordsAligned;
+    // Stored as its two integer parts so the rational stays exact — 29.97 is
+    // 30000/1001, and a float column would round it into timecode drift.
+    if (sourceFps !== undefined) {
+      updateData.sourceFpsNum = sourceFps?.numerator ?? null;
+      updateData.sourceFpsDen = sourceFps?.denominator ?? null;
+    }
     if (durationMs !== undefined) updateData.durationMs = durationMs;
     if (fileName !== undefined) updateData.fileName = fileName;
     if (fileSize !== undefined) updateData.fileSize = fileSize;

@@ -21,6 +21,7 @@
     "@radix-ui/react-select": "^2.3.7",
     "@repo/db": "*",
     "@repo/server-shared": "*",
+    "@repo/transcript": "*",
     "@repo/ui": "*",
     "@sentry/nextjs": "^10.69.0",
     "@upstash/ratelimit": "^2.0.8",
