@@ -29,7 +29,7 @@ _Steps derived from ADR 0002 acceptance criteria (slice-2 set: AC-5, AC-6, AC-7)
 - [ ] Repeat declines to the cap (default 3) → `autorecharge_enabled` flips to `false`, a "disabled" notice logged; balance is then allowed to reach $0 and a new spend gates on the CHECK (child-0001 hard stop) → AC-7
 
 ## Commands
-- [ ] `curl -H "Authorization: Bearer $CRON_SECRET" http://localhost:3001/api/cron/autorecharge` → JSON `{swept,charged,declined,capped,errored}`
+- [ ] `curl -H "Authorization: Bearer $CRON_SECRET" http://localhost:3001/api/cron/autorecharge` → JSON `{swept,processed,remaining,charged,declined,capped,skipped,errored}`. `remaining > 0` means the run hit its time budget with candidates left; it is also reported to Sentry.
 - [ ] `npm -w wallet run typecheck` → 0 errors (already green at build)
 
 ## Acceptance-criteria coverage
