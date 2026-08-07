@@ -1,6 +1,6 @@
 import { auth } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
-import { getAuthorizedDbUser } from "@/lib/authz";
+import { getAuthorizedDbUser } from "@repo/server-shared/authz";
 import { db } from "@repo/db";
 import { creditLedger, projects } from "@repo/db/schema";
 import { eq, desc } from "drizzle-orm";

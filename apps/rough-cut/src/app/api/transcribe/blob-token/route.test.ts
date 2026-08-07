@@ -15,7 +15,7 @@ vi.mock("@clerk/nextjs/server", () => ({
   auth: vi.fn(async () => ({ userId: state.clerkId })),
 }));
 
-vi.mock("@/lib/authz", () => ({
+vi.mock("@repo/server-shared/authz", () => ({
   getAuthorizedDbUser: vi.fn(async () =>
     state.accessOk ? { id: "db-user-1", balanceMicros: state.balanceMicros } : null
   ),

@@ -13,7 +13,7 @@ vi.mock("@/lib/stripe", () => ({
   }),
 }));
 
-vi.mock("@/lib/ip-rate-limit", () => ({
+vi.mock("@repo/server-shared/ip-rate-limit", () => ({
   ipRateLimit: vi.fn(async () => ({
     allowed: state.rateAllowed,
     remaining: state.rateAllowed ? 59 : 0,
@@ -25,7 +25,7 @@ vi.mock("@/lib/observability", () => ({ reportError: vi.fn() }));
 
 import { GET } from "./route";
 import { getBundles } from "@/lib/stripe";
-import { ipRateLimit } from "@/lib/ip-rate-limit";
+import { ipRateLimit } from "@repo/server-shared/ip-rate-limit";
 
 function req(ip = "203.0.113.9") {
   return new Request("http://localhost/api/billing/bundles", {

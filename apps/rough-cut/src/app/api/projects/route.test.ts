@@ -15,7 +15,7 @@ vi.mock("@clerk/nextjs/server", () => ({
   auth: vi.fn(async () => ({ userId: state.clerkId })),
 }));
 
-vi.mock("@/lib/authz", () => ({
+vi.mock("@repo/server-shared/authz", () => ({
   getAuthorizedDbUser: vi.fn(async () => state.authorizedUser),
 }));
 
@@ -82,7 +82,7 @@ vi.mock("@repo/db/schema", () => ({
 
 import { POST, GET } from "./route";
 import { rateLimit, readRateLimit } from "@/lib/rate-limit";
-import { getAuthorizedDbUser } from "@/lib/authz";
+import { getAuthorizedDbUser } from "@repo/server-shared/authz";
 
 function postRequest(body: unknown) {
   return new Request("http://localhost/api/projects", {

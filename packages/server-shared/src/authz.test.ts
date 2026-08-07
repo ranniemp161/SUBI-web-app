@@ -31,13 +31,13 @@ vi.mock("@clerk/nextjs/server", () => ({
   currentUser: currentUserMock,
 }));
 
-vi.mock("@/lib/users", () => ({
+vi.mock("./users", () => ({
   provisionUser: vi.fn(),
   isAllowlistedMember: vi.fn(() => false),
 }));
 
 import { getAuthorizedDbUser } from "./authz";
-import { provisionUser } from "@/lib/users";
+import { provisionUser } from "./users";
 
 describe("getAuthorizedDbUser", () => {
   beforeEach(() => {
@@ -74,7 +74,7 @@ describe("getAuthorizedDbUser", () => {
       ],
     });
     const updatedUser = { ...dbUser, isMember: true };
-    const { isAllowlistedMember } = await import("@/lib/users");
+    const { isAllowlistedMember } = await import("./users");
     vi.mocked(isAllowlistedMember).mockReturnValue(true);
     vi.mocked(provisionUser).mockResolvedValue(updatedUser as unknown as User);
 
@@ -144,5 +144,21 @@ describe("getAuthorizedDbUser", () => {
 
     expect(result).toBeNull();
     expect(provisionUser).not.toHaveBeenCalled();
+  });
+});
+
+// Carried over from apps/wallet's copy of this test, which is now deleted.
+describe("getAuthorizedDbUser — failure propagation", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    currentUserMock.mockResolvedValue(null);
+    selectMock.mockReturnValue({ from: fromMock });
+    fromMock.mockReturnValue({ where: whereMock });
+    whereMock.mockReturnValue({ limit: limitMock });
+  });
+
+  it("throws if the database lookup throws (dependency failure)", async () => {
+    limitMock.mockRejectedValueOnce(new Error("db down"));
+    await expect(getAuthorizedDbUser("clerk_123")).rejects.toThrow("db down");
   });
 });

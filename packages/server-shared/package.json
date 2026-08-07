@@ -7,14 +7,20 @@
   "exports": {
     ".": "./src/index.ts",
     "./observability": "./src/observability.ts",
-    "./rate-limit": "./src/rate-limit.ts"
+    "./rate-limit": "./src/rate-limit.ts",
+    "./ip-rate-limit": "./src/ip-rate-limit.ts",
+    "./authz": "./src/authz.ts",
+    "./users": "./src/users.ts"
   },
   "scripts": {
     "test": "vitest run"
   },
   "dependencies": {
+    "@clerk/nextjs": "^7.6.4",
+    "@repo/db": "*",
     "@sentry/nextjs": "^10.69.0",
     "@upstash/ratelimit": "^2.0.8",
-    "@upstash/redis": "^1.38.1"
+    "@upstash/redis": "^1.38.1",
+    "drizzle-orm": "^0.45.2"
   }
 }

@@ -1,7 +1,7 @@
 import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { getAuthorizedDbUser } from "@/lib/authz";
+import { getAuthorizedDbUser } from "@repo/server-shared/authz";
 import { rateLimit } from "@/lib/rate-limit";
 import { allowedPriceIds, creditMicrosFromPrice, getStripe } from "@/lib/stripe";
 import { reportError } from "@/lib/observability";

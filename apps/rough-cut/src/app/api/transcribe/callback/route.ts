@@ -6,7 +6,7 @@ import { eq } from "drizzle-orm";
 import { normalizeDeepgram } from "@/lib/deepgram";
 import { secondsFromDeepgramDuration, settleHoldQuietly } from "@repo/billing";
 import { reportError } from "@/lib/observability";
-import { ipRateLimit } from "@/lib/ip-rate-limit";
+import { ipRateLimit } from "@repo/server-shared/ip-rate-limit";
 import { deleteBlobQuietly } from "@/lib/blob";
 import { pusherServer, projectChannel } from "@/lib/pusher";
 

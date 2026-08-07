@@ -2,7 +2,7 @@ import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import { pusherServer, projectChannel } from "@/lib/pusher";
 import { getOwnedProject } from "@/lib/projects";
-import { getAuthorizedDbUser } from "@/lib/authz";
+import { getAuthorizedDbUser } from "@repo/server-shared/authz";
 import { rateLimit } from "@/lib/rate-limit";
 
 // Subscriptions re-authorize on every reconnect and the dashboard subscribes

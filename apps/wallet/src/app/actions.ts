@@ -1,7 +1,7 @@
 "use server";
 
 import { auth } from "@clerk/nextjs/server";
-import { getAuthorizedDbUser } from "@/lib/authz";
+import { getAuthorizedDbUser } from "@repo/server-shared/authz";
 import { db } from "@repo/db";
 import { creditLedger, projects } from "@repo/db/schema";
 import { eq, desc, lt, and } from "drizzle-orm";

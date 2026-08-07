@@ -2,7 +2,7 @@ import { auth } from "@clerk/nextjs/server";
 import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
 import { NextResponse } from "next/server";
 import { getOwnedProject } from "@/lib/projects";
-import { getAuthorizedDbUser } from "@/lib/authz";
+import { getAuthorizedDbUser } from "@repo/server-shared/authz";
 import {
   costSecondsForDurationMs,
   chargeMicrosForSeconds,

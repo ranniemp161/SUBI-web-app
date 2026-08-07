@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getBundles } from "@/lib/stripe";
-import { ipRateLimit } from "@/lib/ip-rate-limit";
+import { ipRateLimit } from "@repo/server-shared/ip-rate-limit";
 import { reportError } from "@/lib/observability";
 
 // Legitimate traffic almost never reaches this function (the CDN serves it

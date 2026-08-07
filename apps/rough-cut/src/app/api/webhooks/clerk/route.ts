@@ -1,7 +1,7 @@
 import { Webhook } from "svix";
 import { NextResponse } from "next/server";
-import { provisionUser } from "@/lib/users";
-import { ipRateLimit } from "@/lib/ip-rate-limit";
+import { provisionUser } from "@repo/server-shared/users";
+import { ipRateLimit } from "@repo/server-shared/ip-rate-limit";
 
 // No Clerk session on this request (Clerk itself is calling us), so it's
 // exempt from src/proxy.ts's middleware and per-user limits. The svix
