@@ -8,7 +8,14 @@ import {
   type ProjectSummary,
 } from "@/lib/projects";
 
-export type { ProjectSummary };
+// `ProjectSummary` is deliberately NOT re-exported from here. A "use server"
+// module may export nothing but async functions, and Turbopack's transform
+// takes that literally: it treated a type-only `export type { ProjectSummary }`
+// as a runtime export and emitted `registerServerReference(ProjectSummary, …)`
+// against an identifier that only ever existed in the type system. The module
+// then threw `ReferenceError: ProjectSummary is not defined` on evaluation, so
+// every call to this action answered 500. Import the type from
+// `@/lib/projects`, which is where it lives.
 
 export async function loadMoreProjects(cursor?: string): Promise<{
   data: ProjectSummary[];
