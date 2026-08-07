@@ -39,6 +39,7 @@ import TranscriptPanel from "@/components/transcript-panel";
 import TimelineBar, { type TimelineHandle } from "@/components/timeline-bar";
 import { ShortcutsOverlay } from "@/components/editor/shortcuts-overlay";
 import { WALLET_DASHBOARD_URL } from "@/lib/env";
+import { MAX_PATCH_TRANSCRIPT_WORDS } from "@/lib/transcript-limits";
 import { formatDuration, nearestSorted } from "@/lib/utils";
 import {
   isExportSupported,
@@ -1269,6 +1270,19 @@ export default function EditorPage() {
     );
 
     if (!nextTranscript) return;
+
+    // A transcript past this length can't fit in a request body (see
+    // MAX_PATCH_TRANSCRIPT_WORDS), so don't spend a round trip proving it. The
+    // refinement above still applies to the open editor for this session; only
+    // persistence is skipped. `wordsAligned` deliberately stays false — it
+    // records that the DB copy is unrefined, which is true.
+    if (nextTranscript.words.length > MAX_PATCH_TRANSCRIPT_WORDS) {
+      console.warn(
+        `Skipping word-alignment persistence: ${nextTranscript.words.length} words exceeds the ${MAX_PATCH_TRANSCRIPT_WORDS}-word request-body cap.`
+      );
+      return;
+    }
+
     try {
       await fetch(`/api/projects/${id}`, {
         method: "PATCH",

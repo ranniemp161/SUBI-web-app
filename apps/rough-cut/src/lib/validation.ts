@@ -9,6 +9,10 @@
  */
 import { z } from "zod";
 import { videoFpsSchema } from "@repo/transcript/document";
+import {
+  MAX_PATCH_TRANSCRIPT_TEXT_CHARS,
+  MAX_PATCH_TRANSCRIPT_WORDS,
+} from "./transcript-limits";
 
 // Matches TranscriptWord in lib/edl.ts.
 const transcriptWordSchema = z.object({
@@ -22,10 +26,21 @@ const transcriptWordSchema = z.object({
 // Full transcript blob. Normally written server-side by the transcription
 // routes; validated here in case a client ever sends one back via PATCH.
 export const transcriptSchema = z.object({
-  words: z.array(transcriptWordSchema).max(300_000),
-  text: z.string().max(10_000_000),
+  words: z.array(transcriptWordSchema).max(MAX_PATCH_TRANSCRIPT_WORDS),
+  text: z.string().max(MAX_PATCH_TRANSCRIPT_TEXT_CHARS),
   duration: z.number(),
   language: z.string().max(100).optional(),
+  /**
+   * Deepgram's utterance-boundary end times (ascending).
+   *
+   * Declared because a zod `object` strips what it doesn't declare. Without
+   * this line the word-alignment PATCH round-trips the whole transcript through
+   * this schema and silently drops the boundaries, quietly degrading retake
+   * detection and the subtitle/transcript export to punctuation-only sentence
+   * grouping. The schema now matches `Transcript` in `lib/edl.ts` field for
+   * field; keep it that way.
+   */
+  utteranceEnds: z.array(z.number()).max(MAX_PATCH_TRANSCRIPT_WORDS).optional(),
 });
 
 const sensitivitySchema = z.enum(["aggressive", "balanced", "light"]);
