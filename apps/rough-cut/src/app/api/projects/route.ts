@@ -1,9 +1,9 @@
 import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
-import { db, withDbRetry } from "@repo/db";
-import { projects, users } from "@repo/db/schema";
-import { eq, desc, sql } from "drizzle-orm";
+import { db } from "@repo/db";
+import { projects } from "@repo/db/schema";
 import { getAuthorizedDbUser } from "@repo/server-shared/authz";
+import { findUserIdByClerkId, listProjectPage } from "@/lib/projects";
 import { createProjectSchema } from "@/lib/validation";
 import { rateLimit, readRateLimit } from "@/lib/rate-limit";
 import { reportError } from "@/lib/observability";
@@ -82,11 +82,21 @@ export async function POST(request: Request) {
 }
 
 /**
- * GET /api/projects — List all projects for the authenticated user.
+ * GET /api/projects — one page of the authenticated user's projects, newest
+ * first.
  *
- * Returns projects ordered by creation date (newest first).
+ * `?limit=` (default `PROJECT_PAGE_SIZE`, hard-capped at `MAX_PROJECT_PAGE_SIZE`)
+ * and `?cursor=` (the `X-Next-Cursor` from the previous page). The response body
+ * stays a bare array — the next cursor rides in a header so the shape is
+ * unchanged for any existing caller — and its absence means this is the last
+ * page.
+ *
+ * The dashboard does not use this route; it calls the `loadMoreProjects` server
+ * action, which shares the same `listProjectPage` query. This exists for
+ * machine callers, and is what the e2e smoke test asserts Clerk's gate on. It
+ * used to select every row a user had ever created with no limit at all.
  */
-export async function GET() {
+export async function GET(request: Request) {
   const { userId: clerkId } = await auth();
 
   if (!clerkId) {
@@ -102,44 +112,40 @@ export async function GET() {
       );
     }
 
-    const userRows = await withDbRetry(() =>
-      db
-        .select()
-        .from(users)
-        .where(eq(users.clerkId, clerkId))
-        .limit(1)
-    );
-
-    if (userRows.length === 0) {
+    const userId = await findUserIdByClerkId(clerkId);
+    if (!userId) {
       // User hasn't created any projects yet
       return NextResponse.json([]);
     }
 
-    // List view only needs metadata — omit the transcript + EDL jsonb, which
-    // can be large and aren't rendered on the dashboard grid. `hasEdl` is
-    // presence-only (ADR 0004 child 1): it drives the "Ready for step 2" vs
-    // "Ready" dashboard label without ever selecting the EDL jsonb itself.
-    const userProjects = await withDbRetry(() =>
-      db
-        .select({
-          id: projects.id,
-          fileName: projects.fileName,
-          durationMs: projects.durationMs,
-          transcriptStatus: projects.transcriptStatus,
-          createdAt: projects.createdAt,
-          updatedAt: projects.updatedAt,
-          hasEdl: sql<boolean>`${projects.edl} is not null`,
-        })
-        .from(projects)
-        .where(eq(projects.userId, userRows[0].id))
-        .orderBy(desc(projects.createdAt))
-    );
+    const { searchParams } = new URL(request.url);
+    const rawLimit = searchParams.get("limit");
+    const parsedLimit = rawLimit === null ? undefined : Number(rawLimit);
+    if (parsedLimit !== undefined && !Number.isFinite(parsedLimit)) {
+      return NextResponse.json({ error: "Invalid limit." }, { status: 400 });
+    }
+
+    // List view only needs metadata — the transcript + EDL jsonb are never
+    // selected (see listProjectPage). `hasEdl` is presence-only (ADR 0004
+    // child 1): it drives the "Ready for step 2" vs "Ready" dashboard label
+    // without ever reading the EDL itself.
+    let page;
+    try {
+      page = await listProjectPage(userId, {
+        cursor: searchParams.get("cursor") ?? undefined,
+        limit: parsedLimit,
+      });
+    } catch {
+      // listProjectPage only throws for a cursor we didn't issue.
+      return NextResponse.json({ error: "Invalid cursor." }, { status: 400 });
+    }
 
     // Explicit no-store: per-user project list must never be served stale or
     // shared across users by an intermediary.
-    return NextResponse.json(userProjects, {
-      headers: { "Cache-Control": "no-store" },
-    });
+    const headers: Record<string, string> = { "Cache-Control": "no-store" };
+    if (page.nextCursor) headers["X-Next-Cursor"] = page.nextCursor;
+
+    return NextResponse.json(page.data, { headers });
   } catch (error) {
     reportError("Error listing projects", error);
     return NextResponse.json(
