@@ -1,0 +1,13 @@
+-- Index the dashboard's project-list query (rough-cut `listProjectPage`).
+-- Postgres does not index a foreign-key column automatically, so `projects`
+-- had no index on `user_id` at all and every page was a seq scan plus a sort.
+--
+-- Plain CREATE INDEX, deliberately, NOT CONCURRENTLY: drizzle-kit applies each
+-- migration inside a transaction, and CREATE INDEX CONCURRENTLY cannot run in
+-- one. This takes a SHARE lock (blocks writes to `projects`, allows reads) for
+-- the length of the build, which is milliseconds at this table's size. If
+-- `projects` ever grows large enough for that pause to matter, take this
+-- statement out of the migration and run it CONCURRENTLY by hand instead.
+--
+-- Additive and backward compatible: already-deployed code simply doesn't use it.
+CREATE INDEX "projects_user_created_idx" ON "projects" USING btree ("user_id","created_at");
