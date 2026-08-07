@@ -62,6 +62,10 @@ npm run db:studio     # browse the DB
 - `credit_ledger` is append-only; `stripeEventId` is unique and doubles as the
   Stripe webhook idempotency key; one `grant`-reason row per user per
   `monthKey` is enforced by a partial unique index.
+- Every statement that mutates a balance lives in `@repo/billing`, never in an
+  app. The ledger row and the cached balance move together inside one statement
+  there, which is what makes the `CHECK` above enough without transactions. See
+  `packages/billing/AGENTS.md`.
 - The Neon HTTP driver is stateless per request (no pool). `withDbRetry` in
   `src/index.ts` retries only connection-establishment failures (regex-matched
   in `RETRYABLE`), never a failure after a query may have committed.

@@ -13,7 +13,7 @@ tooltip wrapper), both reusable across apps.
 | `src/styles/theme.css` | Shared design tokens: base palette (`--background`/`--foreground`), fonts, dark mode, and the keyboard focus-visible ring. Single source of truth for the theme. |
 | `src/index.ts` | `cn()` — merges class names (clsx) and de-conflicts Tailwind utilities (tailwind-merge). Exports `ConfirmDialog` component. |
 | `src/confirm-dialog.tsx` | Radix AlertDialog wrapper — controlled blocking confirm dialog for the ecosystem. Built for exit-flow confirmations (ADR 0003 child 3), styled with shared tokens only, reusable by any app without app-specific token pull-in. |
-| `src/money.ts` | Shared USD micros math: `MICROS_PER_USD`, `RETAIL_MICROS_PER_MINUTE` (83,333, the $19/60min entry bundle rate), `chargeMicrosForSeconds`, `formatUsd`. Pure and dependency free so server billing and client components share one source; the server may override the rate via `RETAIL_MICROS_PER_MINUTE`. |
+| `src/money.ts` | Client side USD micros math: `MICROS_PER_USD`, `RETAIL_MICROS_PER_MINUTE` (83,333, the $19/60min entry bundle rate), `chargeMicrosForSeconds`, `formatUsd`. Pure and dependency free, so a client component can use it without pulling in a database client. **It no longer backs server billing.** `@repo/billing/pricing` owns the rate the server actually charges at and carries its own copy of this constant, so a price change has to be made in both places until the two are collapsed. |
 | `src/tooltip.tsx` | Radix tooltip wrapper, 300ms open delay. Wrap a toolbar in one `TooltipProvider` so the group opens instantly once warm. |
 
 ## Conventions
