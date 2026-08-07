@@ -36,7 +36,7 @@ spends tokens and deep-links to Wallet to buy more.
 
 ## Commands
 ```bash
-npm -w @repo/rough-cut dev        # next dev --webpack -p 3000 (port pinned)
+npm -w @repo/rough-cut dev        # next dev -p 3000 (port pinned, Turbopack — same as the build)
 npm -w @repo/rough-cut test       # vitest run
 npm -w @repo/rough-cut typecheck
 ```
