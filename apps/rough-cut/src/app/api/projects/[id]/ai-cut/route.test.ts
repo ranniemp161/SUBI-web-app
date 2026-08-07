@@ -66,7 +66,7 @@ vi.mock("@/lib/ai-rough-cut", () => ({
 
 vi.mock("@/lib/observability", () => ({ reportError: vi.fn() }));
 
-vi.mock("@/lib/credits", () => ({
+vi.mock("@repo/billing", () => ({
   costSecondsForDurationMs: (durationMs: number | null | undefined) =>
     durationMs ? Math.ceil(durationMs / 1000) : 60,
   chargeAiCut: vi.fn(async (userId: string, projectId: string, costSeconds: number) => {
@@ -81,7 +81,7 @@ vi.mock("@/lib/credits", () => ({
 import { POST } from "./route";
 import { aiCutRateLimit } from "@/lib/rate-limit";
 import { runAiRoughCut } from "@/lib/ai-rough-cut";
-import { chargeAiCut, refundAiCut } from "@/lib/credits";
+import { chargeAiCut, refundAiCut } from "@repo/billing";
 import { countAiCutRuns, createAiCutRun } from "@/lib/projects";
 
 const VALID_ID = "12345678-1234-1234-1234-123456789abc";

@@ -5,7 +5,7 @@ import {
   paymentMethodFromSession,
   AUTORECHARGE_KIND,
 } from "@/lib/stripe";
-import { depositPurchase } from "@/lib/credits";
+import { depositPurchase } from "@repo/billing";
 import {
   depositAutoRecharge,
   setStripeCustomerId,

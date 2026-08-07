@@ -4,7 +4,7 @@ import { db } from "@repo/db";
 import { projects } from "@repo/db/schema";
 import { and, eq, sql } from "drizzle-orm";
 import { getOwnedProject, listAiCutRuns } from "@/lib/projects";
-import { settleHold } from "@/lib/credits";
+import { settleHold } from "@repo/billing";
 import { patchProjectSchema } from "@/lib/validation";
 import { readRateLimit } from "@/lib/rate-limit";
 import { reportError } from "@/lib/observability";

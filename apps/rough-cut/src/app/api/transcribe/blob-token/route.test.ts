@@ -33,7 +33,7 @@ vi.mock("@/lib/projects", () => ({
   getOwnedProject: vi.fn(async () => state.ownedProject),
 }));
 
-vi.mock("@/lib/credits", () => ({
+vi.mock("@repo/billing", () => ({
   costSecondsForDurationMs: vi.fn((ms: number) => ms ? Math.ceil(ms / 1000) : 0),
   RETAIL_MICROS_PER_MINUTE: 83_333,
   chargeMicrosForSeconds: vi.fn((seconds: number) =>

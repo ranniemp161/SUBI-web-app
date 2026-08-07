@@ -11,7 +11,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import Stripe from "stripe";
 
-vi.mock("@/lib/credits", () => ({
+vi.mock("@repo/billing", () => ({
   depositPurchase: vi.fn(async () => true),
 }));
 vi.mock("@/lib/autorecharge", () => ({
@@ -27,7 +27,7 @@ vi.mock("@/lib/observability", () => ({
 }));
 
 import { POST } from "./route";
-import { depositPurchase } from "@/lib/credits";
+import { depositPurchase } from "@repo/billing";
 
 const REAL_SECRET = "whsec_real_test_secret_do_not_use_in_prod";
 const OTHER_SECRET = "whsec_a_different_secret";

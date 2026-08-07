@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@clerk/nextjs": "^7.6.4",
+    "@repo/billing": "*",
     "@repo/db": "*",
     "@repo/server-shared": "*",
     "@repo/ui": "*",

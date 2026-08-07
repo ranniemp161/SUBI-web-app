@@ -64,7 +64,7 @@ vi.mock("@/lib/deepgram", () => ({
   normalizeDeepgram: vi.fn(() => ({ words: [], text: "hello", duration: 1 })),
 }));
 
-vi.mock("@/lib/credits", () => ({
+vi.mock("@repo/billing", () => ({
   secondsFromDeepgramDuration: vi.fn((d: number | null | undefined) =>
     d && d > 0 ? Math.max(1, Math.ceil(d)) : null
   ),

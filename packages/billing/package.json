@@ -1,0 +1,20 @@
+{
+  "name": "@repo/billing",
+  "version": "0.1.0",
+  "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./pricing": "./src/pricing.ts",
+    "./ledger": "./src/ledger.ts"
+  },
+  "scripts": {
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@repo/db": "*",
+    "@repo/server-shared": "*",
+    "drizzle-orm": "^0.45.2"
+  }
+}

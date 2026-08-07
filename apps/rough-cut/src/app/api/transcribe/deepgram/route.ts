@@ -15,7 +15,7 @@ import {
   secondsFromDeepgramDuration,
   settleHoldQuietly,
   STALE_HOLD_MS,
-} from "@/lib/credits";
+} from "@repo/billing";
 import { rateLimit } from "@/lib/rate-limit";
 import { reportError } from "@/lib/observability";
 import { deleteBlobQuietly, isOwnBlobUrl } from "@/lib/blob";
@@ -131,7 +131,7 @@ export async function POST(request: Request) {
 
   // Credits: top up the member grant if a new month started, then atomically
   // reserve this job's cost (charged now, trued up against Deepgram's
-  // authoritative duration when the transcript lands — see lib/credits.ts).
+  // authoritative duration when the transcript lands — see @repo/billing).
   await ensureMonthlyGrant(user.id, memberGrantMicros());
 
   const costSeconds = costSecondsForDurationMs(project.durationMs);

@@ -13,7 +13,7 @@ spends tokens and deep-links to Wallet to buy more.
 |---|---|
 | `src/proxy.ts` | Clerk auth middleware + the public-route allowlist (routes that bypass session auth: transcribe callback, Clerk webhook, cron) — also redirects signed-in users from `/` to `/dashboard` so the landing page stays static. Separately, a **CORS preflight** (`OPTIONS`) on `/api/projects/:id/transcript` skips the session gate: a preflight carries no cookies by spec, so Clerk always 401s it, and the browser then never sends the real request. The route's own `OPTIONS` handler answers it and 403s any origin but the named one |
 | `src/lib/env.ts` | Validated cross-app URLs (`WALLET_URL`, `WALLET_DASHBOARD_URL`, `BROLL_URL`) — the only place allowed to read `NEXT_PUBLIC_*` cross-app vars; throws at import time in production if unset/still-localhost. `BROLL_URL` is the one exception: **optional**, resolving to `null` in production when unset, because b-roll has no production domain yet. Null means no cross-origin caller is authorized on the transcript route — never a wildcard |
-| `src/lib/credits.ts` | Token hold/settle/refund logic against `@repo/db`'s credit ledger |
+| `@repo/billing` (not in this app) | Hold/settle/refund/charge logic against `@repo/db`'s credit ledger. Used to be `src/lib/credits.ts`; it is deleted — this app imports the shared package and must never re-implement a ledger statement locally. See `packages/billing/AGENTS.md` |
 | `src/lib/rate-limit.ts` | App-specific buckets (`readRateLimit`, `aiCutRateLimit`) wrapping `@repo/server-shared`'s fixed-window limiter, Upstash Redis (Vercel KV) backed — **not** Postgres (`rate_limits` table was dropped, see `packages/db` migration `0001`) |
 | `src/lib/ip-rate-limit.ts` | Per-IP limiter for the 3 routes in `proxy.ts`'s public list (no session to key on) |
 | `src/lib/deepgram.ts`, `src/lib/ai-rough-cut.ts`, `src/lib/ai-cuts.ts` | Transcription + AI cut-suggestion pipeline |
@@ -81,7 +81,7 @@ npm -w @repo/rough-cut typecheck
   AI Cut runs) use conditional-UPDATE holds to prevent concurrent double-spends.
   The pattern: a request claims an exclusive hold via an UPDATE that matches only
   when the column is empty (or stale), and a losing concurrent call gets zero rows
-  and returns early. See `reserveCredits` (lib/credits.ts, `hold_micros IS NULL`
+  and returns early. See `reserveCredits` (`@repo/billing`, `hold_micros IS NULL`
   gate) and `claimAiCutSlot` (lib/projects.ts, `ai_cut_claim_at` timestamp claim). On any
   failure after the hold, call the corresponding release function to unlock.
 - **Observability**: Sentry (`@sentry/nextjs`) is wired but env-gated —

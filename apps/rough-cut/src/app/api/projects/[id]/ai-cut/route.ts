@@ -10,7 +10,7 @@ import {
 } from "@/lib/projects";
 import { aiCutRateLimit, rateLimit } from "@/lib/rate-limit";
 import { runAiRoughCut, isAiRoughCutConfigured, type AiCutPhase } from "@/lib/ai-rough-cut";
-import { chargeAiCut, costSecondsForDurationMs, refundAiCut } from "@/lib/credits";
+import { chargeAiCut, costSecondsForDurationMs, refundAiCut } from "@repo/billing";
 import { reportError } from "@/lib/observability";
 import type { Transcript } from "@/lib/edl";
 

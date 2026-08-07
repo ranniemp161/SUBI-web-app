@@ -4,7 +4,7 @@ import { db } from "@repo/db";
 import { projects } from "@repo/db/schema";
 import { eq } from "drizzle-orm";
 import { normalizeDeepgram } from "@/lib/deepgram";
-import { secondsFromDeepgramDuration, settleHoldQuietly } from "@/lib/credits";
+import { secondsFromDeepgramDuration, settleHoldQuietly } from "@repo/billing";
 import { reportError } from "@/lib/observability";
 import { ipRateLimit } from "@/lib/ip-rate-limit";
 import { deleteBlobQuietly } from "@/lib/blob";

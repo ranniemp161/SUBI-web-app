@@ -35,7 +35,7 @@ vi.mock("@/lib/stripe", () => ({
   AUTORECHARGE_KIND: "auto_recharge",
 }));
 
-vi.mock("@/lib/credits", () => ({
+vi.mock("@repo/billing", () => ({
   depositPurchase: vi.fn(async (userId: string, creditMicros: number, eventId: string) => {
     if (state.depositError) throw new Error("db down");
     state.deposits.push({ userId, creditMicros, eventId });
@@ -75,7 +75,7 @@ vi.mock("@/lib/observability", () => ({
 
 import { POST } from "./route";
 import { rateLimit } from "@/lib/rate-limit";
-import { depositPurchase } from "@/lib/credits";
+import { depositPurchase } from "@repo/billing";
 
 function req({ signature = "sig_test", ip = "203.0.113.9" } = {}) {
   return new Request("http://localhost/api/webhooks/stripe", {
