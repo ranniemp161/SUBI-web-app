@@ -2,7 +2,7 @@
 
 import { useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { MICROS_PER_USD } from "@repo/ui";
+import { MICROS_PER_USD } from "@repo/billing/pricing";
 import type { SavedCard } from "@/lib/stripe";
 import { AddCardForm } from "./add-card-form";
 

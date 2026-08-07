@@ -2,10 +2,16 @@
 
 ## Overview
 Thin shared UI package for the SUBI ecosystem (ADR `0001`, revised decision 6).
-Holds the design-system tokens shared by every app, a `cn()` class helper, the
-shared USD micros money helpers, and the shared components: `ConfirmDialog` (a
-Radix AlertDialog wrapper built for ADR 0003 child 3) and `Tooltip` (a Radix
-tooltip wrapper), both reusable across apps.
+Holds the design-system tokens shared by every app, a `cn()` class helper, and
+the shared components: `ConfirmDialog` (a Radix AlertDialog wrapper built for
+ADR 0003 child 3) and `Tooltip` (a Radix tooltip wrapper), both reusable across
+apps.
+
+**Money helpers are not here anymore.** `MICROS_PER_USD`,
+`RETAIL_MICROS_PER_MINUTE`, `chargeMicrosForSeconds`, and `formatUsd` moved to
+`@repo/billing/pricing`, so the rate the server charges at and the rate the
+client displays are one constant. Import that subpath directly from a client
+component; never the `@repo/billing` barrel, which reaches the database.
 
 ## Key files
 | File | Owns |
@@ -13,7 +19,6 @@ tooltip wrapper), both reusable across apps.
 | `src/styles/theme.css` | Shared design tokens: base palette (`--background`/`--foreground`), fonts, dark mode, and the keyboard focus-visible ring. Single source of truth for the theme. |
 | `src/index.ts` | `cn()` — merges class names (clsx) and de-conflicts Tailwind utilities (tailwind-merge). Exports `ConfirmDialog` component. |
 | `src/confirm-dialog.tsx` | Radix AlertDialog wrapper — controlled blocking confirm dialog for the ecosystem. Built for exit-flow confirmations (ADR 0003 child 3), styled with shared tokens only, reusable by any app without app-specific token pull-in. |
-| `src/money.ts` | Client side USD micros math: `MICROS_PER_USD`, `RETAIL_MICROS_PER_MINUTE` (83,333, the $19/60min entry bundle rate), `chargeMicrosForSeconds`, `formatUsd`. Pure and dependency free, so a client component can use it without pulling in a database client. **It no longer backs server billing.** `@repo/billing/pricing` owns the rate the server actually charges at and carries its own copy of this constant, so a price change has to be made in both places until the two are collapsed. |
 | `src/tooltip.tsx` | Radix tooltip wrapper, 300ms open delay. Wrap a toolbar in one `TooltipProvider` so the group opens instantly once warm. |
 
 ## Conventions

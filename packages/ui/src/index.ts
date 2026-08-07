@@ -1,12 +1,10 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 
-export {
-  MICROS_PER_USD,
-  RETAIL_MICROS_PER_MINUTE,
-  chargeMicrosForSeconds,
-  formatUsd,
-} from "./money";
+// Money helpers used to live here. They are in `@repo/billing/pricing` now —
+// one definition of what a minute costs, shared by the server that charges for
+// it and the client that displays it. Import that subpath directly (not the
+// `@repo/billing` barrel, which reaches the database).
 
 export { ConfirmDialog, type ConfirmDialogProps } from "./confirm-dialog";
 

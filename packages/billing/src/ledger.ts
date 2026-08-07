@@ -1,3 +1,8 @@
+// Hard stop against this file reaching a browser bundle. The `@repo/billing`
+// barrel re-exports it, so a client component that reaches for `formatUsd` or
+// the retail rate from the barrel instead of `@repo/billing/pricing` would drag
+// the Neon driver in with it. That is a build error now, not a silent 200KB.
+import "server-only";
 import { sql } from "drizzle-orm";
 import { db } from "@repo/db";
 import { reportError } from "@repo/server-shared/observability";

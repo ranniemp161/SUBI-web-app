@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { WALLET_DASHBOARD_URL } from "@/lib/env";
-import { formatUsd, chargeMicrosForSeconds } from "@repo/ui";
+import { formatUsd, chargeMicrosForSeconds } from "@repo/billing/pricing";
 
 export interface CreditsInfo {
   balanceMicros: number;

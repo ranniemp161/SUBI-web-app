@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { MICROS_PER_USD } from "@repo/ui";
+import { MICROS_PER_USD } from "@repo/billing/pricing";
 
 interface Bundle {
   priceId: string;

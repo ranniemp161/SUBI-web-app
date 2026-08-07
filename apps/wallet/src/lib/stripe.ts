@@ -1,5 +1,5 @@
 import Stripe from "stripe";
-import { chargeMicrosForSeconds } from "@repo/ui";
+import { chargeMicrosForSeconds } from "@repo/billing/pricing";
 import { reportError } from "@/lib/observability";
 
 /**

@@ -1,6 +1,6 @@
 "use client";
 
-import { formatUsd, RETAIL_MICROS_PER_MINUTE } from "@repo/ui";
+import { formatUsd, RETAIL_MICROS_PER_MINUTE } from "@repo/billing/pricing";
 
 interface BalanceHeroProps {
   balanceMicros: number;

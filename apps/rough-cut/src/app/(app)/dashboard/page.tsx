@@ -8,7 +8,7 @@ import FilePicker, { type VideoMetadata } from "@/components/file-picker";
 import ProgressRing from "@/components/progress-ring";
 import { loadMoreProjects } from "@/app/actions";
 import { WALLET_DASHBOARD_URL } from "@/lib/env";
-import { formatUsd, chargeMicrosForSeconds } from "@repo/ui";
+import { formatUsd, chargeMicrosForSeconds } from "@repo/billing/pricing";
 import { formatDuration, formatDate } from "@/lib/utils";
 import { extractAudioForTranscription } from "@/lib/audio-extract";
 import { uploadPathnameForProject } from "@/lib/blob-path";
