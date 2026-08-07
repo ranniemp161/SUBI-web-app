@@ -1,7 +1,127 @@
-import { sql, eq, and } from "drizzle-orm";
+import { sql, eq, and, desc } from "drizzle-orm";
 import { db, withDbRetry } from "@repo/db";
 import { projects, users } from "@repo/db/schema";
 import type { AiCutRange, AiCutRun } from "@/lib/ai-cuts";
+
+/** A project row as the dashboard grid renders it — no transcript, no EDL. */
+export interface ProjectSummary {
+  id: string;
+  fileName: string;
+  durationMs: number | null;
+  transcriptStatus: "idle" | "processing" | "ready" | "failed";
+  hasEdl: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/** Projects per page in the dashboard grid. */
+export const PROJECT_PAGE_SIZE = 12;
+
+/** Hard ceiling on a caller-supplied page size, so the list can't go unbounded. */
+export const MAX_PROJECT_PAGE_SIZE = 100;
+
+/**
+ * The exact shape of a cursor we issue: an ISO-8601 UTC timestamp carrying
+ * microseconds, then the row id. Both halves are needed — see `listProjectPage`.
+ */
+const CURSOR_PATTERN =
+  /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z)\|([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+
+/**
+ * Decode a cursor into its two keyset parts, or null when the string isn't one
+ * we issued.
+ *
+ * A malformed cursor must be an error, never a silent restart from page one: a
+ * "load more" that quietly re-serves the first page loops forever instead of
+ * failing visibly.
+ */
+export function parseProjectCursor(
+  cursor: string
+): { createdAt: string; id: string } | null {
+  const match = CURSOR_PATTERN.exec(cursor);
+  return match ? { createdAt: match[1], id: match[2] } : null;
+}
+
+/**
+ * One page of a user's projects, newest first, by keyset (not OFFSET, which
+ * skips or repeats rows when a project is created mid-scroll).
+ *
+ * Two details this depends on, both of which were wrong before:
+ *
+ * 1. **The cursor carries microseconds.** `created_at` comes back through the
+ *    driver as a JS `Date`, which is millisecond-precision, while Postgres
+ *    stores microseconds. A cursor built from that `Date` was already truncated,
+ *    so `created_at < cursor` also excluded any row created in the *same
+ *    millisecond* but microseconds earlier — those rows were silently dropped
+ *    from the list and never appeared on any page. The cursor is therefore
+ *    formatted in SQL, at full precision, rather than from the returned `Date`.
+ * 2. **The key is `(created_at, id)`, not `created_at` alone.** Timestamps are
+ *    not unique, so a tie at a page boundary needs a deterministic tiebreak, and
+ *    the ORDER BY has to match the comparison for the keyset to be sound.
+ */
+export async function listProjectPage(
+  userId: string,
+  options: { cursor?: string; limit?: number } = {}
+): Promise<{ data: ProjectSummary[]; nextCursor?: string }> {
+  const limit = Math.min(
+    Math.max(1, Math.floor(options.limit ?? PROJECT_PAGE_SIZE)),
+    MAX_PROJECT_PAGE_SIZE
+  );
+
+  const conditions = [eq(projects.userId, userId)];
+  if (options.cursor) {
+    const parsed = parseProjectCursor(options.cursor);
+    if (!parsed) throw new Error("Invalid project cursor.");
+    conditions.push(
+      sql`(${projects.createdAt}, ${projects.id}) < (${parsed.createdAt}::timestamptz, ${parsed.id}::uuid)`
+    );
+  }
+
+  const rows = await withDbRetry(() =>
+    db
+      .select({
+        id: projects.id,
+        fileName: projects.fileName,
+        durationMs: projects.durationMs,
+        transcriptStatus: projects.transcriptStatus,
+        createdAt: projects.createdAt,
+        updatedAt: projects.updatedAt,
+        hasEdl: sql<boolean>`${projects.edl} is not null`,
+        // Formatted in SQL so the cursor keeps the microseconds the driver's
+        // Date would drop. Never returned to the caller.
+        cursorKey: sql<string>`to_char(${projects.createdAt} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
+      })
+      .from(projects)
+      .where(and(...conditions))
+      .orderBy(desc(projects.createdAt), desc(projects.id))
+      .limit(limit)
+  );
+
+  // Built explicitly rather than by destructuring `cursorKey` away, so the
+  // internal key can never leak into the response by accident.
+  const data: ProjectSummary[] = rows.map((row) => ({
+    id: row.id,
+    fileName: row.fileName,
+    durationMs: row.durationMs,
+    transcriptStatus: row.transcriptStatus,
+    hasEdl: row.hasEdl,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  }));
+  const last = rows[rows.length - 1];
+  const nextCursor =
+    rows.length === limit && last ? `${last.cursorKey}|${last.id}` : undefined;
+
+  return { data, nextCursor };
+}
+
+/** Resolve the internal user id for a Clerk id, or null if not provisioned. */
+export async function findUserIdByClerkId(clerkId: string): Promise<string | null> {
+  const rows = await withDbRetry(() =>
+    db.select({ id: users.id }).from(users).where(eq(users.clerkId, clerkId)).limit(1)
+  );
+  return rows[0]?.id ?? null;
+}
 
 /**
  * Get a project and verify ownership.

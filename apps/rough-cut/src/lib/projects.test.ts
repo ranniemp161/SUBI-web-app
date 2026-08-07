@@ -34,6 +34,10 @@ import {
   deleteAiCutRunAndRenumber,
   renameAiCutRun,
   AI_CUT_CLAIM_STALE_MS,
+  parseProjectCursor,
+  listProjectPage,
+  PROJECT_PAGE_SIZE,
+  MAX_PROJECT_PAGE_SIZE,
 } from "@/lib/projects";
 
 /**
@@ -284,5 +288,114 @@ describe("renameAiCutRun", () => {
     executeMock.mockResolvedValue({ rows: [] });
     const result = await renameAiCutRun("p1", "missing", "x");
     expect(result).toBeNull();
+  });
+});
+
+describe("parseProjectCursor", () => {
+  const VALID = "2026-08-07T11:24:52.123456Z|12345678-1234-1234-1234-123456789abc";
+
+  it("splits a cursor we issued into its timestamp and id", () => {
+    expect(parseProjectCursor(VALID)).toEqual({
+      createdAt: "2026-08-07T11:24:52.123456Z",
+      id: "12345678-1234-1234-1234-123456789abc",
+    });
+  });
+
+  it("rejects anything we did not issue, rather than coercing it", () => {
+    // A malformed cursor must be an error, never a silent restart at page one:
+    // a "load more" that re-serves the first page loops forever.
+    expect(parseProjectCursor("")).toBeNull();
+    expect(parseProjectCursor("garbage")).toBeNull();
+    // Millisecond precision — the old, truncated format. Rejected on purpose.
+    expect(
+      parseProjectCursor("2026-08-07T11:24:52.123Z|12345678-1234-1234-1234-123456789abc")
+    ).toBeNull();
+    // Timestamp with no id half: no tiebreak, so not a usable keyset.
+    expect(parseProjectCursor("2026-08-07T11:24:52.123456Z")).toBeNull();
+    // Id that isn't a uuid — would blow up the ::uuid cast in the query.
+    expect(parseProjectCursor("2026-08-07T11:24:52.123456Z|not-a-uuid")).toBeNull();
+  });
+});
+
+describe("listProjectPage", () => {
+  const PAGE = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      id: `p${i}`,
+      fileName: "a.mp4",
+      durationMs: null,
+      transcriptStatus: "ready",
+      createdAt: new Date("2026-08-07T11:24:52.123Z"),
+      updatedAt: new Date("2026-08-07T11:24:52.123Z"),
+      hasEdl: false,
+      cursorKey: `2026-08-07T11:24:52.12345${i}Z`,
+    }));
+
+  let orderByMock: ReturnType<typeof vi.fn>;
+  let pageLimitMock: ReturnType<typeof vi.fn>;
+  let rows: Record<string, unknown>[];
+
+  beforeEach(() => {
+    rows = [];
+    pageLimitMock = vi.fn(async () => rows);
+    orderByMock = vi.fn(() => ({ limit: pageLimitMock }));
+    selectMock.mockReturnValue({
+      from: vi.fn(() => ({ where: vi.fn(() => ({ orderBy: orderByMock })) })),
+    });
+  });
+
+  it("caps a caller-supplied limit at MAX_PROJECT_PAGE_SIZE", async () => {
+    await listProjectPage("user-1", { limit: 10_000 });
+    expect(pageLimitMock).toHaveBeenCalledWith(MAX_PROJECT_PAGE_SIZE);
+  });
+
+  it("floors a limit below 1 to a single row", async () => {
+    await listProjectPage("user-1", { limit: 0 });
+    expect(pageLimitMock).toHaveBeenCalledWith(1);
+  });
+
+  it("uses the default page size when no limit is given", async () => {
+    await listProjectPage("user-1");
+    expect(pageLimitMock).toHaveBeenCalledWith(PROJECT_PAGE_SIZE);
+  });
+
+  it("orders by (created_at, id) so a timestamp tie has a deterministic tiebreak", async () => {
+    await listProjectPage("user-1");
+    // Both keys must be in the ORDER BY, and in that order, or the keyset
+    // comparison below it is unsound.
+    expect(orderByMock).toHaveBeenCalledTimes(1);
+    expect(orderByMock.mock.calls[0]).toHaveLength(2);
+  });
+
+  it("builds the next cursor from the SQL-formatted key, not the truncated Date", async () => {
+    // The driver hands back a millisecond-precision Date while Postgres stores
+    // microseconds. A cursor built from that Date also excluded rows created in
+    // the same millisecond but microseconds earlier — they vanished from every
+    // page. cursorKey keeps the microseconds.
+    rows = PAGE(PROJECT_PAGE_SIZE);
+    const { nextCursor } = await listProjectPage("user-1");
+    const last = rows[rows.length - 1];
+    expect(nextCursor).toBe(`${last.cursorKey}|${last.id}`);
+    expect(nextCursor).not.toContain(".123Z");
+  });
+
+  it("omits the cursor on a short page (the last one)", async () => {
+    rows = PAGE(PROJECT_PAGE_SIZE - 1);
+    const { nextCursor } = await listProjectPage("user-1");
+    expect(nextCursor).toBeUndefined();
+  });
+
+  it("never leaks the internal cursor key into the returned rows", async () => {
+    rows = PAGE(3);
+    const { data } = await listProjectPage("user-1");
+    expect(data).toHaveLength(3);
+    for (const project of data) {
+      expect(project).not.toHaveProperty("cursorKey");
+    }
+  });
+
+  it("throws on a cursor it did not issue instead of silently ignoring it", async () => {
+    await expect(listProjectPage("user-1", { cursor: "garbage" })).rejects.toThrow(
+      /Invalid project cursor/
+    );
   });
 });

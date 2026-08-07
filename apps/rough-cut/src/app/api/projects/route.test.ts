@@ -9,6 +9,22 @@ const state = vi.hoisted(() => ({
   insertValuesCalls: [] as unknown[][],
   userRows: [] as Record<string, unknown>[],
   listedProjects: [] as Record<string, unknown>[],
+  nextCursor: undefined as string | undefined,
+  listThrows: false,
+  listCalls: [] as Array<{ userId: string; options: unknown }>,
+}));
+
+// The page query itself is exercised directly in lib/projects.test.ts; here the
+// route's job is auth, rate limiting, parameter handling, and the cursor header.
+vi.mock("@/lib/projects", () => ({
+  findUserIdByClerkId: vi.fn(async () =>
+    state.userRows.length > 0 ? (state.userRows[0].id as string) : null
+  ),
+  listProjectPage: vi.fn(async (userId: string, options: unknown) => {
+    state.listCalls.push({ userId, options });
+    if (state.listThrows) throw new Error("Invalid project cursor.");
+    return { data: state.listedProjects, nextCursor: state.nextCursor };
+  }),
 }));
 
 vi.mock("@clerk/nextjs/server", () => ({
@@ -101,6 +117,9 @@ beforeEach(() => {
   state.insertValuesCalls = [];
   state.userRows = [];
   state.listedProjects = [];
+  state.nextCursor = undefined;
+  state.listThrows = false;
+  state.listCalls = [];
   vi.clearAllMocks();
 
   returningMock.mockImplementation(async () => state.insertedRows);
@@ -209,16 +228,20 @@ describe("POST /api/projects", () => {
   });
 });
 
+function getRequest(query = "") {
+  return new Request(`http://localhost/api/projects${query}`);
+}
+
 describe("GET /api/projects", () => {
   it("returns 401 when unauthenticated", async () => {
-    const res = await GET();
+    const res = await GET(getRequest());
     expect(res.status).toBe(401);
   });
 
   it("returns 429 when the read rate limit is exceeded", async () => {
     state.clerkId = "clerk_1";
     state.readRateAllowed = false;
-    const res = await GET();
+    const res = await GET(getRequest());
     expect(res.status).toBe(429);
     expect(readRateLimit).toHaveBeenCalledWith("clerk_1");
   });
@@ -226,7 +249,7 @@ describe("GET /api/projects", () => {
   it("returns an empty array when the user has no db row yet", async () => {
     state.clerkId = "clerk_1";
     state.userRows = [];
-    const res = await GET();
+    const res = await GET(getRequest());
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual([]);
   });
@@ -238,7 +261,7 @@ describe("GET /api/projects", () => {
       { id: "p2", fileName: "b.mp4", transcriptStatus: "ready" },
       { id: "p1", fileName: "a.mp4", transcriptStatus: "processing" },
     ];
-    const res = await GET();
+    const res = await GET(getRequest());
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual(state.listedProjects);
   });
@@ -250,9 +273,57 @@ describe("GET /api/projects", () => {
       { id: "p1", fileName: "a.mp4", transcriptStatus: "ready", hasEdl: false },
       { id: "p2", fileName: "b.mp4", transcriptStatus: "ready", hasEdl: true },
     ];
-    const res = await GET();
+    const res = await GET(getRequest());
     const body = await res.json();
     expect(body[0].hasEdl).toBe(false);
     expect(body[1].hasEdl).toBe(true);
+  });
+});
+
+// This route used to select every row a user had ever created, with no limit.
+describe("GET /api/projects — paging", () => {
+  beforeEach(() => {
+    state.clerkId = "clerk_1";
+    state.userRows = [{ id: "user-1" }];
+  });
+
+  it("passes the cursor and limit through to the page query", async () => {
+    await GET(getRequest("?cursor=abc&limit=25"));
+    expect(state.listCalls).toEqual([
+      { userId: "user-1", options: { cursor: "abc", limit: 25 } },
+    ]);
+  });
+
+  it("asks for the default page when no params are given", async () => {
+    await GET(getRequest());
+    expect(state.listCalls).toEqual([
+      { userId: "user-1", options: { cursor: undefined, limit: undefined } },
+    ]);
+  });
+
+  it("advertises the next page in X-Next-Cursor, keeping the body a bare array", async () => {
+    state.listedProjects = [{ id: "p1" }];
+    state.nextCursor = "2026-08-07T11:24:52.123456Z|abc";
+    const res = await GET(getRequest());
+    expect(res.headers.get("X-Next-Cursor")).toBe("2026-08-07T11:24:52.123456Z|abc");
+    expect(Array.isArray(await res.json())).toBe(true);
+  });
+
+  it("omits X-Next-Cursor on the last page", async () => {
+    state.listedProjects = [{ id: "p1" }];
+    state.nextCursor = undefined;
+    const res = await GET(getRequest());
+    expect(res.headers.get("X-Next-Cursor")).toBeNull();
+  });
+
+  it("400s on a cursor it did not issue, rather than silently restarting at page one", async () => {
+    state.listThrows = true;
+    const res = await GET(getRequest("?cursor=garbage"));
+    expect(res.status).toBe(400);
+  });
+
+  it("400s on a non-numeric limit", async () => {
+    const res = await GET(getRequest("?limit=abc"));
+    expect(res.status).toBe(400);
   });
 });
