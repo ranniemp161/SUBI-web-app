@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo, useTransition } from "react";
-import { formatUsd } from "@repo/ui";
+import { formatUsd } from "@repo/billing/pricing";
 import { Scissors, FileText, Plus, Loader2, RefreshCcw, Banknote, DollarSign } from "lucide-react";
 import { loadMoreTransactions } from "../actions";
 

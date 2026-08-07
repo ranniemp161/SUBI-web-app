@@ -16,8 +16,8 @@ was dead code that no test covered. **Do not re-implement any of this app-side.*
 
 | File | Owns |
 |---|---|
-| `src/pricing.ts` | Rates, metering, and conversions — pure, no database, safe to import anywhere. `RETAIL_MICROS_PER_MINUTE` (env-overridable), `chargeMicrosForSeconds`, the per-second cost estimates that populate `credit_ledger.cost_micros`, hold sizing (`costSecondsForDurationMs`, `secondsFromDeepgramDuration`), and the member grant helpers. |
-| `src/ledger.ts` | Every statement that moves money: `reserveCredits`, `reclaimStaleHold`, `settleHold`/`settleHoldQuietly`, `depositPurchase`, `chargeAiCut`, `refundAiCut`, `ensureMonthlyGrant`. Server-only (needs `@repo/db`). |
+| `src/pricing.ts` | Rates, metering, conversions, and display — pure, no imports at all, safe in a client bundle. `MICROS_PER_USD`, `RETAIL_MICROS_PER_MINUTE` (env-overridable), `chargeMicrosForSeconds`, `formatUsd`, the per-second cost estimates that populate `credit_ledger.cost_micros`, hold sizing (`costSecondsForDurationMs`, `secondsFromDeepgramDuration`), and the member grant helpers. |
+| `src/ledger.ts` | Every statement that moves money: `reserveCredits`, `reclaimStaleHold`, `settleHold`/`settleHoldQuietly`, `depositPurchase`, `chargeAiCut`, `refundAiCut`, `ensureMonthlyGrant`. Server-only, enforced by an `import "server-only"` at the top. |
 | `src/index.ts` | Barrel re-exporting both, for the common server-side case. |
 
 ## Conventions
@@ -43,9 +43,18 @@ was dead code that no test covered. **Do not re-implement any of this app-side.*
 - **Exactly-once settling** rests on the UPDATE's re-checked qual: only the call
   that flips `hold_micros` to NULL produces ledger and balance effects; a racing
   second call matches zero rows and every downstream CTE is empty.
+- **A client component imports `@repo/billing/pricing`, never `@repo/billing`.**
+  The barrel re-exports `ledger.ts`, so reaching through it for `formatUsd` or
+  the retail rate would pull the Neon driver into the browser bundle. `ledger.ts`
+  carries `import "server-only"` to make that a build error rather than a silent
+  200KB, the same guard `apps/rough-cut/src/lib/blob.ts` uses.
+- **The retail rate is one constant, shared by the server that charges it and
+  the client that shows it.** Client-side uses are advisory only: the env
+  override carries no `NEXT_PUBLIC_` prefix, so the browser always resolves to
+  `DEFAULT_RETAIL_MICROS_PER_MINUTE`. A pre-flight "you probably can't afford
+  this" hint is fine; the charge itself is always computed in `ledger.ts`.
 - Import via the package exports, not deep relative paths: `@repo/billing`,
-  `@repo/billing/pricing`, `@repo/billing/ledger`. Use `@repo/billing/pricing`
-  anywhere a database client must not be pulled in.
+  `@repo/billing/pricing`, `@repo/billing/ledger`.
 - No build step — consumed as TypeScript source directly (workspace package),
   same pattern as `packages/server-shared` and `packages/ui`.
 
@@ -58,10 +67,11 @@ was dead code that no test covered. **Do not re-implement any of this app-side.*
   life of the process. It is also **not** in `turbo.json`'s `build` env list, so
   a `next build` sees `undefined` and compiles against the default — see the
   root `AGENTS.md` note about env vars that a Vercel build cannot see.
-- **`@repo/ui` still carries its own copy of the retail rate** for the client's
-  advisory pre-flight checks (`packages/ui/src/money.ts`). Collapsing the two
-  onto this package is a queued follow-up; until then, a price change has to be
-  made in both places.
+- **Vitest has no `react-server` condition**, so the `server-only` import in
+  `ledger.ts` would hit that package's throwing default export in tests. Every
+  config that loads this package aliases it to the no-op `empty.js`: this
+  package's own `vitest.config.ts`, plus `apps/rough-cut` and `apps/wallet`. A
+  new consumer with tests needs the same alias.
 - `chargeAiCut` returning zero rows means two different things: with an
   idempotency key it is a retry that lost the `ON CONFLICT` race (already
   charged, treat as success); without one it is a genuinely missing user row

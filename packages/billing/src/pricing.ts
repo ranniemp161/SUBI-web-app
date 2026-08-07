@@ -1,21 +1,24 @@
 /**
- * Rates, metering, and the conversions between them — the pure half of billing.
+ * Rates, metering, and the conversions between them — the pure half of billing,
+ * and the ecosystem's only definition of what a minute of service costs.
  *
- * Nothing here touches the database, so it is safe to import from anywhere
- * (including a client component). The statements that actually move money live
- * in `./ledger`.
+ * Nothing here imports anything, so this module is safe to pull into a client
+ * component. **Import it by its own subpath** (`@repo/billing/pricing`), never
+ * through the `@repo/billing` barrel: the barrel also re-exports `./ledger`,
+ * which reaches the database, and bundling that into the browser is both a
+ * mistake and a build error (see the `server-only` guard there).
  *
  * Money is integer USD micros everywhere (1,000,000 = $1); it becomes a
- * human "$X.XX" string only at the display edge.
+ * human "$X.XX" string only at the display edge, via `formatUsd`, and is never
+ * rounded in storage or math.
  */
+
+/** 1,000,000 micros = $1. */
+export const MICROS_PER_USD = 1_000_000;
 
 /**
  * Retail rate default: how many USD micros one minute of service costs.
  * Derived from the entry bundle ($19 buys ~60 min => 19,000,000 / 60).
- *
- * NOTE: `@repo/ui` still carries its own copy of this constant for the
- * client's advisory pre-flight checks. Collapsing the two is the next
- * refactor — see the follow-up on the shared-billing work.
  */
 export const DEFAULT_RETAIL_MICROS_PER_MINUTE = 83_333;
 
@@ -23,14 +26,36 @@ export const DEFAULT_RETAIL_MICROS_PER_MINUTE = 83_333;
  * Retail rate in force, from the RETAIL_MICROS_PER_MINUTE env var (so the
  * client can retune pricing without a redeploy), falling back to the default
  * above. Prices are config, not code.
+ *
+ * On the server this is the real rate. In the browser the env var is not
+ * exposed (it carries no NEXT_PUBLIC_ prefix, deliberately — a retail rate is
+ * not a client secret but it is not client business either), so this resolves
+ * to the default. That is why every client-side use of it is advisory: a
+ * pre-flight "you probably can't afford this" hint, never the charge. The
+ * charge is always computed server-side, in `./ledger`.
  */
 export const RETAIL_MICROS_PER_MINUTE =
   Number(process.env.RETAIL_MICROS_PER_MINUTE) ||
   DEFAULT_RETAIL_MICROS_PER_MINUTE;
 
-/** USD micros to charge for a number of billable seconds, at the retail rate. */
-export function chargeMicrosForSeconds(seconds: number): number {
-  return Math.round((seconds * RETAIL_MICROS_PER_MINUTE) / 60);
+/**
+ * USD micros to charge for a number of billable seconds, at the retail rate.
+ * `ratePerMinute` is overridable so a caller can price against a rate other
+ * than the one in force (bundle math, "what would this cost at $X" previews).
+ */
+export function chargeMicrosForSeconds(
+  seconds: number,
+  ratePerMinute: number = RETAIL_MICROS_PER_MINUTE
+): number {
+  return Math.round((seconds * ratePerMinute) / 60);
+}
+
+/** Format USD micros as a "$X.XX" string (e.g. 19_000_000 -> "$19.00"). */
+export function formatUsd(micros: number): string {
+  return (micros / MICROS_PER_USD).toLocaleString("en-US", {
+    style: "currency",
+    currency: "USD",
+  });
 }
 
 /**

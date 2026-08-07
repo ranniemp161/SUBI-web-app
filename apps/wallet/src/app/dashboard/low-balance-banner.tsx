@@ -1,6 +1,6 @@
 "use client";
 
-import { formatUsd, RETAIL_MICROS_PER_MINUTE, chargeMicrosForSeconds } from "@repo/ui";
+import { formatUsd, RETAIL_MICROS_PER_MINUTE, chargeMicrosForSeconds } from "@repo/billing/pricing";
 
 interface LowBalanceBannerProps {
   balanceMicros: number;
