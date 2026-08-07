@@ -29,7 +29,7 @@ vi.mock("@/lib/authz", () => ({
   getAuthorizedDbUser: vi.fn(async () => state.dbUser),
 }));
 
-vi.mock("@/lib/credits", () => ({
+vi.mock("@repo/billing", () => ({
   costSecondsForDurationMs: vi.fn((ms: number | null | undefined) =>
     ms && ms > 0 ? Math.max(1, Math.ceil(ms / 1000)) : 60
   ),
@@ -85,7 +85,7 @@ vi.mock("@repo/db", () => ({
 
 import { POST } from "./route";
 import { rateLimit } from "@/lib/rate-limit";
-import { reserveCredits, settleHoldQuietly, ensureMonthlyGrant } from "@/lib/credits";
+import { reserveCredits, settleHoldQuietly, ensureMonthlyGrant } from "@repo/billing";
 import { del } from "@vercel/blob";
 
 const OWN_BLOB_URL = "https://abc123.public.blob.vercel-storage.com/projects/x/audio.m4a";
@@ -214,7 +214,7 @@ describe("POST /api/transcribe/deepgram — credit gating", () => {
     // reserved and hasn't flipped to processing yet"). Both look identical
     // to that snapshot — "not processing" — yet the hold is live. The real
     // gate now lives entirely inside reclaimStaleHold (verified against the
-    // real DB in lib/credits.ts), so here we only need to prove the route
+    // real DB in @repo/billing), so here we only need to prove the route
     // defers to it and never second-guesses a `false` result.
     state.ownedProject = { id: "x", durationMs: 120_000, transcriptStatus: "idle" };
     state.reserveResults = [{ status: "already_held" }];

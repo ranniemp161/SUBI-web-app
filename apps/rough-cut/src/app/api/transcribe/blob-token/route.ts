@@ -7,7 +7,7 @@ import {
   costSecondsForDurationMs,
   chargeMicrosForSeconds,
   RETAIL_MICROS_PER_MINUTE,
-} from "@/lib/credits";
+} from "@repo/billing";
 import { rateLimit } from "@/lib/rate-limit";
 import { DEEPGRAM_MAX_UPLOAD_BYTES } from "@/lib/deepgram";
 import { uploadPathnameForProject } from "@/lib/blob";

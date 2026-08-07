@@ -26,7 +26,9 @@ Tracer Bullet — vertical slices; each feature built end-to-end through every l
 - Ports are pinned: rough-cut = 3000, wallet = 3001, founders-frame = 3002. Cross-app URLs must go through each app's `src/lib/env.ts`, never a raw `process.env.NEXT_PUBLIC_*` read.
 - Production domains: rough-cut = `myfirstcut.app`, wallet = `myframecredits.app`; founders-frame is the marketing site. How a missing URL env var is handled differs per app: rough-cut and wallet throw at import time, founders-frame falls back to the production domain in a production build and to `localhost` otherwise.
 - Schema changes go through `packages/db` only (`db:generate` + `db:migrate`, prod-safe); `db:push` is dev-only, never prod. See `packages/db/AGENTS.md`.
+- **Time-to-frame conversion has exactly one implementation, in `@repo/transcript`.** Every app converts through it, so two apps can never round the same timecode differently — the guarantee that a clip labelled 2:35 really sits at 2:35. `apps/rough-cut/src/lib/frame-math.ts` and `src/lib/export/timebase.ts` survive only as one line re-export shims; never reimplement the arithmetic behind them.
 - Currency is US dollars stored as `micros` (1,000,000 micros = $1) — a universal unit multiple future apps can spend against a shared ledger in `@repo/db`.
+- **Balance mutations have exactly one implementation, in `@repo/billing`.** Every app charges, holds, settles, refunds, and deposits through it; no app may re-implement a ledger statement locally. This rule exists because the logic used to live twice, once per app, and the copies drifted in silence — rough-cut's `chargeAiCut` gained `ON CONFLICT` idempotency while wallet's kept an unguarded `UPDATE`, and wallet's whole copy was dead code no test covered. Two copies of a money invariant do not stay in sync.
 - The Wallet app (`apps/wallet`) is the sole authority on Stripe billing; other apps never process payments directly, they deep-link to Wallet.
 - **Lint & Mocking**: When mocking components with `forwardRef` in tests, avoid anonymous arrow functions. Always use a named function expression (e.g., `forwardRef(function MyStub() { ... })`) to prevent `react/display-name` ESLint errors. Omit unused parameters in mock implementations (like `props`, `ref`, `url`, `init`) to avoid `@typescript-eslint/no-unused-vars` warnings/errors.
 - **Next.js 16 Middleware**: In Next.js 16, the global routing interception file has been renamed from `middleware.ts` to `proxy.ts`. Do not flag `proxy.ts` as an error or attempt to rename it to `middleware.ts`.
@@ -68,6 +70,8 @@ Stored in `docs/adr/`. Format: `docs/adr/NNNN-title.md`.
 - [apps/rough-cut/AGENTS.md](./apps/rough-cut/AGENTS.md) — video transcription + AI cutting product app
 - [apps/wallet/AGENTS.md](./apps/wallet/AGENTS.md) — centralized billing/credits app
 - [apps/founders-frame/AGENTS.md](./apps/founders-frame/AGENTS.md) — static marketing site (no accounts, no DB)
+- [packages/billing/AGENTS.md](./packages/billing/AGENTS.md) — the only implementation of the money invariant: rates, metering, and every ledger statement
 - [packages/db/AGENTS.md](./packages/db/AGENTS.md) — shared Drizzle schema, migrations, DB connection
+- [packages/transcript/AGENTS.md](./packages/transcript/AGENTS.md) — the cross-app transcript document contract and the repo's only frame arithmetic
 - [packages/ui/AGENTS.md](./packages/ui/AGENTS.md) — thin shared design tokens + cn() helper
 - [packages/server-shared/AGENTS.md](./packages/server-shared/AGENTS.md) — shared rate limiting and error reporting

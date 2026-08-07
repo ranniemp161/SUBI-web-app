@@ -17,18 +17,13 @@ vi.mock("@repo/db", () => ({
   },
 }));
 
-vi.mock("@/lib/observability", () => ({
+vi.mock("@repo/server-shared/observability", () => ({
   reportError: vi.fn((message: string) => {
     state.reported.push(message);
   }),
 }));
 
 import {
-  FALLBACK_HOLD_SECONDS,
-  costSecondsForDurationMs,
-  secondsFromDeepgramDuration,
-  currentMonthKey,
-  memberGrantSeconds,
   reserveCredits,
   reclaimStaleHold,
   settleHold,
@@ -36,7 +31,7 @@ import {
   ensureMonthlyGrant,
   chargeAiCut,
   refundAiCut,
-} from "@/lib/credits";
+} from "./ledger";
 import { db } from "@repo/db";
 
 beforeEach(() => {
@@ -45,56 +40,6 @@ beforeEach(() => {
   state.executed = [];
   state.reported = [];
   vi.clearAllMocks();
-  delete process.env.MEMBER_MONTHLY_GRANT_SECONDS;
-});
-
-describe("costSecondsForDurationMs", () => {
-  it("falls back when duration is missing or nonsense", () => {
-    expect(costSecondsForDurationMs(null)).toBe(FALLBACK_HOLD_SECONDS);
-    expect(costSecondsForDurationMs(undefined)).toBe(FALLBACK_HOLD_SECONDS);
-    expect(costSecondsForDurationMs(0)).toBe(FALLBACK_HOLD_SECONDS);
-    expect(costSecondsForDurationMs(-5)).toBe(FALLBACK_HOLD_SECONDS);
-    expect(costSecondsForDurationMs(NaN)).toBe(FALLBACK_HOLD_SECONDS);
-  });
-
-  it("rounds milliseconds up to whole seconds with a floor of 1", () => {
-    expect(costSecondsForDurationMs(1)).toBe(1);
-    expect(costSecondsForDurationMs(999)).toBe(1);
-    expect(costSecondsForDurationMs(1001)).toBe(2);
-    expect(costSecondsForDurationMs(60_000)).toBe(60);
-  });
-});
-
-describe("secondsFromDeepgramDuration", () => {
-  it("returns null when the payload has no usable duration", () => {
-    expect(secondsFromDeepgramDuration(null)).toBeNull();
-    expect(secondsFromDeepgramDuration(undefined)).toBeNull();
-    expect(secondsFromDeepgramDuration(0)).toBeNull();
-    expect(secondsFromDeepgramDuration(-1)).toBeNull();
-  });
-
-  it("rounds seconds up with a floor of 1", () => {
-    expect(secondsFromDeepgramDuration(0.4)).toBe(1);
-    expect(secondsFromDeepgramDuration(59.01)).toBe(60);
-    expect(secondsFromDeepgramDuration(60)).toBe(60);
-  });
-});
-
-describe("currentMonthKey", () => {
-  it("uses the UTC calendar month", () => {
-    expect(currentMonthKey(new Date("2026-07-05T23:59:59Z"))).toBe("2026-07");
-    expect(currentMonthKey(new Date("2026-12-31T23:59:59Z"))).toBe("2026-12");
-  });
-});
-
-describe("memberGrantSeconds", () => {
-  it("defaults to 3600 and reads the env override", () => {
-    expect(memberGrantSeconds()).toBe(3600);
-    process.env.MEMBER_MONTHLY_GRANT_SECONDS = "7200";
-    expect(memberGrantSeconds()).toBe(7200);
-    process.env.MEMBER_MONTHLY_GRANT_SECONDS = "banana";
-    expect(memberGrantSeconds()).toBe(3600);
-  });
 });
 
 describe("reserveCredits", () => {
@@ -206,7 +151,7 @@ describe("settleHold", () => {
 
 describe("depositPurchase", () => {
   it("returns true when the deposit landed", async () => {
-    state.rows = [{ tokens: 3900 }];
+    state.rows = [{ balance_micros: 3900 }];
     await expect(depositPurchase("u1", 300, "cs_123")).resolves.toBe(true);
   });
 
@@ -218,7 +163,7 @@ describe("depositPurchase", () => {
 
 describe("chargeAiCut", () => {
   it("returns charged when the deduction matched a user row", async () => {
-    state.rows = [{ tokens: 3480 }];
+    state.rows = [{ balance_micros: 3480 }];
     await expect(chargeAiCut("u1", "p1", 120)).resolves.toEqual({
       status: "charged",
     });
@@ -239,11 +184,25 @@ describe("chargeAiCut", () => {
     });
     await expect(chargeAiCut("u1", "p1", 120)).rejects.toThrow("connection lost");
   });
+
+  it("treats a keyed retry that lost the ON CONFLICT race as already charged", async () => {
+    state.rows = [];
+    await expect(chargeAiCut("u1", "p1", 120, "idem-1")).resolves.toEqual({
+      status: "charged",
+    });
+  });
+
+  it("throws when an unkeyed charge matches no user row", async () => {
+    state.rows = [];
+    await expect(chargeAiCut("u1", "p1", 120)).rejects.toThrow(
+      "ai_cut charge matched no user row"
+    );
+  });
 });
 
 describe("refundAiCut", () => {
   it("issues the refund statement", async () => {
-    state.rows = [{ tokens: 3600 }];
+    state.rows = [{ balance_micros: 3600 }];
     await refundAiCut("u1", "p1", 120);
     expect(db.execute).toHaveBeenCalledTimes(1);
   });

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { depositPurchase } from "./credits";
+import { depositPurchase } from "@repo/billing";
 import { db } from "@repo/db";
 import { users, creditLedger } from "@repo/db/schema";
 import { eq } from "drizzle-orm";

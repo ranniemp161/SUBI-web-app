@@ -61,7 +61,7 @@ function toAiCutRun(row: Row): AiCutRun {
  * `ai_cut_claim_at` from null (or stale) to now() only when no other request
  * already holds the claim — a losing concurrent call matches zero rows and
  * gets `false`, the same shape as `reserveCredits`' `hold_micros IS NULL` gate
- * in lib/credits.ts. A claim older than AI_CUT_CLAIM_STALE_MS is treated as
+ * in @repo/billing. A claim older than AI_CUT_CLAIM_STALE_MS is treated as
  * abandoned and can be reclaimed.
  *
  * The claim is decoupled from the stored runs (ADR 0002-ai-cut-paid-rerun):

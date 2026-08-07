@@ -25,7 +25,7 @@ vi.mock("@/lib/authz", () => ({
   getAuthorizedDbUser: vi.fn(async () => state.dbUser),
 }));
 
-vi.mock("@/lib/credits", () => ({
+vi.mock("@repo/billing", () => ({
   memberGrantMicros: vi.fn(() => 19_000_000),
   ensureMonthlyGrant: vi.fn(async (userId: string, micros: number) => {
     state.grantCalls.push({ userId, micros });

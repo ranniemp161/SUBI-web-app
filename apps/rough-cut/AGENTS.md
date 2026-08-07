@@ -11,9 +11,9 @@ spends tokens and deep-links to Wallet to buy more.
 ## Key files
 | File | Owns |
 |---|---|
-| `src/proxy.ts` | Clerk auth middleware + the public-route allowlist (routes that bypass session auth: transcribe callback, Clerk webhook, cron) — also redirects signed-in users from `/` to `/dashboard` so the landing page stays static |
-| `src/lib/env.ts` | Validated cross-app URLs (`WALLET_URL`, `WALLET_DASHBOARD_URL`) — the only place allowed to read `NEXT_PUBLIC_*` cross-app vars; throws at import time in production if unset/still-localhost |
-| `src/lib/credits.ts` | Token hold/settle/refund logic against `@repo/db`'s credit ledger |
+| `src/proxy.ts` | Clerk auth middleware + the public-route allowlist (routes that bypass session auth: transcribe callback, Clerk webhook, cron) — also redirects signed-in users from `/` to `/dashboard` so the landing page stays static. Separately, a **CORS preflight** (`OPTIONS`) on `/api/projects/:id/transcript` skips the session gate: a preflight carries no cookies by spec, so Clerk always 401s it, and the browser then never sends the real request. The route's own `OPTIONS` handler answers it and 403s any origin but the named one |
+| `src/lib/env.ts` | Validated cross-app URLs (`WALLET_URL`, `WALLET_DASHBOARD_URL`, `BROLL_URL`) — the only place allowed to read `NEXT_PUBLIC_*` cross-app vars; throws at import time in production if unset/still-localhost. `BROLL_URL` is the one exception: **optional**, resolving to `null` in production when unset, because b-roll has no production domain yet. Null means no cross-origin caller is authorized on the transcript route — never a wildcard |
+| `@repo/billing` (not in this app) | Hold/settle/refund/charge logic against `@repo/db`'s credit ledger. Used to be `src/lib/credits.ts`; it is deleted — this app imports the shared package and must never re-implement a ledger statement locally. See `packages/billing/AGENTS.md` |
 | `src/lib/rate-limit.ts` | App-specific buckets (`readRateLimit`, `aiCutRateLimit`) wrapping `@repo/server-shared`'s fixed-window limiter, Upstash Redis (Vercel KV) backed — **not** Postgres (`rate_limits` table was dropped, see `packages/db` migration `0001`) |
 | `src/lib/ip-rate-limit.ts` | Per-IP limiter for the 3 routes in `proxy.ts`'s public list (no session to key on) |
 | `src/lib/deepgram.ts`, `src/lib/ai-rough-cut.ts`, `src/lib/ai-cuts.ts` | Transcription + AI cut-suggestion pipeline |
@@ -21,9 +21,12 @@ spends tokens and deep-links to Wallet to buy more.
 | `src/lib/blob-path.ts` | `uploadPathnameForProject` — pure, zero-dependency, the only piece of the blob-path convention a client component (`dashboard/page.tsx`'s direct-upload flow) is allowed to import |
 | `src/lib/pusher.ts` | Server (`pusherServer`) and client (`getPusherClient()`) Pusher instances plus `projectChannel()` (the `private-<projectId>` channel name both sides must use) — all live in this one file, so any `"use client"` code importing the client helper also pulls in the server SDK; see Conventions below |
 | `src/app/api/pusher/auth/route.ts` | Countersigns private-channel subscriptions — only the project's owner gets a signature, which is what keeps third parties (who hold the public `NEXT_PUBLIC_PUSHER_KEY` from the JS bundle) off our Pusher quota |
-| `src/lib/export/*`, `src/workers/export-worker.ts` | Client-side WebCodecs MP4 export (Chromium-only, see `LIMITATIONS.md`), plus browser-agnostic NLE interchange export (`fcpxml.ts` for Final Cut Pro/Resolve, `cmx3600.ts` EDL for Resolve, `xmeml.ts` FCP7 XML for Premiere Pro — Premiere does NOT read `.fcpxml`) sharing `timebase.ts`/`filename.ts`/`xml.ts` frame-math and sanitizing helpers, downloaded via `src/lib/download-text-file.ts`. Timebase is the source's detected frame rate (`src/lib/detect-frame-rate.ts`, mediabunny packet stats, drop-frame timecode for NTSC 29.97/59.94), falling back to 30fps when no source file is reselected |
+| `src/lib/export/*`, `src/workers/export-worker.ts` | Client-side WebCodecs MP4 export (Chromium-only, see `LIMITATIONS.md`), plus browser-agnostic NLE interchange export (`fcpxml.ts` for Final Cut Pro/Resolve, `cmx3600.ts` EDL for Resolve, `xmeml.ts` FCP7 XML for Premiere Pro — Premiere does NOT read `.fcpxml`) sharing `filename.ts`/`xml.ts` sanitizing helpers, downloaded via `src/lib/download-text-file.ts`. **The frame math is no longer here**: `timebase.ts` and `src/lib/frame-math.ts` are one line re-export shims onto `@repo/transcript` (spec `_root/0001`), which is the repo's only implementation — add nothing to either shim. Timebase is the source's detected frame rate (`src/lib/detect-frame-rate.ts`, mediabunny packet stats, drop-frame timecode for NTSC 29.97/59.94), now also persisted to `projects.source_fps_num`/`source_fps_den` at reselect so the server has a timebase without the source file |
+| `src/lib/export/transcript-collapse.ts` | Applies the EDL to the transcript: raw Deepgram times in, post-cut times out. **Lives here, not in `@repo/transcript`, on purpose** (spec `_root/0001` AC-16) — the collapse needs the EDL, and the EDL is this app's private editing model. A word a cut only partly removes is *clamped* to the kept span rather than dropped (unlike the export remapper in `plan.ts`, which drops); a word straddling two kept ranges collapses to its larger fragment, never two entries |
+| `src/lib/export/transcript-document.ts` | `buildProjectTranscriptDocument` — the single builder both the export modal's download and `GET /api/projects/:id/transcript` call, which is what makes those two outputs identical in every field but `generatedAt` |
+| `src/app/api/projects/[id]/transcript/route.ts` | Serves the timed transcript document b-roll consumes. Owner-only via `getOwnedProject`, on the shared `readRateLimit` bucket, and **refuses (409) rather than guessing** when the project has no stored frame rate, no transcript, or no EDL |
 | `src/lib/detect-embedded-timecode.ts` | Best-effort read of a reselected source's embedded start timecode (the `tmcd` track cameras/encoders write when a clip doesn't start at 00:00:00:00), so the NLE interchange exports' source in/out timecodes match what DaVinci Resolve's strict Media Pool relink expects — without it, Resolve still links by filename but logs a "failed to link" warning. Uses `mp4box.js` (dynamically imported, never in the main bundle), NOT mediabunny — mediabunny only sees audio/video sample tracks, no concept of a `tmcd` metadata track. Never throws; any failure or absence resolves to a 0 offset, i.e. today's already-working behavior |
-| `src/components/export-modal.tsx` | The single Export dialog (MP4, FCPXML, CMX 3600 EDL, FCP7 XML, plus MP4 resolution) that the export cluster in `dashboard/[id]/page.tsx` now opens; replaced the old inline `StyledSelect`/`ExportFormatMenu` dropdown pair |
+| `src/components/export-modal.tsx` | The single Export dialog (MP4, FCPXML, CMX 3600 EDL, FCP7 XML, timed transcript JSON, and `.srt`/`.vtt` subtitles, plus MP4 resolution) that the export cluster in `dashboard/[id]/page.tsx` now opens; replaced the old inline `StyledSelect`/`ExportFormatMenu` dropdown pair. The transcript and subtitle entries share their own gate (`transcriptBlockedReason`, the source frame rate alone), separate from the NLE formats' gate — a project with nothing kept still exports a valid, empty transcript |
 | `src/lib/authz.ts` | Write-route authorization — the `users` row (provisioned by the Clerk webhook or its fallback) IS the authorization; there is no separate access-code verify route (`src/lib/access-codes.ts` no longer exists) |
 | `src/app/api/webhooks/clerk/route.ts` | Clerk user-sync webhook (svix-verified) |
 | `src/lib/sync-colors.ts` | Shared visual tokens (Tailwind classes + hex) for cross-panel sync between the transcript panel and the timeline bar — playhead, selection, and hover each have one constant pair, so the two panels can never drift onto different colors for the same concept (spec `0002`) |
@@ -78,7 +81,7 @@ npm -w @repo/rough-cut typecheck
   AI Cut runs) use conditional-UPDATE holds to prevent concurrent double-spends.
   The pattern: a request claims an exclusive hold via an UPDATE that matches only
   when the column is empty (or stale), and a losing concurrent call gets zero rows
-  and returns early. See `reserveCredits` (lib/credits.ts, `hold_micros IS NULL`
+  and returns early. See `reserveCredits` (`@repo/billing`, `hold_micros IS NULL`
   gate) and `claimAiCutSlot` (lib/projects.ts, `ai_cut_claim_at` timestamp claim). On any
   failure after the hold, call the corresponding release function to unlock.
 - **Observability**: Sentry (`@sentry/nextjs`) is wired but env-gated —
@@ -191,6 +194,19 @@ pass against a login screen and the suite reports green while testing nothing.
   `keepalive: true` (which is why saves must stay patch-sized — keepalive bodies cap at 64KB), a
   bounded backoff retry that doesn't wait for the user's next edit, and one save in flight at a time.
   See `src/lib/edl-autosave.test.ts` before changing any of them.
+- **`absorbCutResidue` sweeps in BOTH directions, and only one of the two rules is size-gated.**
+  Rule one (a wordless *keep* trapped between two *cuts* becomes cut) is not gated at any
+  duration: with cuts on both sides there is nothing spoken left in it. Rule two (a wordless
+  *cut* trapped between two *keeps* becomes keep) **must** be gated, and is, by
+  `MAX_RESIDUE_SECONDS` (0.25s) — because a deliberate silence cut is *also* wordless and
+  *also* sits between two keeps, so size is the only thing telling them apart. Residue tops
+  out near 215ms; the shortest silence cut the auto pass can emit is about 380ms (the gap
+  must exceed `silenceGapSeconds`, then gets padded inward on both sides). Rule two exists
+  because restoring a word out of an AI/retake/repetition cut leaves a fragment of that cut
+  with no speech in it — those passes set boundaries from their own analysis, not from the
+  word grid, so restore's word-plus-padding span cannot line up with them. Measured before
+  the fix: 89 orphan fragments across five real projects; after: 0. A cut still holding a
+  word is never absorbed at any size, and the whole sweep stays scoped to `changedSpan`.
 - **Deepgram word timestamps are millisecond-rounded only, never frame-grid snapped** (`lib/deepgram.ts`).
   A former `snapToFrame` (fixed 30fps grid) was removed: the transcript highlight compares against
   the video element's continuous `currentTime`, so a fixed-fps snap upstream would offset the
