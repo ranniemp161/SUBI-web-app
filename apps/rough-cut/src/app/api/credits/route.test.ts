@@ -21,7 +21,7 @@ vi.mock("@clerk/nextjs/server", () => ({
   currentUser: vi.fn(async () => null),
 }));
 
-vi.mock("@/lib/authz", () => ({
+vi.mock("@repo/server-shared/authz", () => ({
   getAuthorizedDbUser: vi.fn(async () => state.dbUser),
 }));
 

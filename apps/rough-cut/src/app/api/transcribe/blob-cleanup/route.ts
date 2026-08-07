@@ -2,7 +2,7 @@ import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import { del } from "@vercel/blob";
 import { getOwnedProject } from "@/lib/projects";
-import { getAuthorizedDbUser } from "@/lib/authz";
+import { getAuthorizedDbUser } from "@repo/server-shared/authz";
 import { rateLimit } from "@/lib/rate-limit";
 import { reportError } from "@/lib/observability";
 import { isOwnBlobUrl, projectIdFromBlobUrl } from "@/lib/blob";

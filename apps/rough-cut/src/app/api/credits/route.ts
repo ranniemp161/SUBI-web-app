@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { db, withDbRetry } from "@repo/db";
 import { users } from "@repo/db/schema";
-import { getAuthorizedDbUser } from "@/lib/authz";
+import { getAuthorizedDbUser } from "@repo/server-shared/authz";
 import { ensureMonthlyGrant, memberGrantMicros } from "@repo/billing";
 import { readRateLimit } from "@/lib/rate-limit";
 import { reportError } from "@/lib/observability";

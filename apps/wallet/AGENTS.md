@@ -15,7 +15,7 @@ Centralized billing/credits portal for the SUBI app ecosystem (per ADRs `0001` a
 | `src/app/api/billing/checkout/route.ts` | Creates the Stripe Checkout session |
 | `src/app/api/webhooks/stripe/route.ts` | Stripe webhook — writes the credit-ledger grant on successful payment (idempotent via `stripeEventId`) |
 | `src/lib/env.ts` | Validated cross-app URL (`ROUGH_CUT_URL`) — same pattern as rough-cut's `env.ts`; only place allowed to read `NEXT_PUBLIC_ROUGH_CUT_URL` |
-| `src/lib/authz.ts` | Same shared-domain logic as rough-cut's equivalent, both apps read/write the same `@repo/db` ledger |
+| `@repo/server-shared/authz`, `@repo/server-shared/users` (not in this app) | Write-route authorization and user provisioning against the shared `@repo/db` `users` row. This app's local copies are deleted: its `authz` read `emailAddresses[0]` blind where rough-cut's required a **verified primary** address, and since this app provisions rows too, that could write an unverified user-chosen email into the row rough-cut later trusts. The safer implementation won. See `packages/server-shared/AGENTS.md` |
 | `src/lib/autorecharge.ts` | Auto-recharge candidate selection, the per-day cap, the decline counter, and `depositAutoRecharge` — **the one ledger-writing statement still outside `@repo/billing`**, kept here because it resets `autorecharge_failures` in the same atomic statement. Moving it is a queued follow-up |
 | `src/app/api/cron/cleanup/route.ts` | Scheduled cleanup job |
 | `src/proxy.ts` | Clerk auth middleware, same pattern as rough-cut |

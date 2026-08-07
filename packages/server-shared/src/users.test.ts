@@ -101,3 +101,19 @@ describe("provisionUser", () => {
     );
   });
 });
+
+// Carried over from apps/wallet's copy of this test, which is now deleted:
+// provisioning is on the write path, so a database failure must surface rather
+// than resolve to a half-provisioned user.
+describe("provisionUser — failure propagation", () => {
+  it("throws if the database operation fails", async () => {
+    state.returningMock.mockRejectedValueOnce(new Error("db down"));
+    await expect(provisionUser("clerk_123", "a@b.com")).rejects.toThrow("db down");
+  });
+
+  it("throws rather than writing a row when clerkId or email is missing", async () => {
+    await expect(provisionUser("", "a@b.com")).rejects.toThrow(/requires both/);
+    await expect(provisionUser("clerk_123", "")).rejects.toThrow(/requires both/);
+    expect(state.insertMock).not.toHaveBeenCalled();
+  });
+});

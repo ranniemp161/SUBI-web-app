@@ -11,7 +11,7 @@ import {
   setStripeCustomerId,
   setDefaultPaymentMethod,
 } from "@/lib/autorecharge";
-import { ipRateLimit } from "@/lib/ip-rate-limit";
+import { ipRateLimit } from "@repo/server-shared/ip-rate-limit";
 import { reportError } from "@/lib/observability";
 
 /**

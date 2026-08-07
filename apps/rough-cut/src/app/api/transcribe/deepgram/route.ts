@@ -5,7 +5,7 @@ import { db } from "@repo/db";
 import { projects } from "@repo/db/schema";
 import { eq } from "drizzle-orm";
 import { getOwnedProject } from "@/lib/projects";
-import { getAuthorizedDbUser } from "@/lib/authz";
+import { getAuthorizedDbUser } from "@repo/server-shared/authz";
 import {
   costSecondsForDurationMs,
   ensureMonthlyGrant,

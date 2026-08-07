@@ -49,10 +49,10 @@ vi.mock("@repo/db", () => {
   };
 });
 
-// Route's own rate limit — mocked at the same layer as every other route
-// test (@/lib/rate-limit), so the real getClientIp()/ipRateLimit() key
-// construction still runs and can be asserted against.
-vi.mock("@/lib/rate-limit", () => ({
+// Route's own rate limit — mocked one layer *below* ipRateLimit
+// (@repo/server-shared/rate-limit), so the real getClientIp()/ipRateLimit()
+// key construction still runs and can be asserted against.
+vi.mock("@repo/server-shared/rate-limit", () => ({
   rateLimit: vi.fn(async () => ({
     allowed: state.rateAllowed,
     remaining: state.rateAllowed ? 59 : 0,
@@ -87,7 +87,7 @@ vi.mock("@/lib/ai-rough-cut", () => ({
 }));
 
 import { POST } from "./route";
-import { rateLimit } from "@/lib/rate-limit";
+import { rateLimit } from "@repo/server-shared/rate-limit";
 import { normalizeDeepgram } from "@/lib/deepgram";
 import { runAiRoughCut } from "@/lib/ai-rough-cut";
 

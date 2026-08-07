@@ -12,7 +12,7 @@ const state = vi.hoisted(() => ({
   }>,
 }));
 
-vi.mock("@/lib/ip-rate-limit", () => ({
+vi.mock("@repo/server-shared/ip-rate-limit", () => ({
   ipRateLimit: vi.fn(async () => ({
     allowed: state.rateAllowed,
     remaining: state.rateAllowed ? 119 : 0,
@@ -28,7 +28,7 @@ vi.mock("svix", () => ({
   },
 }));
 
-vi.mock("@/lib/users", () => ({
+vi.mock("@repo/server-shared/users", () => ({
   provisionUser: vi.fn(
     async (clerkId: string, email: string) => {
       state.provisionCalls.push({ clerkId, email });
@@ -38,7 +38,7 @@ vi.mock("@/lib/users", () => ({
 }));
 
 import { POST } from "./route";
-import { ipRateLimit } from "@/lib/ip-rate-limit";
+import { ipRateLimit } from "@repo/server-shared/ip-rate-limit";
 
 function req(
   body: unknown,

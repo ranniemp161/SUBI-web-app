@@ -19,7 +19,7 @@ vi.mock("@/lib/autorecharge", () => ({
   setStripeCustomerId: vi.fn(async () => {}),
   setDefaultPaymentMethod: vi.fn(async () => {}),
 }));
-vi.mock("@/lib/ip-rate-limit", () => ({
+vi.mock("@repo/server-shared/ip-rate-limit", () => ({
   ipRateLimit: vi.fn(async () => ({ allowed: true, remaining: 119, limit: 120 })),
 }));
 vi.mock("@/lib/observability", () => ({

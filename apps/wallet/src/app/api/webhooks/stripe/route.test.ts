@@ -59,7 +59,7 @@ vi.mock("@/lib/autorecharge", () => ({
   }),
 }));
 
-vi.mock("@/lib/rate-limit", () => ({
+vi.mock("@repo/server-shared/rate-limit", () => ({
   rateLimit: vi.fn(async () => ({
     allowed: state.rateAllowed,
     remaining: state.rateAllowed ? 119 : 0,
@@ -74,7 +74,7 @@ vi.mock("@/lib/observability", () => ({
 }));
 
 import { POST } from "./route";
-import { rateLimit } from "@/lib/rate-limit";
+import { rateLimit } from "@repo/server-shared/rate-limit";
 import { depositPurchase } from "@repo/billing";
 
 function req({ signature = "sig_test", ip = "203.0.113.9" } = {}) {
