@@ -157,7 +157,21 @@ export const projects = pgTable("projects", {
   updatedAt: timestamp("updated_at", { withTimezone: true })
     .defaultNow()
     .notNull(),
-});
+}, (t) => [
+  /**
+   * The dashboard's only list query: this user's projects, newest first, one
+   * keyset page at a time (`listProjectPage`, rough-cut's lib/projects.ts).
+   *
+   * Postgres does not index a foreign-key column for you, so before this there
+   * was no index on `user_id` at all and every page was a sequential scan plus
+   * a sort. The column order matches the query: equality on `user_id` first,
+   * then `created_at` to satisfy both the range predicate and the ORDER BY.
+   * `id` is the keyset tiebreak and is covered by the primary key.
+   *
+   * Same shape as `credit_ledger_user_created_idx` below, for the same reason.
+   */
+  index("projects_user_created_idx").on(t.userId, t.createdAt),
+]);
 
 /**
  * Stored AI Cut suggestion runs (ADR 0002-ai-cut-paid-rerun) — up to 3 per
@@ -222,7 +236,24 @@ export const creditLedger = pgTable(
     projectId: uuid("project_id").references(() => projects.id, {
       onDelete: "set null",
     }),
-    /** Stripe Checkout session id — unique, the webhook idempotency key. */
+    /**
+     * The generic idempotency slot — **not** Stripe-specific, despite the name.
+     *
+     * Four writers share it, and the values are namespaced so they cannot
+     * collide:
+     *   - `depositPurchase`      Stripe Checkout session id  (`cs_…`)
+     *   - `depositAutoRecharge`  Stripe PaymentIntent id     (`pi_…`)
+     *   - `chargeAiCut`          `ai_cut:<key>`
+     *   - `refundAiCut`          `ai_cut_refund:<key>`
+     *
+     * The name predates the last two and is now wrong, but it stays. Renaming
+     * it is a three-deploy expand/contract: every writer builds its statement
+     * in raw SQL (`@repo/billing`'s ledger, wallet's autorecharge), so between
+     * the migration and the deploy every ledger INSERT would fail — purchases,
+     * charges, refunds and auto-recharge all at once. A better column name is
+     * not worth a billing outage window. Reviewed and deliberately declined;
+     * see `packages/billing/AGENTS.md`.
+     */
     stripeEventId: text("stripe_event_id").unique(),
     /** UTC "YYYY-MM" on grant rows; NULL otherwise. */
     monthKey: text("month_key"),
