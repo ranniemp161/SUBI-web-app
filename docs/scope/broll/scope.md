@@ -65,12 +65,16 @@ transcript contract that makes the Rough Cut handoff real rather than aspiration
 **Done when**: a user can create a b-roll project, upload or inherit a transcript,
 and see its parsed segments. No AI yet.
 
-- [x] Design it (spec) [_root/0001](../../specs/_root/0001-transcript-contract/index.md).
-      Covers the transcript contract only (the two boxes marked `spec 0001` below).
-      The scaffold and the `broll_*` migration are not governed by it.
+- [x] Design it (spec) [_root/0001](../../specs/_root/0001-transcript-contract/index.md)
+      for the transcript contract (the two boxes marked `spec 0001` below), and
+      [0002](../../specs/broll/0002-data-model/index.md) for the `broll_*` tables
+      and the two shared ledger changes. The scaffold is governed by neither: it
+      is blocked on the domain, not on a design.
 - [ ] Build it: /develop broll skeleton — code in
-      [packages/transcript/](../../../packages/transcript/) and
+      [packages/transcript/](../../../packages/transcript/),
       [apps/rough-cut/src/lib/export/](../../../apps/rough-cut/src/lib/export/)
+      and [packages/db/src/schema.ts](../../../packages/db/src/schema.ts) plus
+      [drizzle/0015_ambitious_martin_li.sql](../../../packages/db/drizzle/0015_ambitious_martin_li.sql)
   - [ ] Scaffold `apps/broll` on port 3003, Clerk, `env.ts` (AC-7, AC-13).
         **Not started: needs the production domain**, which is the b-roll high
         level design's open question 4 and is marked blocking Phase 1.
@@ -98,11 +102,24 @@ and see its parsed segments. No AI yet.
         timing and drop straight beside the exported MP4. JSON stays the b-roll
         handoff; the subtitle formats cannot carry the frame rate, the word
         confidence, or the provenance the planner needs.
-  - [ ] Migration: `broll_*` tables, `credit_ledger.broll_project_id` + CHECK,
-        `credit_ledger_reason` values (AC-8, AC-9, AC-10). **Not started: the
-        column inventory has no source.** The high level design names the tables
-        and four columns; the companion `broll-generator-spec.md` that defines
-        the rest is not in the repo.
+  - [ ] Migration, now governed by spec
+        [0002](../../specs/broll/0002-data-model/index.md). **Unblocked
+        2026-08-08**: the column inventory the lost `broll-generator-spec.md` was
+        meant to supply is reconstructed there, marked Decided or Inferred row by
+        row so a later reader can tell evidence from invention.
+    - [x] Schema: the three tables, the two indexes, the assets unique
+          constraint that makes replace in place true, and the
+          `broll_render_status` enum (AC-8, AC-9, AC-40, AC-41, AC-42, AC-46).
+          Defined in `packages/db/src/schema.ts` 2026-08-08, lint, typecheck and
+          test green. **Defined, not live in any database.**
+    - [x] Ledger: `credit_ledger.broll_project_id` plus the
+          `credit_ledger_one_project_ref` CHECK (AC-10). Added plainly, not
+          `NOT VALID`: **AC-47 was withdrawn during the build** because
+          `drizzle-kit` runs all pending migration statements in one
+          transaction, so the split buys nothing inside a single migration
+    - [ ] Apply migration `0015_ambitious_martin_li.sql` to the dev branch, then
+          to production behind the preflight prompt (AC-8). **Generated, not
+          applied.** Nothing here is real until this box is ticked
 - [ ] Verify it: /check verify broll skeleton. A runtime pass on 2026-08-06 drove
       the real server: the auth gate holds, the document path holds (the package
       was driven through its public export, and ten real projects built clean),
@@ -125,6 +142,14 @@ list, none blocking the boxes already ticked):
 - `verify.md` for the b-roll high level design still states AC-11 in its
   unbuildable form (it asks a package to import from an app). Spec 0001 records
   the corrected wording; the older file has not been amended.
+- Before b-roll actually fetches a transcript across origins, confirm that Clerk's
+  session cookie genuinely travels on a credentialed cross origin fetch from the
+  b-roll origin to `myfirstcut.app`. Multi domain SSO is configured, but whether
+  the cookie rides a cross site request depends on its `SameSite` setting, which
+  is Clerk's to set and not ours. If it does not travel, switch to the server to
+  server variant carrying a forwarded token: that fallback is already weighed in
+  the rationale and needs no new spec. Enrolled 2026-08-08 from spec 0001's follow
+  up list, which had it and this scope did not.
 
 **Bigger than the spec implies.** This phase carries a shared package extraction, a
 new export surface in a *different* app, and two shared-schema migrations. Budget
@@ -146,6 +171,13 @@ stored — with credits reserved and settled, and no double charge on a double-c
 - [ ] Verify it: /check verify character pipeline
 
 Self-contained and demoable alone.
+
+**Two things spec [0002](../../specs/broll/0002-data-model/index.md) surfaced
+that land here, not in Phase 1.** The `credit_ledger_reason` enum values ship in
+their own later migration, because Postgres will not let a value added in a
+transaction be used in that same transaction (AC-44). And the money statements
+themselves are not a small addition to `@repo/billing`: see the new `_root`
+feature 6, which is where that work is tracked.
 
 ## Phase 3
 

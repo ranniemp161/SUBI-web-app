@@ -28,10 +28,11 @@ any, and mark a feature `done` when you decide it is._
 | J | Cron cleanup and housekeeping | Existing | existing |
 | K | Timeline Select and Hand tools | Existing | existing |
 | L | Production hardening and observability | Existing | existing |
+| M | Request bounds, paged project list, bundler parity | Existing | existing |
 | 1 | Studio auto cut flow | Slice 6 | in-progress |
-| 2 | Transcript and Timeline Live Sync | Slice 8 | in-progress |
+| 2 | Transcript and Timeline Live Sync | Slice 8 | done |
 | 3 | Word Boundary Timestamp Refinement | Slice 8 | done |
-| 4 | Frame Accuracy and Timeline Synchrony | Slice 9 | in-progress |
+| 4 | Frame Accuracy and Timeline Synchrony | Slice 9 | done |
 | 5 | Timed transcript and subtitle export | Slice 10 | in-progress |
 
 ## Existing
@@ -112,6 +113,30 @@ money moving paths fail closed under load, and a schema change cannot merge with
 its migration.
 code in `apps/rough-cut/instrumentation*.ts`, `src/lib/rate-limit.ts`, `packages/db/scripts/preflight.ts`, `.github/workflows/db-verify.yml`, `.github/workflows/e2e.yml`
 
+### M. Request bounds, paged project list, bundler parity · existing
+Enrolled by `/scope` on 2026-08-08, after the fact. A second hardening wave landed
+on 2026-08-07, mostly as items of the architecture review tracked in
+[_root feature 5](../_root/scope.md), and it is app local enough to belong here.
+Four things: the transcript `PATCH` is bounded to what the platform can carry and
+no longer strips `utteranceEnds` (PR #118); `GET /api/projects` is bounded and
+paged, and the keyset cursor stopped dropping rows created inside the same
+millisecond as the page boundary, because it was built from a JS `Date` while
+Postgres stores microseconds (PR #120); the `projects` index behind that query
+exists in migration `0014` (PR #121, still to be applied to production, see
+_root feature 5); and the studio's server action module no longer exports a type
+(PR #122), with `dev` moved onto Turbopack so it runs the bundler the build ships
+(PR #124).
+**Done when:** no request path is unbounded, the project list pages without losing
+rows, and a `"use server"` module cannot ship a runtime export that only the
+production bundler notices.
+PRs #118, #120, #121, #122, #124 · code in `src/lib/transcript-limits.ts`,
+`src/lib/projects.ts`, `src/app/api/projects/route.ts`, `src/app/actions.ts`,
+`src/app/actions.test.ts`, `packages/db/drizzle/0014_useful_otto_octavius.sql`
+
+The `"use server"` one is worth reading about before writing another server action:
+it cost a live production outage on the dashboard, no gate caught it, and the rule
+it produced is in the root [AGENTS.md](../../../AGENTS.md).
+
 ## Slice 6 (carried forward from the frozen roadmap)
 
 This slice was in flight when the roadmap was retired, so it moved here and kept
@@ -134,13 +159,18 @@ manual retry button.
 - [x] Build it: `/develop studio auto cut flow`
   - [x] Upload flow simplification: remove the confirm modal and AI polish toggle, mandatory `aiPolishRequested`, inline combined cost pre flight, "Ready for step 2" dashboard label (child 1, AC-1..5)
   - [x] Reselect gated processing: gate the auto chain on a verified reselect, relabel the loader, preserve all existing failure and legacy behavior, full page loading state with a progress bar until the chain settles (child 2, AC-6..12)
-- [ ] Verify it: `/check verify studio auto cut flow`
+- [x] Verify it: `/check verify studio auto cut flow` — the three command checks
+      passed under `/check verify` on 2026-08-08 (typecheck, lint, 691 tests),
+      and the 13 UI steps, which no session can drive because signing in locally
+      writes to the production database, were **confirmed manually by the
+      engineer in the real app** on 2026-08-08. Run log in
+      [verify.md](../../adr/rough-cut/0004-reselect-gated-pipeline/verify.md)
 - [ ] Test it: `/test studio auto cut flow`
 ADR [0004](../../adr/rough-cut/0004-reselect-gated-pipeline/index.md) · code in `src/lib/validation.ts`, `src/app/api/projects/route.ts`, `src/app/(app)/dashboard/page.tsx`, `src/app/(app)/dashboard/[id]/page.tsx`
 
 ## Slice 8
 
-### 2. Transcript and Timeline Live Sync · in-progress
+### 2. Transcript and Timeline Live Sync · done
 
 **Intent**: Make the transcript panel and the timeline bar behave as tightly synced, equal peers (Descript style), sharing hover and selection state and staying frame accurate, instead of two loosely connected views.
 **Done when**: Hover and selection sync both ways between the two panels, the two known timing drift bugs are fixed, and their visual language is unified, with no regression to existing playback seek or instant edit propagation.
@@ -152,7 +182,7 @@ ADR [0004](../../adr/rough-cut/0004-reselect-gated-pipeline/index.md) · code in
   - [x] Bidirectional selection highlighting: transcript drag select and timeline clip select or trim each highlight the other, and selection clears when playback starts (AC-3, AC-4, AC-8)
   - [x] Timing drift fix: reconcile word boundary clipping against cut padding, standardize cut and restore time rounding (AC-9)
   - [x] Visual unification and regression pass: shared color tokens across both panels, confirm instant edit propagation and autosave timing are unchanged (AC-10, AC-11)
-- [ ] Verify it: /check verify Transcript and Timeline Live Sync (blocked 2026-07-21 — no browser-automation tool available in session; command-based checks passed, UI/manual steps in verify.md still need a live pass)
+- [x] Verify it: /check verify Transcript and Timeline Live Sync — command based checks passed 2026-07-21; the UI and manual steps that were blocked then (no browser tool in session) were **confirmed manually by the engineer in the real app** on 2026-08-08
 - [x] Test it: /test Transcript and Timeline Live Sync
 
 ### 3. Word Boundary Timestamp Refinement · done
@@ -172,7 +202,7 @@ ADR [0004](../../adr/rough-cut/0004-reselect-gated-pipeline/index.md) · code in
 
 ## Slice 9
 
-### 4. Frame Accuracy and Timeline Synchrony · in-progress
+### 4. Frame Accuracy and Timeline Synchrony · done
 
 **Intent**: Close the remaining frame accuracy gaps left after specs 0002 and 0003: one shared millisecond to frame conversion function used by both the live editing path and export, a guard against export silently using a guessed frame rate, a shared timebase for the filmstrip and waveform, and provably accurate frame by frame step controls.
 **Done when**: The live editing path and export compute frame numbers through the same shared function; export is disabled (with a clear message) whenever the real source frame rate is not yet known; the filmstrip and waveform position themselves from the same detected frame rate and duration as the playhead; and step forward/back one frame controls exist, confirmed by `requestVideoFrameCallback` where supported, with no regression to existing continuous playback or EDL cut skipping.
@@ -183,7 +213,7 @@ ADR [0004](../../adr/rough-cut/0004-reselect-gated-pipeline/index.md) · code in
   - [x] Export fps reselect guard: disable export with a clear message until the real source frame rate is known (AC-5 to AC-7)
   - [x] Filmstrip and waveform shared timebase: position both from the shared timeline duration in `timeline-bar.tsx`, sized to the detected fps (AC-8 to AC-10)
   - [x] Frame accurate step controls: step forward/back one frame, repurposing `,`/`.`, confirmed by `requestVideoFrameCallback` where supported, with a regression pass on continuous playback (AC-11 to AC-16)
-- [ ] Verify it: /check verify Frame Accuracy and Timeline Synchrony (blocked 2026-07-24 — no browser-automation tool or sample video in session; all five command checks passed, the real-browser UI/manual steps in verify.md still need a live pass)
+- [x] Verify it: /check verify Frame Accuracy and Timeline Synchrony — all five command checks passed 2026-07-24; the real browser UI and manual steps that were blocked then were **confirmed manually by the engineer in the real app** on 2026-08-08
 - [x] Test it: /test Frame Accuracy and Timeline Synchrony — `frame-math.test.ts`, `video-player.test.tsx`, `export-modal.test.tsx`, `timeline-bar.test.tsx`, `shortcuts-overlay.test.tsx` cover the feature's whole area, all passing
 
 ## Slice 10
@@ -206,8 +236,14 @@ document over an authorized route.
       there is one place to tick. See [broll/scope.md](../broll/scope.md) · code in
       `src/lib/export/transcript-collapse.ts`, `src/lib/export/transcript-document.ts`,
       `src/app/api/projects/[id]/transcript/route.ts`, `src/components/export-modal.tsx`
-- [ ] Verify it: `/check verify timed transcript and subtitle export` (first pass
-      failed 2026-08-06 on the cross origin path, see the b-roll row)
+- [ ] Verify it: `/check verify timed transcript and subtitle export`. The cross
+      origin failure this box carried is **fixed and re driven live** (2026-08-06):
+      `proxy.ts` was answering every `OPTIONS` with `401` before the route ran, so
+      the preflight handler was unreachable. What is still unverified is the
+      route's success path and the export modal, both of which need a real signed
+      in session, and this repo keeps its end to end suite signed out on purpose
+      because preview and local both talk to the production database. See the
+      b-roll row.
 - [ ] Test it: `/test timed transcript and subtitle export`
 
 Three formats out, one document behind them: JSON carries everything (word timings,
@@ -217,8 +253,8 @@ never at invented ones.
 
 **Note for whoever touches `timebase.ts` or `frame-math.ts` next:** both are now one
 line re-export shims. The real code moved to `@repo/transcript`. The key files table
-in `apps/rough-cut/AGENTS.md` still describes them as if they hold the arithmetic,
-which stays accurate only while the shims do. `/sync` should reconcile that line.
+in `apps/rough-cut/AGENTS.md` was reconciled on 2026-08-07 (PR #115) and now says so
+plainly, including "add nothing to either shim", so this note is closed.
 
 ## Deferred
 

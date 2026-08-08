@@ -17,8 +17,12 @@ any, and mark a feature `done` when you decide it is._
 | # | Feature | Phase | Status |
 |---|---------|-------|--------|
 | A | Demo only free credits gate | Existing | existing |
+| B | One money invariant in `@repo/billing` | Existing | existing |
+| C | Shared server package `@repo/server-shared` | Existing | existing |
 | 1 | USD denominated Wallet | Slice 1 | done |
 | 4 | Transcript contract and `@repo/transcript` | Slice 2 | in-progress |
+| 5 | Architecture review leftovers | Slice 3 | planned |
+| 6 | B-roll money statements in `@repo/billing` | Slice 4 | planned |
 | 2 | Auto recharge notification channel | Deferred | planned |
 | 3 | AI Cut differentiated retail rate | Deferred | planned |
 
@@ -32,6 +36,36 @@ so everyone else pays through Stripe instead of getting free credits by default
 **Done when:** membership defaults to non member, the monthly grant fires only for
 the allowlisted demo email, and existing rows are backfilled to the new default.
 code in `apps/rough-cut/src/lib/users.ts`, `packages/db/src/schema.ts`, `packages/db/drizzle/0009_dizzy_human_fly.sql`
+
+### B. One money invariant in `@repo/billing` · existing
+Enrolled by `/scope` on 2026-08-08, after the fact. Shipped off plan (no spec) on
+2026-08-07 as items 1 and 2 of an architecture review, and it changes the shape of
+the ecosystem, which is exactly what this scope covers. The ledger logic lived
+twice, once per app, against the same `users` and `credit_ledger` tables, and the
+two copies had already drifted in silence: rough-cut's `chargeAiCut` had an
+`ON CONFLICT` idempotency guard, wallet's was a bare `UPDATE`, and wallet's whole
+434 line copy was dead code no test covered. Pricing lived in three places on top
+of that, including `@repo/ui/money.ts`, so server billing code was reaching into
+the design system package for a constant.
+**Done when:** every charge, hold, settle, refund and deposit in every app runs
+through one implementation, the retail rate and the micros conversions have one
+home, and `@repo/ui` is design tokens again with `money.ts` deleted.
+PRs #115, #116 · code in `packages/billing` (`ledger.ts` needs the database,
+`pricing.ts` is pure and safe to import anywhere, including a client component)
+
+### C. Shared server package `@repo/server-shared` · existing
+Enrolled by `/scope` on 2026-08-08, after the fact. Shipped off plan (no spec) on
+2026-08-07 as item 6 of the same review. Only `ip-rate-limit` was a clean
+duplicate; `authz` and `users` had drifted, and the drift mattered. Rough Cut
+picked the primary verified Clerk email, wallet took `emailAddresses[0]`, which a
+signed in user can influence by attaching an unverified address to their own
+profile, and wallet's `getAuthorizedDbUser` provisions rows, so it could write
+that address into the `users` row that membership follows. Consolidated on rough
+cut's implementation for all three.
+**Done when:** authorization, user provisioning, rate limiting and error reporting
+have one implementation both apps import, and the safer of each drifted pair is the
+one that survived.
+PR #119 · code in `packages/server-shared` · see [packages/server-shared/AGENTS.md](../../../packages/server-shared/AGENTS.md)
 
 ## Slice 1
 
@@ -89,6 +123,81 @@ below ES2020, which ruled out `BigInt` inside the package. A future shared packa
 inherits the same constraint.
 
 spec [0001](../../specs/_root/0001-transcript-contract/index.md) · status `In Progress`
+
+## Slice 3
+
+### 5. Architecture review leftovers · planned
+
+Enrolled by `/scope` on 2026-08-08. An architecture review on 2026-08-07 produced
+seven action items, and six of them shipped that day: items 1 and 2 became feature
+B above, item 6 became feature C, item 3 made wallet's auto recharge sweep actually
+concurrent and bounded (PR #117), item 4 bounded the transcript `PATCH` and stopped
+it stripping `utteranceEnds` (PR #118), and item 7 bounded and paged the project
+list, fixing a cursor that was silently dropping rows created in the same
+millisecond (PR #120). Two things did not close with them.
+
+**Intent**: Finish the one action item left open, and give the review itself a home
+in the repo so the next reader can tell what item 5 actually asked for.
+**Done when**: migration `0014` is applied to production and confirmed there, and
+the review's findings are written into `docs/reviews/` so nothing depends on a chat
+session nobody can reopen.
+
+- [ ] Apply migration `0014` to production. It adds the `projects` index on
+      `(user_id, created_at)` that the dashboard query has always wanted, and by
+      its own commit note it is rehearsed on the dev Neon branch but deliberately
+      **not applied to production**, which stays manual behind the preflight
+      prompt. Additive and backward compatible, so nothing is broken while it
+      waits, but every dashboard page is a sequential scan plus a sort until it
+      lands.
+- [ ] Record the review in `docs/reviews/`. It is not in the repo: the newest file
+      there is dated 2026-07-15, the working tree is clean, and the only trace of
+      the seven items is the commit messages that cite them. Item 5 is described
+      only as "the schema session", so whether PR #121's index was the whole of it
+      or a piece carved out of it cannot be answered from anything in the repo.
+
+Nothing here is urgent, and nothing here is user facing. It is bookkeeping on work
+that already shipped, which is why it is a slice of its own rather than a blocker
+on anything else.
+
+## Slice 4
+
+### 6. B-roll money statements in `@repo/billing` · planned `from spec broll/0002`
+
+Enrolled by `/architect` on 2026-08-08, surfaced while designing the b-roll data
+model. It belongs here rather than in the b-roll scope because it changes the
+shared billing package, and this scope owns the rule that every balance mutation
+has exactly one implementation.
+
+**Intent**: Give b-roll its charges, holds and refunds inside `@repo/billing`,
+so the money invariant keeps having one home when a third app starts spending.
+**Done when**: b-roll can reserve, settle, refund and charge without a single
+ledger statement living in `apps/broll`, and a character set can be priced per
+call rather than per second.
+
+- [ ] Design it (spec): covered by
+      [broll/0002](../../specs/broll/0002-data-model/index.md), build plan steps
+      6 and 7. No separate spec needed unless the pricing shape turns out to be
+      contentious.
+- [ ] Build it: `/develop broll money statements`
+  - [ ] Hold pair: `reserveBrollHold` and `settleBrollHold` as **new sibling
+        functions**, plus a b-roll stale reclaim on a 10 minute window
+  - [ ] Eager charge: `chargeBrollPlanRerun`, shaped like `chargeAiCut`, keyed on
+        a `broll_plan:` idempotency key so a double click charges once
+  - [ ] Flat rate pricing primitive beside the existing per second one
+- [ ] Verify it: `/check verify broll money statements`
+- [ ] Test it: `/test broll money statements`
+
+**Bigger than it sounds, and that is the point of enrolling it.** The obvious
+reading is that b-roll reuses the proven reserve and settle path. It cannot:
+`reserveCredits`, `reclaimStaleHold` and `settleHold` each hardcode
+`UPDATE projects` in their SQL, and `reclaimStaleHold` also hardcodes
+`transcript_status <> 'processing'`. None of them can be pointed at another
+table. Separately, every pricing helper in the package prices per second, because
+everything charged so far has been video duration, while a character set is
+priced per image call. A cross check caught both before any code was written.
+
+**Blocked on:** the character set price and the image model tier, which are open
+questions 2 and 7 in the b-roll high level design.
 
 ## Deferred
 
