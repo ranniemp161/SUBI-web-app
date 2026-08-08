@@ -1,0 +1,29 @@
+{
+  "$comment": [
+    "Shared compiler options for the packages/* workspaces.",
+    "",
+    "These MUST stay in step with apps/rough-cut/tsconfig.json and",
+    "apps/wallet/tsconfig.json. A shared package is consumed as raw TypeScript,",
+    "so it is compiled by each consuming app under THAT app's tsconfig. If this",
+    "base were looser than an app's config, a package would typecheck here and",
+    "fail there, which is worse than not checking it at all.",
+    "",
+    "`target` is the one that has already bitten: it is ES2017, below ES2020,",
+    "which is why BigInt cannot be used inside a shared package even though the",
+    "package's own tests would run fine on modern Node."
+  ],
+  "compilerOptions": {
+    "target": "ES2017",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "react-jsx"
+  }
+}

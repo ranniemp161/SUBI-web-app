@@ -28,7 +28,11 @@ describe("withDbRetry abort wiring", () => {
         timeoutMs: 100,
         baseDelayMs: 10,
       })
-    ).rejects.toThrow(/exceeded 100ms/);
+      // 200ms, not the 100ms passed in: withDbRetry scales the budget by the
+      // attempt number to give a cold start a chance, so the error that escapes
+      // is the LAST attempt's. Asserting the number pins that escalation, which
+      // nothing else covers.
+    ).rejects.toThrow(/exceeded 200ms/);
 
     // One fetch per attempt, each carrying its own signal, each aborted.
     expect(capturedSignals).toHaveLength(2);
