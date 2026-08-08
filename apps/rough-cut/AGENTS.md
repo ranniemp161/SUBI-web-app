@@ -133,6 +133,22 @@ pass against a login screen and the suite reports green while testing nothing.
 - Declined: Radix UI tooling (`radix-ui-design-system` skill, `radix-mcp-server` MCP) — Radix's own docs plus the local `confirm-dialog.tsx`/`StyledSelect` precedent are enough for now.
 
 ## Gotchas
+- **The transcript route's CORS preflight answers `404` under `next dev`, and
+  correctly under a production build.** Measured 2026-08-08: with `next dev`,
+  every `OPTIONS` on `/api/projects/:id/transcript` returns 404 regardless of
+  origin, while `GET` still correctly 401s. Against `next build` + `next start`
+  with `NEXT_PUBLIC_BROLL_URL` set, the specced behaviour holds exactly: `204`
+  with the exact origin and `Access-Control-Allow-Credentials: true`, `403` for
+  any other origin and for a missing one. The route and `proxy.ts` are both
+  right; the dev server is the odd one out.
+  - The b-roll scope records this preflight verified at `204` on **2026-08-06**,
+    which was true then: `dev` still passed `--webpack` until PR #124 removed
+    that flag on 2026-08-07. The verification predates the bundler change.
+  - This is the mirror image of PR #122. That bug was invisible in dev and broke
+    production; this one is broken in dev and fine in production. Same root
+    cause both times, dev and build behaving differently.
+  - Nothing depends on it today: b-roll's handoff is server to server, and a
+    server fetch triggers no preflight. Fix it before anything does.
 - **The AI Cut prompt has two builders and they must render pause markers identically.**
   `buildUserMessage` (the analysis pass) and `buildVerifyUserMessage` (the verification pass)
   in `lib/ai-rough-cut.ts` both emit `<pause N.Ns>` for silences at or above
