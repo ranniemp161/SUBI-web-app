@@ -11,6 +11,7 @@ import {
   uniqueIndex,
   check,
   bigint,
+  real,
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
@@ -237,6 +238,22 @@ export const creditLedger = pgTable(
       onDelete: "set null",
     }),
     /**
+     * B-Roll's project attribution (spec `broll/0002`). A second nullable FK
+     * rather than reusing `project_id`, because that one points at *rough-cut's*
+     * `projects` table and a b-roll spend row cannot live there. Leaving it NULL
+     * instead would forfeit per-project attribution, the refund path, and the
+     * audit trail for half the ecosystem.
+     *
+     * A polymorphic `(source_app, source_id)` pair scales better past ~5 apps
+     * and is the likely eventual shape. At app #2 a real FK is the better trade:
+     * it keeps referential integrity, and reshaping an append-only money ledger
+     * only gets harder. Revisit when a third spending app appears.
+     */
+    brollProjectId: uuid("broll_project_id").references(
+      (): AnyPgColumn => brollProjects.id,
+      { onDelete: "set null" }
+    ),
+    /**
      * The generic idempotency slot — **not** Stripe-specific, despite the name.
      *
      * Four writers share it, and the values are namespaced so they cannot
@@ -274,9 +291,280 @@ export const creditLedger = pgTable(
     uniqueIndex("credit_ledger_grant_month_uq")
       .on(t.userId, t.monthKey)
       .where(sql`${t.reason} = 'grant'`),
+    /**
+     * A row belongs to at most one project, in at most one app. Both NULL stays
+     * legal: a purchase, a grant, and the token->USD conversion point at no
+     * project at all.
+     *
+     * Added as a plain constraint, which takes a lock for the duration of a
+     * validation scan of the whole table. Deliberate, and the same call
+     * migration `0014` made about its index: at this table's size the scan is
+     * milliseconds. The `NOT VALID` + `VALIDATE CONSTRAINT` split that avoids it
+     * does NOT work inside one drizzle migration — drizzle-kit runs every
+     * pending statement in a single transaction, so the lock is held to COMMIT
+     * either way. Doing it properly needs two migrations applied in two separate
+     * runs. Switch to that if `credit_ledger` ever passes ~1M rows.
+     */
+    check(
+      "credit_ledger_one_project_ref",
+      sql`NOT (${t.projectId} IS NOT NULL AND ${t.brollProjectId} IS NOT NULL)`
+    ),
   ]
 );
 
+
+/* ------------------------------------------------------------------ *
+ * B-Roll Generator (apps/broll) — spec `docs/specs/broll/0002-data-model`
+ *
+ * Prefixed `broll_` because the lost app-internal spec named these tables
+ * `projects`, `assets` and `scenes`, which collide with rough-cut's. The
+ * shared `users` row carries identity and balance for both apps; b-roll adds
+ * no user table and no `credits` column.
+ * ------------------------------------------------------------------ */
+
+/** Per-scene render outcome — a DB enum so an invalid state can't be stored. */
+export const brollRenderStatusEnum = pgEnum("broll_render_status", [
+  "pending",
+  "rendered",
+  "failed",
+]);
+
+/**
+ * A b-roll batch: one source transcript, one character style, and the scenes
+ * planned from it. The creator's uploaded reference photo is deliberately NOT
+ * here and NOT in object storage — it is their real face, and it is only ever a
+ * Turn-1 input, since every later generation turn anchors on the previous
+ * output image.
+ */
+export const brollProjects = pgTable(
+  "broll_projects",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    /**
+     * The rough-cut project this transcript came from, when it came from one.
+     * **Nullable on purpose**: b-roll also accepts a plain SRT/VTT upload from
+     * someone who never used rough-cut, and that path must work without
+     * coupling the two apps' lifecycles.
+     */
+    sourceProjectId: uuid("source_project_id").references(() => projects.id, {
+      onDelete: "set null",
+    }),
+    /**
+     * The whole `@repo/transcript` document (word-level, post-EDL). Stored
+     * rather than refetched because of the nullable FK above: an uploaded SRT
+     * has no origin to fetch from.
+     *
+     * **Never select this column in a list query.** A document is capped at
+     * 5 MB, so a page of twelve projects that selects it moves up to 60 MB over
+     * the HTTP driver for data no list displays. Nothing in the database
+     * enforces that; it is a convention (spec `broll/0002` AC-39).
+     */
+    transcript: jsonb("transcript").notNull(),
+    /**
+     * Lifted out of the stored document so the transcript-staleness check can
+     * compare without parsing 5 MB. No staleness policy is decided yet (open
+     * question 1 of the b-roll high level design, Phase 3); this only reserves
+     * the ability to answer it.
+     */
+    edlFingerprint: text("edl_fingerprint"),
+    /** Read constantly (the planner's scene-count multiplier, project cards) — not worth parsing the document for. */
+    durationMs: integer("duration_ms").notNull(),
+    /** Character style (anime, 3D, …). One per project, chosen at setup. */
+    style: text("style").notNull(),
+    outputWidth: integer("output_width").notNull().default(1920),
+    outputHeight: integer("output_height").notNull().default(1080),
+    /** Output frame rate as an exact rational, so 29.97 stays 30000/1001. */
+    outputFpsNum: integer("output_fps_num").notNull().default(30),
+    outputFpsDen: integer("output_fps_den").notNull().default(1),
+    /**
+     * Money (USD micros) reserved before the Gemini call; NULL when no
+     * generation holds funds. Same double duty as `projects.hold_micros`: it is
+     * also the exactly-once gate for settling. Reserving *before* the external
+     * call is what makes the `users_balance_micros_nonneg` CHECK reject an
+     * overdraft before the images are paid for.
+     */
+    holdMicros: integer("hold_micros"),
+    /**
+     * Non-null while a character generation is claimed/in-flight. A plain
+     * UPDATE ... WHERE gen_claim_at IS NULL OR stale is the atomic claim, the
+     * same shape as `projects.ai_cut_claim_at`. Without it a double-click on
+     * Generate is a double charge.
+     *
+     * B-roll's stale window is 10 minutes, NOT `@repo/billing`'s
+     * `STALE_HOLD_MS` (10s, sized for transcription): a character set takes
+     * ~110s, so 10s would reclaim a run that is still going and charge twice.
+     */
+    genClaimAt: timestamp("gen_claim_at", { withTimezone: true }),
+    /**
+     * How many scene-planning runs this project has had. The **only** value
+     * that separates a bundled first run from a charged re-run, so a wrong
+     * answer here is a billing bug, not a cosmetic one.
+     */
+    planRuns: integer("plan_runs").notNull().default(0),
+    /**
+     * Present from day one so an R2 retention policy is possible later without
+     * a painful backfill. Character images are permanent recurring cost and no
+     * retention policy is decided yet; storage cost compounds silently.
+     */
+    lastOpenedAt: timestamp("last_opened_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [
+    // The dashboard's list query, same shape and same reason as
+    // `projects_user_created_idx`: equality on user_id, then created_at for
+    // both the keyset range predicate and the ORDER BY.
+    index("broll_projects_user_created_idx").on(t.userId, t.createdAt),
+  ]
+);
+
+/**
+ * One transparent character PNG per emotion, in R2. Regenerating a variant
+ * replaces the row in place and deletes the object it superseded, so stored
+ * objects stay bounded at one per emotion — history would grow object storage
+ * without limit against a retention policy that does not exist yet.
+ */
+export const brollAssets = pgTable(
+  "broll_assets",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    brollProjectId: uuid("broll_project_id")
+      .notNull()
+      .references(() => brollProjects.id, { onDelete: "cascade" }),
+    /**
+     * Plain text, not a pgEnum, unlike every other constrained value in this
+     * file. Phase 0 found that one out-of-enum emotion failed a whole plan and
+     * discarded every valid scene with it, and drew the rule: strict about
+     * claims, lenient about shape. An emotion label is not a truth claim, and
+     * the set of six to eight is still being tuned.
+     */
+    emotion: text("emotion").notNull(),
+    /**
+     * Stored, not derived from the project id and emotion, precisely so the key
+     * can carry a random element. A derivable key is a guessable key once you
+     * know the project id, and these are served by presigned URL.
+     */
+    r2Key: text("r2_key").notNull(),
+    /**
+     * The **alpha-trimmed** dimensions, not the generation frame's. Background
+     * removal returns an image the size of its input, so an untrimmed character
+     * generated in a landscape frame is a mostly-empty PNG and every template
+     * then scales and positions empty canvas. Stored so a template can position
+     * without downloading the image.
+     */
+    width: integer("width").notNull(),
+    height: integer("height").notNull(),
+    /** Storage accounting, so the deferred retention decision has data when it is made. */
+    byteSize: integer("byte_size").notNull(),
+    /** Bumped on regenerate, so a replaced image cannot serve from a cache. */
+    attempt: integer("attempt").notNull().default(1),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [
+    // What makes replace-in-place actually true rather than merely intended.
+    uniqueIndex("broll_assets_project_emotion_uq").on(
+      t.brollProjectId,
+      t.emotion
+    ),
+  ]
+);
+
+/**
+ * A planned cutaway: where it lands, what triggered it, and how it renders.
+ * Scenes carry no stored number — they sort by `start_ms`, and the number in an
+ * exported filename (`scene_04__02-35.mp4`) is computed from that order at
+ * export. Storing one would mean renumbering the whole project every time a
+ * scene is excluded or added by hand, which is routine here.
+ */
+export const brollScenes = pgTable(
+  "broll_scenes",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    brollProjectId: uuid("broll_project_id")
+      .notNull()
+      .references(() => brollProjects.id, { onDelete: "cascade" }),
+    /** Timecode on the creator's final cut, and the sort key. */
+    startMs: integer("start_ms").notNull(),
+    durationMs: integer("duration_ms").notNull(),
+    /**
+     * The verbatim transcript line that triggered this scene — what makes a
+     * scene identifiable when a user is scanning twenty of them in two seconds
+     * each ("oh, that's the fuel imports bit").
+     *
+     * These three and `strength` are **NULL exactly when `origin = 'manual'`**:
+     * a scene the user added by hand at a chosen timecode has no line behind it
+     * and no planner score, which is the whole point of the origin field.
+     */
+    sourceText: text("source_text"),
+    sourceStartMs: integer("source_start_ms"),
+    sourceEndMs: integer("source_end_ms"),
+    /** character | infographic | text. */
+    visualType: text("visual_type").notNull(),
+    /** Which character variant to composite; NULL on a chart-only or text-only scene. */
+    emotion: text("emotion"),
+    /** One of the six fixed templates (character-left, chart-full, …). */
+    layoutTemplate: text("layout_template").notNull(),
+    overlayText: text("overlay_text"),
+    /**
+     * `{type, title, values, labels, unit, source_span}`, or NULL.
+     *
+     * **NULL is the meaningful case, never an error**: a transcript that
+     * quantifies only vaguely ("most", "a huge share") must yield no chart and
+     * fall back to text. `unit` is load-bearing and is traced to the source span
+     * exactly like the values are — a bare `80` next to a bare `20` is a
+     * different claim than `80%` and `20%`, and this product sells numeric
+     * honesty.
+     */
+    chart: jsonb("chart"),
+    /**
+     * The planner's confidence, 0 to 1. Kept for display and for retuning the
+     * planner later — deliberately NOT used to decide `included`, because no
+     * threshold has any evidence behind it yet.
+     */
+    strength: real("strength"),
+    /**
+     * Whether this scene is in the batch. Written by the planner directly, then
+     * owned by the user. Two fields rather than one because they answer
+     * different questions: what the model thought, and what the user decided.
+     */
+    included: boolean("included").notNull().default(true),
+    /** planner | manual. Gates the four nullable columns above. */
+    origin: text("origin").notNull().default("planner"),
+    /**
+     * Rendering runs in the user's browser and is free, so only the settled
+     * outcome is worth a row — no progress percentage. Persisted at all so the
+     * batch export screen survives a reload and the dashboard card can say
+     * something true.
+     */
+    renderStatus: brollRenderStatusEnum("render_status")
+      .notNull()
+      .default("pending"),
+    renderedAt: timestamp("rendered_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [
+    // The Scene Studio list query and the export order in one.
+    index("broll_scenes_project_start_idx").on(t.brollProjectId, t.startMs),
+  ]
+);
 
 /** TypeScript types inferred from the schema for use across the app. */
 export type User = typeof users.$inferSelect;
@@ -286,3 +574,9 @@ export type NewProject = typeof projects.$inferInsert;
 export type CreditLedgerEntry = typeof creditLedger.$inferSelect;
 export type AiCutRunRow = typeof aiCutRuns.$inferSelect;
 export type NewAiCutRunRow = typeof aiCutRuns.$inferInsert;
+export type BrollProject = typeof brollProjects.$inferSelect;
+export type NewBrollProject = typeof brollProjects.$inferInsert;
+export type BrollAsset = typeof brollAssets.$inferSelect;
+export type NewBrollAsset = typeof brollAssets.$inferInsert;
+export type BrollScene = typeof brollScenes.$inferSelect;
+export type NewBrollScene = typeof brollScenes.$inferInsert;
