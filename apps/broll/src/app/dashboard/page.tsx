@@ -6,6 +6,7 @@ import { brollProjects } from "@repo/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { WALLET_URL } from "@/lib/env";
 import { formatUsd } from "@repo/billing/pricing";
+import Link from "next/link";
 
 /**
  * The project list. Proves the whole spine is wired: Clerk session -> the
@@ -71,12 +72,24 @@ export default async function Dashboard() {
   return (
     <div className="max-w-[1200px] mx-auto px-8 py-12">
       <div className="flex items-baseline justify-between">
-        <h1
-          className="text-2xl font-bold tracking-tight"
-          style={{ fontFamily: "var(--font-space-grotesk)" }}
-        >
-          Your projects
-        </h1>
+        <div className="flex items-center gap-4">
+          <h1
+            className="text-2xl font-bold tracking-tight"
+            style={{ fontFamily: "var(--font-space-grotesk)" }}
+          >
+            Your projects
+          </h1>
+          <Link
+            href="/dashboard/new"
+            className="px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
+            style={{
+              background: "var(--broll-accent)",
+              color: "var(--broll-accent-foreground)",
+            }}
+          >
+            New project
+          </Link>
+        </div>
         <a
           href={`${WALLET_URL}/dashboard`}
           className="text-sm broll-tabular"
@@ -97,8 +110,11 @@ export default async function Dashboard() {
       ) : (
         <ul className="mt-8 grid gap-4">
           {projects.map((p) => (
-            <li key={p.id} className="broll-glass rounded-xl p-5">
-              <div className="flex items-center justify-between">
+            <li key={p.id}>
+              <Link
+                href={`/dashboard/${p.id}`}
+                className="broll-glass rounded-xl p-5 flex items-center justify-between"
+              >
                 <span className="font-semibold">{p.name}</span>
                 <span
                   className="text-sm broll-tabular"
@@ -106,7 +122,7 @@ export default async function Dashboard() {
                 >
                   {Math.round(p.durationMs / 1000)}s · {p.style}
                 </span>
-              </div>
+              </Link>
             </li>
           ))}
         </ul>
