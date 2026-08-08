@@ -1,0 +1,67 @@
+@import "tailwindcss";
+@import "@repo/ui/styles/theme.css";
+
+/* ---------------------------------------------------------------------------
+   B-Roll Generator theme.
+
+   Dark only — there is no light mode. The ecosystem tokens live in
+   @repo/ui/styles/theme.css; the values below are this app's local surface
+   treatment, taken from the UI brief in docs/specs/broll/design-prompt.md.
+
+   The deliberate quirk, do not "fix" it: hover shifts HUE (Key Yellow to
+   Interactive Blue), not lightness. That is the established ecosystem
+   behaviour, not an oversight.
+   --------------------------------------------------------------------------- */
+
+:root {
+  --broll-background: #000000;
+  --broll-surface: #0c0c0e;
+  --broll-surface-alt: #2c2c2c;
+  --broll-foreground: #ffffff;
+  --broll-muted: #aaaaaa;
+
+  /* Key Yellow: brand, primary actions, active state. Text on it is near-black
+     because white on yellow fails contrast. */
+  --broll-accent: #fffc00;
+  --broll-accent-foreground: #111111;
+  /* Interactive Blue: hover, focus ring, links. */
+  --broll-accent-hover: #2997ff;
+  --broll-accent-shadow: rgba(255, 252, 0, 0.25);
+  --broll-brand-muted: rgba(255, 252, 0, 0.2);
+}
+
+/* Borders do the work, not drop shadows. Panels sit on near-black and separate
+   with a 1px hairline plus a 2% white fill, never elevation shadow. */
+.broll-glass {
+  background: rgba(255, 255, 255, 0.02);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* The one focal element on a screen. */
+.broll-glow {
+  background: rgba(255, 255, 255, 0.02);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--broll-accent);
+  box-shadow: 0 0 40px -10px rgba(255, 252, 0, 0.2);
+}
+
+/* Timecodes and numeric data align in columns. */
+.broll-tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+:focus-visible {
+  outline: 2px solid var(--broll-accent-hover);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
