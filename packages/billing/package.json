@@ -10,7 +10,8 @@
     "./ledger": "./src/ledger.ts"
   },
   "scripts": {
-    "test": "vitest run"
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@repo/db": "*",

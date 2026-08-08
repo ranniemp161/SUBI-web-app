@@ -15,7 +15,9 @@
     "db:push": "tsx scripts/preflight.ts push && drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "topup-demo-account": "tsx scripts/topup-demo-account.ts",
-    "grant-credits": "tsx scripts/grant-credits.ts"
+    "grant-credits": "tsx scripts/grant-credits.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "drizzle-orm": "^0.45.2",
