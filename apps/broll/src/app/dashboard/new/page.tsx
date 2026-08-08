@@ -112,8 +112,14 @@ export default function NewProjectPage() {
       </div>
 
       <form onSubmit={onSubmit} className="mt-6 grid gap-6">
+        {/* The keys are load-bearing, not decoration. Both branches render an
+            <input> in the same slot, so without distinct keys React reuses the
+            DOM node and the field flips from uncontrolled (the file input, which
+            has no `value`) to controlled (the text input, which does). That is
+            the "changing an uncontrolled input to be controlled" warning, and it
+            also means the two fields would share element state. */}
         {mode === "upload" ? (
-          <label className="grid gap-2">
+          <label key="upload-file" className="grid gap-2">
             <span className="text-sm font-medium">Transcript file</span>
             <input
               type="file"
@@ -132,7 +138,7 @@ export default function NewProjectPage() {
             )}
           </label>
         ) : (
-          <label className="grid gap-2">
+          <label key="roughcut-reference" className="grid gap-2">
             <span className="text-sm font-medium">Ruff Cut project link</span>
             <input
               value={reference}
