@@ -1,7 +1,7 @@
 # 0004. Frame accuracy and timeline synchrony
 
 **Date**: 2026-07-24
-**Status**: In Progress
+**Status**: Accepted
 
 ## Structure
 

@@ -9,8 +9,8 @@ through every layer, working).
 
 | Workspace | Scope | Workflow | Status rollup |
 |---|---|---|---|
-| `_root` (ecosystem wide) | [_root/scope.md](_root/scope.md) | Beta | 1 done, 1 in-progress, 1 existing, 2 deferred, 1 open question |
-| `apps/rough-cut` | [rough-cut/scope.md](rough-cut/scope.md) | Beta | 1 done, 4 in-progress, 12 existing, 5 deferred |
+| `_root` (ecosystem wide) | [_root/scope.md](_root/scope.md) | Beta | 1 done, 1 in-progress, 2 planned, 3 existing, 2 deferred, 1 open question |
+| `apps/rough-cut` | [rough-cut/scope.md](rough-cut/scope.md) | Beta | 3 done, 2 in-progress, 13 existing, 5 deferred |
 | `apps/founders-frame` | [founders-frame/scope.md](founders-frame/scope.md) | Alpha | 1 done, 1 planned, 2 existing |
 | `apps/broll` | [broll/scope.md](broll/scope.md) | Alpha | 1 done (Phase 0 spikes), 1 in-progress, 5 planned |
 | `apps/wallet` | tracked under `_root` | see `_root` | the Wallet app **is** the ecosystem wide billing feature |
@@ -41,5 +41,11 @@ through every layer, working).
 - Specs live in `docs/specs/<workspace>/`, owned by `/architect`. The older
   `docs/adr/` tree is the same idea under the previous naming, still linked from
   the features it governs.
+- **An architecture review on 2026-08-07 produced seven action items, and six of
+  them shipped the same day** across both apps and two new shared packages
+  (`@repo/billing`, `@repo/server-shared`). None of it had a scope row until
+  2026-08-08. The rows are `_root` features B and C, rough-cut feature M, and
+  `_root` feature 5 for what is left. The review document itself is not in the
+  repo, which is the part worth fixing first: see `_root` feature 5.
 
 _Drafted by /scope, worth a quick human pass._

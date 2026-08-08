@@ -21,9 +21,25 @@ _Steps derived from ADR 0004 acceptance criteria. `/verify` runs these; `/test` 
 
 ## Commands
 
-- [ ] `npm -w @repo/rough-cut typecheck` → passes
-- [ ] `npm -w @repo/rough-cut lint` → passes
-- [ ] `npm -w @repo/rough-cut test` → all suites pass (440/440 at last run, including the new dashboard no-panel tests, the `hasEdl`/strict-schema route tests, the reselect-gating regression tests, the AC-12 full-page-loader tests, and the progress-bar test in `[id]/page.test.tsx`)
+- [x] `npm -w @repo/rough-cut typecheck` → passes (ran 2026-08-08, clean)
+- [x] `npm -w @repo/rough-cut lint` → passes (ran 2026-08-08, clean, `--max-warnings=0`)
+- [x] `npm -w @repo/rough-cut test` → all suites pass (ran 2026-08-08: **691/691 across 50 files**, up from 440/440 when this line was written, including the new dashboard no-panel tests, the `hasEdl`/strict-schema route tests, the reselect-gating regression tests, the AC-12 full-page-loader tests, and the progress-bar test in `[id]/page.test.tsx`)
+
+## Run log
+
+- **2026-08-08, `/check verify`, verdict BLOCKED.** The three command steps above
+  ran and passed. The app was launched (`npm -w @repo/rough-cut dev`, Next 16.2.12
+  on Turbopack, ready in 4.1s) and driven with Playwright: `/` served 200 and
+  rendered, `/dashboard` and `/dashboard/[id]` both redirected to
+  `/sign-in?redirect_url=...`, and `POST` and `GET /api/projects` both answered
+  `401 {"error":"Unauthorized"}` before any schema validation. **None of the 13 UI
+  steps above could be exercised**: every one of them is a signed in behavior, and
+  signing in locally writes to the production database, because `.env.local` points
+  `DATABASE_URL` at the production Neon branch while Clerk runs a development
+  instance. This is the same constraint that made the repo delete its authenticated
+  e2e tier (see `apps/rough-cut/AGENTS.md`, "E2E"). Reaching a real verdict on
+  AC-1 to AC-12 needs either a separate Neon branch for local work, or the engineer
+  driving the 13 steps by hand.
 
 ## Acceptance-criteria coverage
 
