@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { createProjectFromUpload } from "@/app/actions";
+import { createProjectFromUpload, importFromRoughCut } from "@/app/actions";
 import { CHARACTER_STYLES } from "@/lib/styles";
 
 /**
@@ -18,6 +18,8 @@ export default function NewProjectPage() {
   const [format, setFormat] = useState<"srt" | "vtt" | "json" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [mode, setMode] = useState<"upload" | "roughcut">("upload");
+  const [reference, setReference] = useState("");
 
   async function onFile(file: File) {
     setError(null);
@@ -44,15 +46,24 @@ export default function NewProjectPage() {
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!text || !format) {
+    setError(null);
+
+    if (mode === "upload" && (!text || !format)) {
       setError("Choose a transcript file first.");
       return;
     }
+    if (mode === "roughcut" && !reference.trim()) {
+      setError("Paste a Ruff Cut project link.");
+      return;
+    }
+
     setBusy(true);
-    setError(null);
     try {
-      // On success the action redirects, so control never returns here.
-      const result = await createProjectFromUpload({ name, style, format, text });
+      // On success either action redirects, so control never returns here.
+      const result =
+        mode === "upload"
+          ? await createProjectFromUpload({ name, style, format: format!, text: text! })
+          : await importFromRoughCut({ reference, name, style });
       if (result?.error) setError(result.error);
     } finally {
       setBusy(false);
@@ -72,25 +83,80 @@ export default function NewProjectPage() {
         subtitle file you already have.
       </p>
 
-      <form onSubmit={onSubmit} className="mt-8 grid gap-6">
-        <label className="grid gap-2">
-          <span className="text-sm font-medium">Transcript file</span>
-          <input
-            type="file"
-            accept=".srt,.vtt,.json"
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) void onFile(f);
+      <div className="mt-8 flex gap-2" role="tablist">
+        {(
+          [
+            ["upload", "Upload a file"],
+            ["roughcut", "Import from Ruff Cut"],
+          ] as const
+        ).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            aria-selected={mode === id}
+            onClick={() => {
+              setMode(id);
+              setError(null);
             }}
-            className="text-sm file:mr-4 file:rounded-md file:border-0 file:px-4 file:py-2 file:font-semibold"
-            style={{ color: "var(--broll-muted)" }}
-          />
-          {fileName && (
+            className="px-4 py-2 rounded-md text-sm font-medium transition-colors"
+            style={
+              mode === id
+                ? { background: "var(--broll-surface-alt)", color: "var(--broll-foreground)" }
+                : { background: "transparent", color: "var(--broll-muted)" }
+            }
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      <form onSubmit={onSubmit} className="mt-6 grid gap-6">
+        {/* The keys are load-bearing, not decoration. Both branches render an
+            <input> in the same slot, so without distinct keys React reuses the
+            DOM node and the field flips from uncontrolled (the file input, which
+            has no `value`) to controlled (the text input, which does). That is
+            the "changing an uncontrolled input to be controlled" warning, and it
+            also means the two fields would share element state. */}
+        {mode === "upload" ? (
+          <label key="upload-file" className="grid gap-2">
+            <span className="text-sm font-medium">Transcript file</span>
+            <input
+              type="file"
+              accept=".srt,.vtt,.json"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) void onFile(f);
+              }}
+              className="text-sm file:mr-4 file:rounded-md file:border-0 file:px-4 file:py-2 file:font-semibold"
+              style={{ color: "var(--broll-muted)" }}
+            />
+            {fileName && (
+              <span className="text-xs" style={{ color: "var(--broll-muted)" }}>
+                {fileName} · read as {format?.toUpperCase()}
+              </span>
+            )}
+          </label>
+        ) : (
+          <label key="roughcut-reference" className="grid gap-2">
+            <span className="text-sm font-medium">Ruff Cut project link</span>
+            <input
+              value={reference}
+              onChange={(e) => setReference(e.target.value)}
+              placeholder="https://myfirstcut.app/dashboard/…"
+              className="rounded-md px-3 py-2 text-sm"
+              style={{
+                background: "var(--broll-surface-alt)",
+                border: "1px solid rgba(255,255,255,0.08)",
+              }}
+            />
             <span className="text-xs" style={{ color: "var(--broll-muted)" }}>
-              {fileName} · read as {format?.toUpperCase()}
+              Paste the studio link, or just the project id. B-Roll fetches the
+              transcript from Ruff Cut directly, with the cut already applied, so
+              every timecode is relative to your finished edit.
             </span>
-          )}
-        </label>
+          </label>
+        )}
 
         <label className="grid gap-2">
           <span className="text-sm font-medium">Project name</span>
@@ -148,14 +214,18 @@ export default function NewProjectPage() {
         <div>
           <button
             type="submit"
-            disabled={busy || !text}
+            disabled={busy || (mode === "upload" ? !text : !reference.trim())}
             className="px-6 py-3 rounded-lg font-semibold transition-colors disabled:opacity-40"
             style={{
               background: "var(--broll-accent)",
               color: "var(--broll-accent-foreground)",
             }}
           >
-            {busy ? "Reading transcript…" : "Create project"}
+            {busy
+              ? mode === "upload"
+                ? "Reading transcript…"
+                : "Fetching from Ruff Cut…"
+              : "Create project"}
           </button>
         </div>
       </form>
