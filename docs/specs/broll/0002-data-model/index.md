@@ -335,10 +335,11 @@ that spends money.
    documented in the migration file with the threshold at which to switch to the
    two migration form. See the withdrawn AC-47 above for why the split was not
    used.
-3. **[generated 2026-08-08 as `0015_ambitious_martin_li.sql`, NOT applied]**
-   Review it, then apply to the dev branch first and to production behind the
-   preflight prompt, satisfies **AC-8**. Not done until the schema is confirmed
-   live, not merely generated.
+3. **[done 2026-08-08]** Generated as `0015_ambitious_martin_li.sql`, reviewed,
+   and applied to the dev branch and then production behind the preflight
+   prompt, satisfies **AC-8**. `db:verify` passes on both, and every constraint,
+   index and enum value was confirmed live rather than inferred from the
+   migration file.
 4. **[done 2026-08-08]** Add the `broll_render_status` enum with the tables in
    step 1; it is new, so it carries no ordering constraint.
 5. **A separate, later migration** adds the two `credit_ledger_reason` values,

@@ -117,9 +117,16 @@ and see its parsed segments. No AI yet.
           `NOT VALID`: **AC-47 was withdrawn during the build** because
           `drizzle-kit` runs all pending migration statements in one
           transaction, so the split buys nothing inside a single migration
-    - [ ] Apply migration `0015_ambitious_martin_li.sql` to the dev branch, then
-          to production behind the preflight prompt (AC-8). **Generated, not
-          applied.** Nothing here is real until this box is ticked
+    - [x] Apply migration `0015_ambitious_martin_li.sql` to the dev branch, then
+          to production behind the preflight prompt (AC-8). **Applied to both on
+          2026-08-08**, dev first as a rehearsal. `db:verify` passes on both, and
+          the objects that actually enforce the invariants were confirmed live on
+          each: the `credit_ledger_one_project_ref` CHECK (validated, not
+          `NOT VALID`), all three foreign keys with the right delete behavior
+          (cascade, cascade, set null), `broll_assets_project_emotion_uq`, both
+          query indexes, the three enum values, and every load bearing nullable
+          column. Production carried 191 ledger rows and 45 projects, so the
+          validation scan we chose to accept was microseconds
 - [ ] Verify it: /check verify broll skeleton. A runtime pass on 2026-08-06 drove
       the real server: the auth gate holds, the document path holds (the package
       was driven through its public export, and ten real projects built clean),

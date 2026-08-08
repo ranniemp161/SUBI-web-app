@@ -142,13 +142,15 @@ in the repo so the next reader can tell what item 5 actually asked for.
 the review's findings are written into `docs/reviews/` so nothing depends on a chat
 session nobody can reopen.
 
-- [ ] Apply migration `0014` to production. It adds the `projects` index on
-      `(user_id, created_at)` that the dashboard query has always wanted, and by
-      its own commit note it is rehearsed on the dev Neon branch but deliberately
-      **not applied to production**, which stays manual behind the preflight
-      prompt. Additive and backward compatible, so nothing is broken while it
-      waits, but every dashboard page is a sequential scan plus a sort until it
-      lands.
+- [x] Apply migration `0014` to production. **Already done, and this box was
+      wrong when written.** It was enrolled on 2026-08-08 from PR #121's commit
+      note, which says the migration was rehearsed on dev and not applied to
+      production. That was true when the commit was written and stale by the time
+      it became a scope row. Checked against the live database on 2026-08-08:
+      `projects_user_created_idx` exists on production, and production records 15
+      applied migrations against 16 in the journal, so `0015` was the only one
+      pending. A commit message is a statement about a moment, not about now;
+      check the database.
 - [ ] Record the review in `docs/reviews/`. It is not in the repo: the newest file
       there is dated 2026-07-15, the working tree is clean, and the only trace of
       the seven items is the commit messages that cite them. Item 5 is described
