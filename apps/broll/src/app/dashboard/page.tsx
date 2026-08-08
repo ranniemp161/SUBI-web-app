@@ -1,4 +1,5 @@
 import { auth } from "@clerk/nextjs/server";
+import { redirect } from "next/navigation";
 import { getAuthorizedDbUser } from "@repo/server-shared/authz";
 import { db } from "@repo/db";
 import { brollProjects } from "@repo/db/schema";
@@ -18,14 +19,40 @@ import { formatUsd } from "@repo/billing/pricing";
  */
 export default async function Dashboard() {
   // proxy.ts already rejected an anonymous request, so a missing session here
-  // means something is wrong rather than merely unauthenticated.
+  // is a belt-and-braces case rather than the normal path.
   const { userId: clerkId } = await auth();
-  if (!clerkId) return null;
+  if (!clerkId) redirect("/sign-in");
 
   // Also provisions the `users` row lazily, covering the window where Clerk
   // granted a session before the user.created webhook landed.
+  //
+  // NEVER `return null` from either branch. A page component that returns null
+  // falls through to Next's not-found boundary, so a signed-in user in a real,
+  // recoverable state gets a bare 404 with nothing to act on. That is exactly
+  // what happened the first time this page was opened with a session.
   const user = await getAuthorizedDbUser(clerkId);
-  if (!user) return null;
+  if (!user) {
+    return (
+      <div className="max-w-[1200px] mx-auto px-8 py-24">
+        <div className="broll-glow rounded-xl p-12 max-w-xl">
+          <h1
+            className="text-xl font-bold"
+            style={{ fontFamily: "var(--font-space-grotesk)" }}
+          >
+            Finishing your account setup
+          </h1>
+          <p className="mt-3 text-sm" style={{ color: "var(--broll-muted)" }}>
+            You are signed in, but this account has no record yet. That happens
+            when the email on your profile is not both your primary address and
+            verified, which is the one thing membership is allowed to follow.
+          </p>
+          <p className="mt-3 text-sm" style={{ color: "var(--broll-muted)" }}>
+            Verify your primary email address, then reload this page.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   const projects = await db
     .select({
