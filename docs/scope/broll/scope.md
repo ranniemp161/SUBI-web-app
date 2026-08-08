@@ -70,14 +70,36 @@ and see its parsed segments. No AI yet.
       [0002](../../specs/broll/0002-data-model/index.md) for the `broll_*` tables
       and the two shared ledger changes. The scaffold is governed by neither: it
       is blocked on the domain, not on a design.
-- [ ] Build it: /develop broll skeleton — code in
+- [x] Build it: /develop broll skeleton — every sub box below is done as of
+      2026-08-08, and the feature's **Done when** is met: a user can create a
+      b-roll project, upload or inherit a transcript, and see its parsed
+      segments. Driven end to end in the real app on both paths. Code in
       [packages/transcript/](../../../packages/transcript/),
       [apps/rough-cut/src/lib/export/](../../../apps/rough-cut/src/lib/export/)
       and [packages/db/src/schema.ts](../../../packages/db/src/schema.ts) plus
       [drizzle/0015_ambitious_martin_li.sql](../../../packages/db/drizzle/0015_ambitious_martin_li.sql)
-  - [ ] Scaffold `apps/broll` on port 3003, Clerk, `env.ts` (AC-7, AC-13).
-        **Not started: needs the production domain**, which is the b-roll high
-        level design's open question 4 and is marked blocking Phase 1.
+  - [x] Scaffold `apps/broll` on port 3003, Clerk, `env.ts` (AC-7, AC-13). Built
+        2026-08-08 (PR #128). **The domain never blocked this, and open question
+        4 overstates it.** It blocks the production *deploy*, not the build:
+        rough-cut (3000) and wallet (3001) already share one Clerk development
+        instance locally with no satellite domain anywhere in this repo's
+        source, because the multi domain SSO set lives in Clerk's Dashboard.
+        B-roll on 3003 is the third app doing the same thing. What still needs a
+        real domain is registering b-roll as a satellite for production, and
+        Founder's Frame cannot supply one: it is a fully static export
+        (`output: 'export'`, no API routes), so it can link to b-roll but never
+        host it.
+  - [x] Transcript intake, both paths (PR #128, #129). Upload an `.srt`, `.vtt`
+        or `.json`, or inherit one from Ruff Cut, then see the parsed segments.
+        This is what closes the feature's **Done when**. The Ruff Cut path is
+        **server to server**, not a browser fetch: b-roll is getting its own
+        domain rather than a subdomain, so it is genuinely cross site in
+        production, and a credentialed cross origin fetch would then hinge on
+        the `SameSite` value Clerk puts on its session cookie, which is Clerk's
+        to choose. A server fetch carries no cookie and triggers no CORS.
+        Authorization is a forwarded Clerk session token, which works because
+        all three apps share one Clerk instance; rough-cut still runs its own
+        owner check, so no new trust was created.
   - [x] `@repo/transcript`: the package, the frame math moved out of rough-cut
         behind re-export shims, and the Zod document schema
         (AC-11; spec 0001 AC-1 to AC-6, AC-14, AC-16)
@@ -97,6 +119,20 @@ and see its parsed segments. No AI yet.
         credentials allowed, any other origin and a missing origin `403`, `GET`
         still `401`, and sibling routes plus path tricks
         (`/transcript/extra`, `/transcript/../../credits`) all still `401`.
+
+        **That verification is no longer true of `next dev`, and the date is
+        why.** It was run on 2026-08-06, when rough-cut's `dev` script still
+        passed `--webpack`; PR #124 removed that flag on 2026-08-07. Re driven
+        2026-08-08: under `next dev` every `OPTIONS` on this route answers `404`
+        regardless of origin, while `GET` still correctly `401`s. Against a
+        production build the original result holds exactly, `204` with the exact
+        origin and `credentials: true`, `403` for any other origin and for a
+        missing one. So the route is right and the dev server is wrong, which is
+        the mirror image of PR #122: that one was invisible in dev and broke
+        production, this one is broken in dev and fine in production. Nothing
+        depends on it today because the Ruff Cut handoff went server to server,
+        and a server fetch triggers no preflight at all. Worth fixing before
+        anything does depend on it.
   - [x] Subtitle export (`.srt` and `.vtt`), added on request outside spec 0001.
         Rendered from the same document, so the captions carry the same post cut
         timing and drop straight beside the exported MP4. JSON stays the b-roll
@@ -149,21 +185,46 @@ list, none blocking the boxes already ticked):
 - `verify.md` for the b-roll high level design still states AC-11 in its
   unbuildable form (it asks a package to import from an app). Spec 0001 records
   the corrected wording; the older file has not been amended.
-- Before b-roll actually fetches a transcript across origins, confirm that Clerk's
-  session cookie genuinely travels on a credentialed cross origin fetch from the
-  b-roll origin to `myfirstcut.app`. Multi domain SSO is configured, but whether
-  the cookie rides a cross site request depends on its `SameSite` setting, which
-  is Clerk's to set and not ours. If it does not travel, switch to the server to
-  server variant carrying a forwarded token: that fallback is already weighed in
-  the rationale and needs no new spec. Enrolled 2026-08-08 from spec 0001's follow
-  up list, which had it and this scope did not.
+- ~~Before b-roll actually fetches a transcript across origins, confirm that
+  Clerk's session cookie travels on a credentialed cross origin fetch.~~
+  **Closed 2026-08-08 by taking the other path.** The question turned out to be
+  unanswerable locally and coupled to a decision nobody had connected to it:
+  `localhost:3000` and `localhost:3003` are different *origins* but the same
+  *site*, and `SameSite` is site based, so no local test says anything about
+  production. Which production behaviour applies depends on the domain b-roll
+  gets: a subdomain of `myfirstcut.app` would be same site, its own domain is
+  cross site. The engineer confirmed b-roll gets **its own domain**, so the
+  browser fetch would have depended on a Clerk setting outside our control. The
+  handoff was built server to server instead, which is immune to all of it. The
+  coupling between the domain choice and the handoff design is the part worth
+  remembering; the high level design does not mention it.
+
+- **Segment granularity differs by intake path, and Phase 3 depends on it.**
+  Measured 2026-08-08 across the two paths on real transcripts: a Ruff Cut
+  handoff gave **33 segments over 6:35** with 1034 word timings and an exact
+  30/1 frame rate, while an uploaded SRT gave **228 segments over 8:12** with no
+  word timings and no frame rate. Roughly 12 seconds per segment versus 2. Both
+  are correct: `@repo/transcript` says a document's segments run one whole
+  utterance long, which is the planner's unit, and the subtitle importers keep
+  each cue's own timing rather than inventing merged boundaries. But the planner
+  assumes the utterance shape in two places, its `ceil(runtime × 1.2)` scene
+  target and the Scene Studio's "identifiable source line". A caption cue reading
+  "was the deadline" identifies nothing. Decide in Phase 3 whether the planner
+  copes, or whether an import merges cues into utterances before planning.
 
 **Bigger than the spec implies.** This phase carries a shared package extraction, a
 new export surface in a *different* app, and two shared-schema migrations. Budget
 accordingly.
 
-**Blocked on:** a production domain — Clerk multi-domain config plus the
-throw-at-import `env.ts` convention means the app cannot deploy without one.
+**Blocked on nothing to finish building; blocked on a domain to deploy.** The
+original wording said the app "cannot deploy without one", which is true, and
+then that was read as blocking the phase, which it was not. Everything in Phase 1
+is built and running locally. What the domain gates is the production deploy:
+registering b-roll as a satellite in Clerk's Dashboard, and the throw at import
+`env.ts` convention. Two more things follow it and neither is code: a fourth
+Vercel project, and adding that project's build to branch protection **by hand**,
+since that list lives in GitHub settings and has silently stopped gating once
+before.
 
 ## Phase 2
 
