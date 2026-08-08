@@ -23,13 +23,18 @@ own the cut. See the boundary rule in Conventions.
 
 ## Commands
 ```bash
-npm -w @repo/transcript test    # vitest run
+npm -w @repo/transcript test        # vitest run
+npm -w @repo/transcript typecheck   # tsc --noEmit, via the root tsconfig.base.json
 ```
 
 ## Conventions
 - **No build step.** Consumed as TypeScript source directly, the same pattern as
   `packages/ui` and `packages/server-shared`. That means this package compiles
-  under **each consuming app's `tsconfig`**, not its own. Rough Cut targets
+  under **each consuming app's `tsconfig`**, not its own. It does now have a
+  `tsconfig.json`, but that one only powers `typecheck`: it extends the root
+  `tsconfig.base.json`, which deliberately mirrors the apps' settings so this
+  package cannot pass its own check and then fail inside an app. Nothing is built
+  from it. Rough Cut targets
   below ES2020, which is why `canonicalFingerprint` uses two 32 bit FNV-1a
   passes with `Math.imul` rather than `BigInt` — `BigInt` literals do not
   compile at that target. A future shared package inherits the same constraint.

@@ -10,7 +10,7 @@ tracked by an append-only ledger.
 ## Key files
 | File | Owns |
 |---|---|
-| `src/schema.ts` | Table defs: `users`, `projects`, `creditLedger`, `aiCutRuns` (+ enums `transcript_status`, `credit_ledger_reason`). `accessCodes` is gone — migration `0012_retire_access_codes.sql` dropped it; the `users` row itself is the authorization now. `projects.source_fps_num`/`source_fps_den` (migration `0013`) hold the source video's frame rate as an exact rational so 29.97 stays 30000/1001; written by the browser at reselect, and read only by rough-cut's transcript route, which needs a timebase with no source file in hand |
+| `src/schema.ts` | Table defs: `users`, `projects`, `creditLedger`, `aiCutRuns`, plus B-Roll's `brollProjects`, `brollAssets`, `brollScenes` (+ enums `transcript_status`, `credit_ledger_reason`, `broll_render_status`). The `broll_*` tables and `credit_ledger.broll_project_id` arrived in migration `0015` (spec `docs/specs/broll/0002-data-model`); **`0015` is generated but NOT applied to any database yet**, and `apps/broll` does not exist, so nothing reads them. `accessCodes` is gone — migration `0012_retire_access_codes.sql` dropped it; the `users` row itself is the authorization now. `projects.source_fps_num`/`source_fps_den` (migration `0013`) hold the source video's frame rate as an exact rational so 29.97 stays 30000/1001; written by the browser at reselect, and read only by rough-cut's transcript route, which needs a timebase with no source file in hand |
 | `src/index.ts` | `db` singleton (Neon HTTP driver) + `withDbRetry` (timeout/retry wrapper around retryable connection failures) |
 | `drizzle/*.sql` | Committed, reviewed migration history (source of truth for schema changes) |
 | `drizzle.config.ts` | Reads `DATABASE_URL` from `.env.local` in this directory |
@@ -26,6 +26,14 @@ npm run db:migrate    # apply pending migrations (tracked in __drizzle_migration
 npm run db:verify     # read-only check that the live schema matches schema.ts
 npm run db:push       # dev branch ONLY - can silently drop/recreate columns
 npm run db:studio     # browse the DB
+```
+This package also has `typecheck` and `test`, and both gate `main` through the
+`check` job. They were added late: before that this package had no `tsconfig.json`
+of its own and no `test` script, so `schema.ts` was only ever checked through
+whatever the apps imported, and the two test files in `src/` had never run once.
+```bash
+npm -w @repo/db typecheck   # tsc --noEmit, via the root tsconfig.base.json
+npm -w @repo/db test        # vitest run
 ```
 
 ## Conventions
@@ -71,6 +79,21 @@ npm run db:studio     # browse the DB
   in `RETRYABLE`), never a failure after a query may have committed.
 
 ## Gotchas
+- **Every pending migration runs inside ONE transaction.** `drizzle-kit`'s
+  migrate path opens a single `BEGIN`, replays every statement of every pending
+  migration file, then `COMMIT`s (its `transactionProxy`; `drizzle-orm`'s own
+  migrator does the same at `pg-core/dialect.cjs`). Two consequences that are
+  easy to get wrong:
+  - A lock taken by an early statement is held until the whole run commits. So
+    `ADD CONSTRAINT ... NOT VALID` followed by `VALIDATE CONSTRAINT` **in the
+    same file buys nothing** — the point of that split is to let writers through
+    during the scan, and they are blocked either way. It only works across two
+    migration files applied in two separate `db:migrate` runs. This cost a
+    withdrawn acceptance criterion (AC-47 in spec `broll/0002`); migration `0015`
+    adds its constraints plainly and records the reasoning inline.
+  - A "separate, later migration" is only a separate transaction once the
+    earlier one has actually been applied. Generating two and running
+    `db:migrate` once puts them in the same transaction.
 - Prod predates migration tracking (`__drizzle_migrations` didn't exist until
   the baseline described in MIGRATIONS.md) — do not run `db:migrate` cold
   against prod without confirming the baseline row for migration `0000` is
