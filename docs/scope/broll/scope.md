@@ -172,9 +172,27 @@ and see its parsed segments. No AI yet.
       suite signed out because preview and local both talk to the production
       database. The export modal is unverified for the same reason (it needs sign
       in plus a local video reselect).
-- [ ] Test it: /test broll skeleton. The pure logic here (frame math, the collapse,
-      the parsers) is exactly what this workspace's Workflow line says carries
-      unit tests, so this box is not optional even at Alpha.
+- [x] Test it: /test broll skeleton. Done 2026-08-10. The pure logic here (frame
+      math, the collapse, the parsers) is exactly what this workspace's Workflow
+      line says carries unit tests, so this box was not optional even at Alpha.
+      `@repo/transcript` (96), `transcript-collapse` and the rough-cut transcript
+      route were already covered; this pass closed the four that were not. B-roll
+      went from 5 tests to 54: `actions.ts` (both intake paths, the gate, the
+      validation, and every status Ruff Cut can answer), `projects.ts`, and
+      `proxy.ts`. Rough Cut gained 13 on `transcript-document.ts`, which was
+      untested while its sibling `transcript-collapse.ts` was not.
+
+      **One gap the tests found, not yet fixed.** Text with no cues in it is not
+      a parse failure: `importSrt` finds zero cues, and `documentFromCues` turns
+      zero cues into a valid document with no segments and duration 0. So a user
+      who picks the wrong file gets a successfully created, silently empty
+      project rather than being told. The document contract genuinely permits
+      zero segments — the export path relies on it, since a project with
+      everything cut still exports a valid empty document — so the parser cannot
+      tell "empty subtitle file" from "not a subtitle file". The check that
+      could belongs at the intake boundary in `actions.ts` and does not exist.
+      Current behaviour is pinned by a test named so it cannot be deleted
+      quietly.
 
 **Decision debt carried by this feature** (all from spec 0001's own follow up
 list, none blocking the boxes already ticked):
