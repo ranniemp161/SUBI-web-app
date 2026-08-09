@@ -217,6 +217,15 @@ export const creditLedgerReasonEnum = pgEnum("credit_ledger_reason", [
   "conversion",
   // Off-session auto-recharge deposit (child ADR 0002/0002).
   "auto_recharge",
+  /**
+   * B-Roll spends (spec `broll/0002`, AC-44). These ship in their own migration,
+   * separate from `0015` which added the tables: the repo's rule is add, deploy,
+   * then use, and a value must exist in the live enum before any deployed code
+   * writes it. Nothing in a migration statement uses them — only application
+   * code does, later — so this is the deploy-ordering rule, not a Postgres one.
+   */
+  "broll_character_set",
+  "broll_plan_rerun",
 ]);
 
 /**

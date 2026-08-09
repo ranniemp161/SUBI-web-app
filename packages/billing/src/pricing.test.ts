@@ -1,12 +1,19 @@
 import { describe, it, expect, beforeEach } from "vitest";
 
 import {
+  BROLL_CHARACTER_SET_MICROS,
+  BROLL_PLAN_RERUN_MICROS,
+  BROLL_STALE_HOLD_MS,
+  DEFAULT_BROLL_CHARACTER_SET_MICROS,
+  DEFAULT_BROLL_PLAN_RERUN_MICROS,
   FALLBACK_HOLD_SECONDS,
   MICROS_PER_USD,
   RETAIL_MICROS_PER_MINUTE,
+  STALE_HOLD_MS,
   chargeMicrosForSeconds,
   costSecondsForDurationMs,
   currentMonthKey,
+  flatRateMicros,
   formatUsd,
   memberGrantSeconds,
   secondsFromDeepgramDuration,
@@ -132,5 +139,63 @@ describe("memberGrantSeconds", () => {
     expect(memberGrantSeconds()).toBe(7200);
     process.env.MEMBER_MONTHLY_GRANT_SECONDS = "banana";
     expect(memberGrantSeconds()).toBe(3600);
+  });
+});
+
+// B-Roll's flat, per-action prices (spec broll/0002 build step 7). Every rate
+// above prices per second; these do not, which is the whole reason the
+// primitive exists.
+describe("flatRateMicros", () => {
+  it("falls back when nothing is configured", () => {
+    expect(flatRateMicros(undefined, 2_000_000)).toBe(2_000_000);
+  });
+
+  it("falls back on an empty or whitespace value", () => {
+    // The bug this guards: Number("") is 0, so the looser
+    // `Number(x) || default` idiom would silently make the action free.
+    expect(flatRateMicros("", 2_000_000)).toBe(2_000_000);
+    expect(flatRateMicros("   ", 2_000_000)).toBe(2_000_000);
+  });
+
+  it("honours a deliberate zero", () => {
+    // "Free for now" is a real thing a client may switch on, and is exactly
+    // what `Number(x) || default` cannot express.
+    expect(flatRateMicros("0", 2_000_000)).toBe(0);
+  });
+
+  it("uses a valid configured price", () => {
+    expect(flatRateMicros("1500000", 2_000_000)).toBe(1_500_000);
+  });
+
+  it("falls back rather than throwing on a malformed value", () => {
+    // A bad env var must not take the app down.
+    expect(flatRateMicros("-1", 2_000_000)).toBe(2_000_000);
+    expect(flatRateMicros("1.5", 2_000_000)).toBe(2_000_000);
+    expect(flatRateMicros("two dollars", 2_000_000)).toBe(2_000_000);
+    expect(flatRateMicros("NaN", 2_000_000)).toBe(2_000_000);
+  });
+});
+
+describe("b-roll prices", () => {
+  it("defaults to $2.00 a character set and $0.25 a plan re-run", () => {
+    // Decided 2026-08-09, tentative pending client review. See spec
+    // broll/0001 §8.1 for the working behind both numbers.
+    expect(DEFAULT_BROLL_CHARACTER_SET_MICROS).toBe(2_000_000);
+    expect(DEFAULT_BROLL_PLAN_RERUN_MICROS).toBe(250_000);
+    expect(formatUsd(DEFAULT_BROLL_CHARACTER_SET_MICROS)).toBe("$2.00");
+    expect(formatUsd(DEFAULT_BROLL_PLAN_RERUN_MICROS)).toBe("$0.25");
+  });
+
+  it("resolves to the defaults when no env override is set", () => {
+    expect(BROLL_CHARACTER_SET_MICROS).toBe(DEFAULT_BROLL_CHARACTER_SET_MICROS);
+    expect(BROLL_PLAN_RERUN_MICROS).toBe(DEFAULT_BROLL_PLAN_RERUN_MICROS);
+  });
+
+  it("gives b-roll a far longer stale window than transcription", () => {
+    // A character set is a ~110s run of external image calls; STALE_HOLD_MS is
+    // 10s and sized for an in-memory gap. Reclaiming at 10s would rob a
+    // generation still in flight and charge the user twice.
+    expect(BROLL_STALE_HOLD_MS).toBe(600_000);
+    expect(BROLL_STALE_HOLD_MS).toBeGreaterThan(STALE_HOLD_MS * 10);
   });
 });

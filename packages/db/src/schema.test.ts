@@ -28,6 +28,11 @@ describe('Database Schema', () => {
         'ai_cut',
         'conversion',
         'auto_recharge',
+        // B-Roll's two spends (migration 0016, spec broll/0002 AC-44). Order
+        // matters: these are appended, never inserted, because ALTER TYPE ADD
+        // VALUE appends to the live enum and this list must mirror it.
+        'broll_character_set',
+        'broll_plan_rerun',
       ]);
     });
   });
