@@ -240,6 +240,13 @@ stored — with credits reserved and settled, and no double charge on a double-c
 
 Self-contained and demoable alone.
 
+**Priced 2026-08-09, tentative pending client review:** a character set is $2.00
+and a plan re-run is $0.25, both flat and both env-overridable. The price is set
+to be healthy at the **Pro** image tier, which is the one Phase 0 actually
+measured, so this phase can start without waiting on the `gemini-3.1-flash-image`
+A/B — run that A/B inside this phase instead. Working and the regeneration cap in
+spec [0001 §8.1](../../specs/broll/0001-high-level-design/index.md).
+
 **Two things spec [0002](../../specs/broll/0002-data-model/index.md) surfaced
 that land here, not in Phase 1.** The `credit_ledger_reason` enum values ship in
 their own later migration, because Postgres will not let a value added in a

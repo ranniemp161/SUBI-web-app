@@ -251,7 +251,8 @@ specs that build them. The routes that read or write these tables in Phase 1:
 | Show a scene list | is a scene checked? | `included`, written by the planner and then owned by the user. No threshold is applied at read |
 | Plan a project | how many scenes to propose | `ceil(duration_ms / 1000 * 1.2)`, from `duration_ms`. The multiplier is still a guess, open question 5 in spec 0001 |
 | Generate a set | may this request proceed? | `gen_claim_at IS NULL OR stale`, the atomic claim |
-| Generate a set | the price | `@repo/billing/pricing`. **Not yet decided**: open question 2 in spec 0001, blocking Phase 2 |
+| Generate a set | the price | `@repo/billing/pricing`. **$2.00 flat** (`2_000_000` micros), env-overridable — decided 2026-08-09, tentative pending client review. Working in spec 0001 §8.1 |
+| Plan a project, re-run | the price | `@repo/billing/pricing`. **$0.25 flat** (`250_000` micros), env-overridable. Same decision |
 | Generate a set | `cost_micros` on the ledger row | the Gemini call's real reported usage (AC-16) |
 | Store a cutout | `width`, `height` | the alpha bounding box measured after trimming, before upload (AC-18) |
 | Store a cutout | `r2_key` | generated at upload, carrying a random element, then stored |
