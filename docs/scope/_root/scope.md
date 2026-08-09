@@ -198,8 +198,18 @@ table. Separately, every pricing helper in the package prices per second, becaus
 everything charged so far has been video duration, while a character set is
 priced per image call. A cross check caught both before any code was written.
 
-**Blocked on:** the character set price and the image model tier, which are open
-questions 2 and 7 in the b-roll high level design.
+**Unblocked 2026-08-09.** This was blocked on the character set price and the
+image model tier, open questions 2 and 7 in the b-roll high level design. The
+price is now decided ($2.00 a character set, $0.25 a plan re-run, both flat and
+both env-overridable) and it is **deliberately safe at the more expensive tier**,
+so question 7 no longer gates anything: Phase 2 starts on Pro and the Flash A/B
+runs inside it. Both numbers are tentative pending client review, which is
+precisely why they are env vars — a reprice is a Vercel change, not a code
+change. Working in spec [0001 §8.1](../../specs/broll/0001-high-level-design/index.md).
+
+**Carry into the build:** cap regenerations per set at twelve. Regenerating one
+variant is free by design, and at Pro cost a $2.00 set goes underwater after
+about eight of them.
 
 ## Deferred
 

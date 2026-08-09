@@ -482,8 +482,12 @@ schema migrations. Budget accordingly.
 1. **Transcript staleness.** Post-EDL export is a snapshot; editing in rough-cut
    after handoff silently rots b-roll's timecodes. Version-and-warn, re-fetch on
    load when linked, or accept and document? *Blocking for Phase 3.*
-2. **Pricing.** What does one character emotion set cost in micros — Gemini
-   per-image cost plus margin? Needs a number before Phase 2 wiring.
+2. **Pricing.** ~~What does one character emotion set cost in micros — Gemini
+   per-image cost plus margin? Needs a number before Phase 2 wiring.~~
+   **Decided 2026-08-09, tentative pending client review:** a character set is
+   **$2.00** (`2_000_000` micros) and a plan re-run is **$0.25** (`250_000`
+   micros), both flat and both env-overridable, because this repo's rule is that
+   prices are config, not code. See §8.1 below for the working.
 3. **R2 retention policy.** Not blocking v1; blocking general availability.
 4. **Domain name**, and whether founders-frame markets b-roll or it gets its own
    landing page. *Blocking Phase 1.*
@@ -494,4 +498,62 @@ schema migrations. Budget accordingly.
    gate says "desktop" or "Chromium and Firefox". *Blocking Phase 4.*
 7. **Image model tier.** `gemini-3.1-flash-image` vs the Pro tier for character
    generation — six calls per set is the dominant cost, so this is the one lever
-   that moves unit economics. Feeds question 2.
+   that moves unit economics. Feeds question 2. **Still open, and deliberately
+   no longer blocking.** The price in question 2 is set so it is healthy at the
+   *more expensive* tier, so Phase 2 can start on Pro and the A/B can run inside
+   Phase 2 rather than ahead of it. If Flash holds identity, margin improves with
+   no price change and no customer-facing churn. *Blocking nothing; decide before
+   general availability.*
+
+---
+
+### 8.1 Pricing: the working behind question 2
+
+Decided 2026-08-09. **Tentative: the client may revise it.** Both numbers are
+env-overridable for exactly that reason — a reprice is a Vercel env change and a
+redeploy, never a code change.
+
+**What a set costs us.** Six image calls, at Google's published standard-tier
+rates, plus the multi-turn image inputs the identity chain feeds back (roughly
+fifteen image inputs across the six turns, at 1120 tokens each):
+
+| Model | $/image (1K) | 6 images | + input | Per set |
+|---|---|---|---|---|
+| `gemini-3-pro-image` (Phase 0 used this) | $0.134 | $0.804 | ~$0.03 | **~$0.84** |
+| `gemini-3.1-flash-image` | $0.067 | $0.402 | ~$0.01 | **~$0.41** |
+| `gemini-3.1-flash-lite-image` | $0.0336 | $0.202 | ~$0.01 | **~$0.21** |
+
+Segmentation is client-side (Phase 0, spike 02), so it adds nothing. R2 storage
+per set is rounding error.
+
+**Why $2.00.** It is 2.4x at Pro cost and 4.9x if the Flash A/B wins, so it is
+safe under either outcome of question 7 — which is what lets Phase 2 start
+before that A/B runs. It also sits on top of the margin the ecosystem already
+charges: transcription runs about 8.4x markup (83,333 micros/min charged against
+a 9,960/min cost estimate) and AI Cut about 1.14x (against 73,020/min), blending
+to roughly **2.0x on a fully processed minute**. A round $2.00 also reads cleanly
+through `formatUsd` and divides a $19 bundle into nine sets.
+
+**Why $0.25 for a plan re-run.** It is a text call over a transcript and costs
+well under a cent. This number is an abuse brake, not a revenue line: the first
+run is bundled (AC-25), so the only thing being priced is reflexive re-rolling.
+
+**If you stay on Pro, generate at 2K.** Pro charges the same $0.134 for 1K and
+2K output. Flash does not (1K $0.067, 2K $0.101), so the resolution choice is
+free on one tier and a real cost on the other.
+
+**Batch pricing halves every figure above** and is worth revisiting only if
+generation ever becomes a queued job. It is not one today: the review gate is
+interactive, and Phase 0 measured ~110 s per set against batch turnarounds
+quoted in hours.
+
+**The exposure to watch is regeneration, not generation.** Regenerating one
+variant is deliberately free (spec `0002`, "the review gate's correction path,
+not a new purchase") and that is the right UX, but at Pro each regeneration is
+$0.134, so a $2.00 set survives about eight of them before it is underwater.
+**Cap regenerations per set at twelve** — twice the set size — so the downside is
+bounded by design rather than by user restraint. Sized by arithmetic, not
+measured; revisit against real data once Phase 2 has any.
+
+**Rates verified 2026-08-09** against Google's published pricing. Model IDs and
+prices both rot (see rationale §3) — re-check before treating these as current.
