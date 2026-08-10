@@ -1,7 +1,11 @@
 import { auth } from "@clerk/nextjs/server";
 import { redirect, notFound } from "next/navigation";
 import { getAuthorizedDbUser } from "@repo/server-shared/authz";
+import { formatUsd, BROLL_PLAN_RERUN_MICROS } from "@repo/billing/pricing";
 import { getBrollProject } from "@/lib/projects";
+import { listBrollScenes } from "@/lib/scenes";
+import { checkTranscriptFreshness } from "@/lib/staleness";
+import { PlanPanel } from "./plan-panel";
 import Link from "next/link";
 
 /** `2:35`, or `1:02:35` once past an hour. Timecodes render tabular so a column of them lines up. */
@@ -21,7 +25,7 @@ export default async function ProjectPage({
 }) {
   const { id } = await params;
 
-  const { userId: clerkId } = await auth();
+  const { userId: clerkId, getToken } = await auth();
   if (!clerkId) redirect("/sign-in");
 
   const user = await getAuthorizedDbUser(clerkId);
@@ -31,6 +35,17 @@ export default async function ProjectPage({
   // Genuinely absent, or owned by someone else. Both answer 404 rather than
   // 403, so a project id is never confirmed to a stranger (AC-38).
   if (!project) notFound();
+
+  const [scenes, freshness] = await Promise.all([
+    listBrollScenes(user.id, id),
+    // Advisory only, and never fatal: a linked project asks Ruff Cut whether
+    // the edit has moved since this transcript was taken (AC-49).
+    checkTranscriptFreshness({
+      sourceProjectId: project.sourceProjectId,
+      storedFingerprint: project.edlFingerprint,
+      token: await getToken(),
+    }),
+  ]);
 
   const { transcript } = project;
   const wordCount = transcript.segments.reduce(
@@ -97,6 +112,28 @@ export default async function ProjectPage({
           </dd>
         </div>
       </dl>
+
+      {/* Warns, never replaces: the stored transcript is what every scene's
+          timecode is measured against, so refreshing it silently would move
+          scenes under a plan the user already reviewed (AC-49). */}
+      {freshness === "stale" && (
+        <p
+          className="broll-glow mt-6 rounded-lg px-4 py-3 text-sm"
+          role="status"
+        >
+          The Ruff Cut edit has changed since this transcript was taken, so these
+          timecodes may no longer match it. This transcript has been left exactly
+          as it was — start a new b-roll project to pick up the newer cut.
+        </p>
+      )}
+
+      <PlanPanel
+        projectId={project.id}
+        initialScenes={scenes}
+        planRuns={project.planRuns}
+        // Formatted here because the price env override is server side only.
+        rerunPrice={formatUsd(BROLL_PLAN_RERUN_MICROS)}
+      />
 
       <h2 className="mt-10 text-sm font-semibold uppercase tracking-wide" style={{ color: "var(--broll-muted)" }}>
         Parsed segments

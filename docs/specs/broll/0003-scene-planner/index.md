@@ -1,7 +1,7 @@
 # 0003. Scene planner
 
 **Date**: 2026-08-10
-**Status**: Proposed
+**Status**: In Progress
 
 ## Summary
 
@@ -280,6 +280,32 @@ Tracer Bullet: a thin thread through every layer first (a real transcript, a
 real Gemini call, a real row, a real list on screen), then the guarantees that
 make it trustworthy, then the money and the limits. No schema task appears
 because `0015` and `0016` already landed the schema this feature writes.
+
+**Built 2026-08-10 by `/develop`: tasks 1 to 10.** Code in `apps/broll/src/lib/`
+(`utterances.ts`, `scene-schema.ts`, `emotions.ts`, `honesty.ts`, `planner.ts`,
+`scenes.ts`, `staleness.ts`, `rate-limit.ts`),
+`apps/broll/src/app/api/projects/[id]/plan/route.ts`, and
+`apps/broll/src/app/dashboard/[id]/plan-panel.tsx`. Lint, typecheck and test are
+green; b-roll went from 54 tests to 170. **Task 11 (AC-28, tune selectivity
+against project `0620`) is not done**: it needs a live run against a real
+transcript with a real `GEMINI_API_KEY`, which is a measurement rather than a
+build. Two decisions the build needed and this spec does not name were answered
+by the engineer during the run and are **not recorded in this spec yet**: where a
+planner scene's `start_ms` and `duration_ms` come from, and the character emotion
+vocabulary. Both are implemented and commented in code; run
+`/architect scene planner` to deliberate them into the Value sourcing table.
+
+**The first live run found the merge rule incomplete, and the code now diverges
+from this spec.** Value sourcing says an utterance ends on sentence ending
+punctuation **or** a gap over `UTTERANCE_GAP_MS`, "either signal alone is
+sufficient". Project `0620` offers neither: auto-captions carry no punctuation
+and their cues are contiguous, so all 254 segments merged into **one** utterance,
+the model was handed a single numbered line, and eleven of the twelve scenes it
+proposed cited lines that did not exist. Two signals cannot segment a transcript
+that provides neither, and that transcript is the exact case AC-48 exists for. A
+third signal, `MAX_UTTERANCE_MS` (12,000ms, the measured Ruff Cut density so a
+punctuated handoff never reaches it), now ends an over-long utterance. Fold this
+row into Value sourcing when ratifying the two decisions above.
 
 1. Utterance merge: group consecutive segments on sentence ending punctuation
    and an inter segment gap, pure and unit tested, in `apps/broll`, satisfies

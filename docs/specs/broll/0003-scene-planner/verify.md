@@ -101,3 +101,96 @@ Checked by `/check verify`. Each box maps to an acceptance criterion in
 - **AC-28** is a judgment call about plan quality, not an assertion. It needs a
   human reading the output against the talk. Record the verdict here; do not
   write a test that pretends to check it.
+
+---
+
+# Added by /develop, 2026-08-10
+
+## Value sourcing
+
+One step per row of the spec's Value sourcing table. These exercise **where a
+value came from**, not whether the happy path works: the gate on a source is a
+design time check, and a mis-sourced value passes every functional test until the
+day the input varies. Each one below varies the input that would expose it.
+
+- [ ] Set `plan_runs` to 0, run, and confirm the run is bundled; set it to 1, run,
+      and confirm it charges. The answer must come from the column, not from
+      anything the client sent — a request cannot talk itself into a free run.
+      → **AC-25**
+- [ ] Set `BROLL_PLAN_RERUN_MICROS` to a non-default value. The confirmation
+      panel, the button label and the ledger row all move together, because all
+      three read `@repo/billing/pricing`. → **AC-25**
+- [ ] After a charged run, the ledger row's `stripe_event_id` is
+      `broll_plan:<key>`; after a refund, `broll_plan_refund:<key>`. Different
+      prefixes are what keep a refund from colliding with its own charge.
+      → **AC-45**
+- [ ] Run against a 1:00 project and a 9:46 project. The prompt asks for about 2
+      and about 12 scenes respectively — minutes, never seconds. → **AC-50**
+- [ ] On a subtitle-upload project, confirm the prompt body carries far fewer
+      numbered lines than the project's segment count (254 segments merged to
+      utterances). The model must see the merge, not the raw cues. → **AC-48**
+- [ ] Grep the planner for the model id: a pinned constant, no `process.env`, no
+      `-latest` alias.
+- [ ] Count outbound Gemini requests for one run: exactly one. There is no
+      separate availability probe, by decision — the real call's own 404 is the
+      check. → **AC-27**
+- [ ] Vary the inter-segment gap either side of `UTTERANCE_GAP_MS` (700ms) and
+      confirm the split appears and disappears. At exactly 700ms it must not
+      split; the threshold is exceeded, not met. → **AC-48**
+- [ ] Take one stored scene and compare `source_start_ms` against the first
+      member cue's `start` in the stored transcript, and `source_end_ms` against
+      the last member's `end`. Both come from the merge, never from the model.
+- [ ] Shift a chart's `source_span` by a few characters so it points just off the
+      figure, and confirm the chart drops while the scene survives. Offsets are
+      into the **cited utterance's** text; if they were being resolved against
+      the whole transcript instead, this step still passes the happy path and
+      fails here. → **AC-54**
+- [ ] Trace `1,200`, `80.0` and `$250` against spans written that way, and
+      confirm `80` does **not** trace against a span saying only `1802` or
+      `80.5`. → **AC-54**
+- [ ] Confirm a chart whose unit is absent from the cited line drops, and one
+      saying `percent` against a `%` unit survives. The unit is traced as hard as
+      the values. → **AC-54**
+- [ ] Scene list and export order are `start_ms, id`, and each scene's label is
+      the verbatim `source_text`. → **AC-42**, **AC-58**
+- [ ] Feed a transcript under `@repo/transcript`'s 5 MB document cap but over
+      250,000 estimated input tokens. It is still refused: the planner's cap is a
+      second, narrower gate measured in tokens of the merged transcript.
+      → **AC-55**
+- [ ] On that refusal, the balance is unchanged and no ledger row was written.
+      The cap is checked before the charge. → **AC-55**
+- [ ] The 11th run in an hour for one user answers 429, and a second user in the
+      same hour is unaffected. The bucket is per user, keyed on the Clerk id.
+      → **AC-26**
+- [ ] Edit the source project in Ruff Cut, reload the linked b-roll project, and
+      confirm the warning appears **and** the stored `transcript` row is byte
+      identical to what it was. Warned, never replaced. → **AC-49**
+
+## Decisions this build made that the spec does not yet record
+
+Both were answered by the engineer during `/develop` and are implemented, but
+they are not in the Value sourcing table yet. Run `/architect scene planner` to
+deliberate them in; until then these two steps check code against a decision that
+lives in a comment.
+
+- [ ] A planner scene's `start_ms` equals the cited utterance's start, and its
+      `duration_ms` is the model's proposal clamped to 4,000 to 8,000ms. No
+      timecode comes from the model. Confirm by returning a wild `duration_ms`
+      and an unrelated implied placement, and checking the stored row.
+- [ ] `emotion` accepts exactly the six in `src/lib/emotions.ts` (neutral, happy,
+      surprised, thoughtful, skeptical, excited) and is null on any scene whose
+      `visual_type` is not `character`. This set is also what Phase 2's character
+      pipeline must generate, so a change here is a change there.
+
+## Already locked by automated tests
+
+These boxes have unit coverage as of this build (170 tests in `apps/broll`), so
+`/check verify` can treat them as regression-guarded and spend its runtime on the
+live paths instead: **AC-23**, **AC-24**, **AC-48**, **AC-50**, **AC-54**,
+**AC-60**, the refund predicate of **AC-53**, the ordering of the cap and the
+charge in **AC-55**, the 429 of **AC-26**, the error translation of **AC-27**,
+the single statement of **AC-51**, and the `runtime`/`maxDuration` of **AC-59**.
+
+What has **no** automated coverage and needs a live run: every money box against
+a real ledger, **AC-52**'s heartbeat over a real slow call, **AC-57** against real
+model output, **AC-49** against a real Ruff Cut edit, and **AC-28**.
