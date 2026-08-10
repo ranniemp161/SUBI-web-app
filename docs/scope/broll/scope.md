@@ -138,11 +138,14 @@ and see its parsed segments. No AI yet.
         timing and drop straight beside the exported MP4. JSON stays the b-roll
         handoff; the subtitle formats cannot carry the frame rate, the word
         confidence, or the provenance the planner needs.
-  - [ ] Migration, now governed by spec
+  - [x] Migration, now governed by spec
         [0002](../../specs/broll/0002-data-model/index.md). **Unblocked
         2026-08-08**: the column inventory the lost `broll-generator-spec.md` was
         meant to supply is reconstructed there, marked Decided or Inferred row by
-        row so a later reader can tell evidence from invention.
+        row so a later reader can tell evidence from invention. All three sub
+        boxes closed; `db:verify` passes against the dev branch, which is the one
+        b-roll now reads. The later enum migration `0016` belongs to Phase 2, not
+        here: see `_root` feature 6.
     - [x] Schema: the three tables, the two indexes, the assets unique
           constraint that makes replace in place true, and the
           `broll_render_status` enum (AC-8, AC-9, AC-40, AC-41, AC-42, AC-46).
@@ -163,18 +166,63 @@ and see its parsed segments. No AI yet.
           query indexes, the three enum values, and every load bearing nullable
           column. Production carried 191 ledger rows and 45 projects, so the
           validation scan we chose to accept was microseconds
-- [ ] Verify it: /check verify broll skeleton. A runtime pass on 2026-08-06 drove
-      the real server: the auth gate holds, the document path holds (the package
-      was driven through its public export, and ten real projects built clean),
-      and the cross origin preflight now answers correctly after the `proxy.ts`
-      fix above. **Still unverified: the route's success path.** Reaching a `200`
-      needs a real Clerk session, and this repo deliberately keeps its end to end
-      suite signed out because preview and local both talk to the production
-      database. The export modal is unverified for the same reason (it needs sign
-      in plus a local video reselect).
-- [ ] Test it: /test broll skeleton. The pure logic here (frame math, the collapse,
-      the parsers) is exactly what this workspace's Workflow line says carries
-      unit tests, so this box is not optional even at Alpha.
+- [x] Verify it: /check verify broll skeleton. **Closed 2026-08-10.** A runtime
+      pass on 2026-08-06 drove the real server: the auth gate holds, the document
+      path holds (the package was driven through its public export, and ten real
+      projects built clean), and the cross origin preflight now answers correctly
+      after the `proxy.ts` fix above.
+
+      **What closed it: the local database stopped being production.** The
+      blocker was never the code. `apps/broll/.env.local` pointed at the
+      production Neon branch, so nobody could click through the intake without
+      writing real rows, and the success path stayed unproven for four days
+      because of it. Repointed to the dev branch (`ep-holy-hall-aoe13azt`), which
+      already carried migration `0015` from its rehearsal. Sign in provisions the
+      `users` row on its own, so no seeding was needed.
+
+      The engineer then drove the upload path in the real app and the feature's
+      **Done when** is met: project `0620`, runtime 9:46, 254 parsed segments on
+      screen. Every displayed field was traced back to the stored row on the dev
+      branch rather than trusted: `duration_ms` 586800, 254 segments in the
+      document, `fps` null, `wordsAligned` false, `source.kind` `import`,
+      `source_project_id` null, transcript 10 kB.
+
+      Two runtime facts worth keeping. Automated checks on 2026-08-10 confirmed
+      the b-roll gate (`/dashboard` 307 to sign in, `/api/*` 401 as JSON not a
+      redirect) and AC-15 on rough-cut's route (b-roll origin 204 naming that
+      exact origin with credentials, any other origin and a missing one 403, GET
+      signed out 401). See spec
+      [_root/0001 verify.md](../../specs/_root/0001-transcript-contract/verify.md),
+      where AC-1, AC-2, AC-15 and AC-16 are now ticked with their evidence.
+
+      **Still unverified, and now for one reason only:** the Ruff Cut handoff
+      cannot be driven locally. Not the foreign key, which was the first guess:
+      the dev branch has **zero** rough-cut projects carrying a transcript, an
+      EDL and stored fps columns, so there is nothing the route would serve even
+      if the insert were allowed. The export modal is unverified too (it needs
+      sign in plus a local video reselect). Both paths shipped and are covered by
+      unit tests; what is missing is a live click, not a working implementation.
+- [x] Test it: /test broll skeleton. Done 2026-08-10. The pure logic here (frame
+      math, the collapse, the parsers) is exactly what this workspace's Workflow
+      line says carries unit tests, so this box was not optional even at Alpha.
+      `@repo/transcript` (96), `transcript-collapse` and the rough-cut transcript
+      route were already covered; this pass closed the four that were not. B-roll
+      went from 5 tests to 54: `actions.ts` (both intake paths, the gate, the
+      validation, and every status Ruff Cut can answer), `projects.ts`, and
+      `proxy.ts`. Rough Cut gained 13 on `transcript-document.ts`, which was
+      untested while its sibling `transcript-collapse.ts` was not.
+
+      **One gap the tests found, not yet fixed.** Text with no cues in it is not
+      a parse failure: `importSrt` finds zero cues, and `documentFromCues` turns
+      zero cues into a valid document with no segments and duration 0. So a user
+      who picks the wrong file gets a successfully created, silently empty
+      project rather than being told. The document contract genuinely permits
+      zero segments — the export path relies on it, since a project with
+      everything cut still exports a valid empty document — so the parser cannot
+      tell "empty subtitle file" from "not a subtitle file". The check that
+      could belongs at the intake boundary in `actions.ts` and does not exist.
+      Current behaviour is pinned by a test named so it cannot be deleted
+      quietly.
 
 **Decision debt carried by this feature** (all from spec 0001's own follow up
 list, none blocking the boxes already ticked):
