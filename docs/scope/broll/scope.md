@@ -27,7 +27,7 @@ any, and mark a feature `done` when you decide it is._
 | 1 | Spikes: client-side encode + segmentation | Phase 0 | done |
 | 2 | Skeleton: workspace, schema, transcript contract | Phase 1 | in-progress |
 | 3 | Character pipeline | Phase 2 | planned |
-| 4 | Scene planner | Phase 3 | planned |
+| 4 | Scene planner | Phase 3 | in-progress |
 | 5 | One template end to end | Phase 4 | planned |
 | 6 | Remaining templates + Scene Studio | Phase 5 | planned |
 | 7 | Batch export, zip, credits | Phase 6 | planned |
@@ -304,17 +304,45 @@ feature 6, which is where that work is tracked.
 
 ## Phase 3
 
-### 4. Scene planner · planned
+### 4. Scene planner · in-progress
 
 **Intent**: Turn a transcript into a ranked scene list that never invents a number.
 **Done when**: the planner runs against real transcripts, the multiplier is tuned
 against evidence, and the validator provably rejects fabricated charts.
 
-- [ ] Build it: /develop scene planner (AC-23 to AC-28)
+- [x] Design it (spec)
+      [0003](../../specs/broll/0003-scene-planner/index.md), 2026-08-10. One
+      streamed `generateContent` call on a pinned `gemini-3.6-flash`, with every
+      chart value traced in code back to character offsets in the span the model
+      cited. Cross checked on a second model, which found two money bugs the
+      first draft carried: a charge landing while the write failed, and a claim
+      that the idempotency key stops a double charge when it only stops a double
+      retry. Both fixed; the reasoning records the correction.
+- [ ] Build it: /develop scene planner
+  - [ ] Merge and contract: cue to utterance merge, plus the Zod scene schema
+        the prompt's shape section is generated from (AC-48, AC-23)
+  - [ ] The thin thread: the route calls Gemini, parses scene by scene, writes
+        the scenes, and a Plan button plus a read only list makes it visible end
+        to end (AC-24, AC-50, AC-56, AC-57, AC-58, AC-60)
+  - [ ] Stream it: Edge runtime, phase lines, heartbeat, terminal line, one
+        idempotency key per run (AC-52, AC-59)
+  - [ ] The guarantees: the honesty trace that drops an untraceable chart but
+        keeps its scene, and the atomic replace that keeps manual scenes
+        (AC-54, AC-51)
+  - [ ] Money, limits and staleness: charge, refund on zero committed scenes,
+        the token cap before charging, the rate limit, the model error
+        translation, the stale fingerprint warning, and the selectivity tuning
+        run against project `0620` (AC-25, AC-53, AC-55, AC-26, AC-27, AC-49,
+        AC-28)
 - [ ] Verify it: /check verify scene planner
+- [ ] Test it: /test scene planner
 
-**Needs a decision first:** whether to build on `generateContent` or the
-Interactions API that Google is steering toward. See rationale §3.
+**The decision that gated this is settled, and narrower than it looked.**
+`generateContent` stays. Rationale §3 called it deprecated, inferred from a 404
+body; Google's current docs do not say that, and `generateContent` "is also
+supported" with no timeline. What actually decided it was AC-23: the prompt's
+shape must come from the schema, `responseSchema` is the documented way to do
+that, and the Interactions API does not yet document an equivalent.
 
 ## Phase 4
 
