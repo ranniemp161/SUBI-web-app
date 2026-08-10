@@ -696,9 +696,11 @@ export async function chargeBrollPlanRerun(
       ),
       ins AS (
         INSERT INTO credit_ledger (user_id, delta_micros, reason, broll_project_id, cost_micros, stripe_event_id)
-        SELECT user_id, ${-priceMicros}, 'broll_plan_rerun', ${brollProjectId},
+        SELECT user_id,
+               CASE WHEN prior_runs > 0 THEN ${-priceMicros} ELSE 0 END,
+               'broll_plan_rerun', ${brollProjectId},
                ${BROLL_PLAN_RERUN_COST_MICROS}, ${ledgerKey}
-        FROM claim WHERE prior_runs > 0
+        FROM claim
         ON CONFLICT (stripe_event_id) DO NOTHING
         RETURNING user_id, delta_micros
       ),
