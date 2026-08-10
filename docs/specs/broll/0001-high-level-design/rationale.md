@@ -179,12 +179,27 @@ against them.
 Phase 0 used `gemini-3.6-flash` for planning and a pinned `gemini-3-pro-image`
 for generation.
 
-### `generateContent` is being deprecated
+### ~~`generateContent` is being deprecated~~ Google recommends the Interactions API
 
 The 404 body recommended migrating to an Interactions API. Not urgent, but
 building Phase 3 on an endpoint Google is actively migrating away from is a
 decision, not a default. Evaluate what it means for structured JSON output before
 fixing a call shape.
+
+**Corrected 2026-08-10.** "Deprecated" was inferred from that 404 body and
+overstates it. Google's current documentation says the Interactions API "is now
+generally available" and is **recommended**, and in the same breath that "the
+GenerateContent API is also supported; the same configuration options and
+recommendations apply". There is no deprecation notice and no timeline, so this
+was never the race it reads as.
+
+The evaluation this note asked for has now happened, in spec
+[0003](../0003-scene-planner/index.md): `generateContent` stays, because AC-23
+needs the prompt's shape generated from the schema, `responseSchema` is the
+documented way to do that, and the Interactions API does not yet document an
+equivalent. The paragraph above is kept rather than deleted because the lesson
+under it holds, a vendor's own error body is a signal worth acting on. Only the
+word "deprecated" was wrong.
 
 ### Image generation is the cost lever
 

@@ -27,6 +27,23 @@ export type ProjectSummary = {
 
 export type ProjectDetail = ProjectSummary & {
   transcript: TranscriptDocument;
+  /** The Ruff Cut project this was inherited from, or null on an upload. */
+  sourceProjectId: string | null;
+  /**
+   * The edit fingerprint the transcript was taken at, lifted out of the
+   * document so the staleness check can compare without parsing it (AC-49).
+   */
+  edlFingerprint: string | null;
+  /**
+   * How many plan runs this project has had. Zero means the next one is
+   * bundled into the character set price rather than charged (AC-25) — the
+   * page needs it to tell the user which before they press the button.
+   *
+   * Read only for display. The decision that actually moves money is made
+   * inside `chargeBrollPlanRerun`, in the same statement as the charge, because
+   * reading it here and charging on the answer would be check-then-act.
+   */
+  planRuns: number;
 };
 
 /**
@@ -83,7 +100,13 @@ export async function getBrollProject(
   id: string
 ): Promise<ProjectDetail | null> {
   const rows = await db
-    .select({ ...summaryColumns, transcript: brollProjects.transcript })
+    .select({
+      ...summaryColumns,
+      transcript: brollProjects.transcript,
+      sourceProjectId: brollProjects.sourceProjectId,
+      edlFingerprint: brollProjects.edlFingerprint,
+      planRuns: brollProjects.planRuns,
+    })
     .from(brollProjects)
     .where(and(eq(brollProjects.id, id), eq(brollProjects.userId, userId)))
     .limit(1);
