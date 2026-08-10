@@ -8,6 +8,11 @@ import { db } from "@repo/db";
 import { reportError } from "@repo/server-shared/observability";
 import {
   AI_CUT_COST_MICROS_PER_SECOND,
+  BROLL_CHARACTER_SET_COST_MICROS,
+  BROLL_CHARACTER_SET_MICROS,
+  BROLL_PLAN_RERUN_COST_MICROS,
+  BROLL_PLAN_RERUN_MICROS,
+  BROLL_STALE_HOLD_MS,
   RETAIL_MICROS_PER_MINUTE,
   TRANSCRIPTION_COST_MICROS_PER_SECOND,
   chargeMicrosForSeconds,
@@ -390,6 +395,362 @@ export async function ensureMonthlyGrant(
       SELECT id, ${grantMicros}, 'grant', ${currentMonthKey()}
       FROM users WHERE id = ${userId} AND is_member
       ON CONFLICT (user_id, month_key) WHERE reason = 'grant' DO NOTHING
+      RETURNING user_id, delta_micros
+    )
+    UPDATE users u SET balance_micros = u.balance_micros + ins.delta_micros
+    FROM ins WHERE u.id = ins.user_id
+  `);
+}
+
+// ---------------------------------------------------------------------------
+// B-Roll (apps/broll)
+//
+// New sibling functions, NOT an extension of the ones above, and spec
+// `broll/0002` build step 6 says so explicitly because "reuse what is proven"
+// would mislead here: `reserveCredits`, `reclaimStaleHold` and `settleHold`
+// each hardcode `UPDATE projects` in their SQL, and `reclaimStaleHold` also
+// hardcodes `transcript_status <> 'processing'`. None of them can be pointed at
+// another table.
+//
+// Two shapes, matching what is being paid for:
+//
+// - A character set **holds first** (reserve, external call, settle). Six
+//   Gemini image calls take ~110 s, so the money must be reserved before we
+//   spend it at the vendor; the CHECK rejects an overdraft while the images are
+//   still unbought.
+// - A plan re-run **charges eagerly**, exactly like `chargeAiCut`. It is one
+//   synchronous text call, so a hold would be pure overhead.
+//
+// Both are flat per action, not per second — see `flatRateMicros` in ./pricing.
+// ---------------------------------------------------------------------------
+
+export type BrollReserveResult =
+  | { status: "reserved"; balance: number }
+  | { status: "insufficient" }
+  | { status: "already_held" };
+
+/**
+ * Reserve the price of one character emotion set: take the generation claim,
+ * park the hold, debit the balance, and write the ledger row — one statement.
+ *
+ * `gen_claim_at` and `hold_micros` are set together and cleared together
+ * (spec `broll/0002` invariant 5: money with no claim, or a claim with no
+ * money, is a bug). Setting both here is what makes that pair atomic.
+ *
+ * The `hold_micros IS NULL AND gen_claim_at IS NULL` qual is the double-click
+ * gate: a concurrent second Generate matches zero rows and gets `already_held`
+ * without charging. An overdraft trips the CHECK (23514) and rolls the whole
+ * statement back — claim, hold, debit and ledger row together → `insufficient`.
+ *
+ * Deliberately strict about a *stale* claim rather than stealing it: a row
+ * whose claim has expired still holds real money, and overwriting it here would
+ * debit a second time and orphan the first hold with nothing to refund it. A
+ * caller that gets `already_held` calls `reclaimStaleBrollHold` and retries,
+ * which is the same dance rough-cut does around `reserveCredits`.
+ */
+export async function reserveBrollHold(
+  userId: string,
+  brollProjectId: string,
+  priceMicros: number = BROLL_CHARACTER_SET_MICROS
+): Promise<BrollReserveResult> {
+  try {
+    const [row] = await executeRows(sql`
+      WITH hold AS (
+        UPDATE broll_projects
+        SET hold_micros = ${priceMicros}, gen_claim_at = now(), updated_at = now()
+        WHERE id = ${brollProjectId} AND user_id = ${userId}
+          AND hold_micros IS NULL AND gen_claim_at IS NULL
+        RETURNING user_id
+      ),
+      charged AS (
+        UPDATE users u SET balance_micros = u.balance_micros - ${priceMicros}
+        FROM hold WHERE u.id = hold.user_id
+        RETURNING u.balance_micros
+      ),
+      led AS (
+        INSERT INTO credit_ledger (user_id, delta_micros, reason, broll_project_id, cost_micros)
+        SELECT user_id, ${-priceMicros}, 'broll_character_set', ${brollProjectId},
+               ${BROLL_CHARACTER_SET_COST_MICROS}
+        FROM hold
+      )
+      SELECT (SELECT count(*)::int FROM hold) AS held,
+             (SELECT balance_micros FROM charged) AS balance
+    `);
+
+    if (!row || Number(row.held) === 0) return { status: "already_held" };
+    return { status: "reserved", balance: Number(row.balance) };
+  } catch (error) {
+    if (isCheckViolation(error)) return { status: "insufficient" };
+    throw error;
+  }
+}
+
+export type BrollSettleOutcome =
+  /**
+   * The set generated. The price is flat, so there is nothing to true up
+   * against usage — the hold simply becomes the charge. `costMicros` is the
+   * Gemini call's real reported usage (AC-16); pass null when the response
+   * carried no usage metadata and the reserve row's estimate stands.
+   */
+  | { status: "generated"; costMicros?: number | null }
+  /** The generation failed. Refund in full — the user got nothing. */
+  | { status: "failed" };
+
+/**
+ * Release a character-set generation: clear the claim and the hold together,
+ * and either let the charge stand or refund it in full.
+ *
+ * **No reconciliation, unlike `settleHold`.** That one trues a hold up against
+ * metered seconds because transcription is priced per minute. A character set
+ * is priced flat, so the only two outcomes are "keep the charge" and "give it
+ * all back" — there is no partial.
+ *
+ * Exactly-once across retries rests on the same mechanism as `settleHold`: only
+ * the call that flips `hold_micros` to NULL produces ledger and balance
+ * effects, and a racing second call re-evaluates `IS NOT NULL` on the updated
+ * row, matches nothing, and leaves every downstream CTE empty.
+ *
+ * On success this also trues up `cost_micros` on the reserve row, which is the
+ * one place b-roll UPDATEs an existing ledger row rather than appending. That is
+ * safe and deliberate: `cost_micros` is margin *reporting*, carries no balance
+ * effect, and is not part of the SUM the cached balance reconciles against. The
+ * real per-call cost is not knowable until the vendor answers, and writing the
+ * estimate forever would make the margin data the pricing decision depends on
+ * useless. It targets one row by id, so repeated generations on one project
+ * each keep their own figure.
+ */
+export async function settleBrollHold(
+  brollProjectId: string,
+  outcome: BrollSettleOutcome
+): Promise<void> {
+  const refund = outcome.status === "failed";
+  const actualCost =
+    outcome.status === "generated" && Number.isFinite(outcome.costMicros)
+      ? Math.max(0, Math.round(outcome.costMicros as number))
+      : null;
+
+  await executeRows(sql`
+    WITH prev AS (
+      SELECT id, user_id, hold_micros AS held
+      FROM broll_projects
+      WHERE id = ${brollProjectId} AND hold_micros IS NOT NULL
+    ),
+    rel AS (
+      UPDATE broll_projects p
+      SET hold_micros = NULL, gen_claim_at = NULL, updated_at = now()
+      FROM prev
+      WHERE p.id = prev.id AND p.hold_micros IS NOT NULL
+      RETURNING prev.user_id, prev.held
+    ),
+    led AS (
+      INSERT INTO credit_ledger (user_id, delta_micros, reason, broll_project_id, cost_micros)
+      SELECT user_id, held, 'refund', ${brollProjectId}, 0
+      FROM rel WHERE ${refund} AND held <> 0
+      RETURNING user_id, delta_micros
+    ),
+    bal AS (
+      UPDATE users u SET balance_micros = u.balance_micros + led.delta_micros
+      FROM led WHERE u.id = led.user_id
+    ),
+    cost AS (
+      UPDATE credit_ledger
+      SET cost_micros = ${actualCost}
+      WHERE ${actualCost}::int IS NOT NULL
+        AND EXISTS (SELECT 1 FROM rel)
+        AND id = (
+          SELECT id FROM credit_ledger
+          WHERE broll_project_id = ${brollProjectId}
+            AND reason = 'broll_character_set'
+          ORDER BY created_at DESC
+          LIMIT 1
+        )
+    )
+    SELECT (SELECT count(*)::int FROM rel) AS released
+  `);
+}
+
+/** Best-effort settle — a credits hiccup must never mask a generated set. */
+export async function settleBrollHoldQuietly(
+  brollProjectId: string,
+  outcome: BrollSettleOutcome
+): Promise<void> {
+  try {
+    await settleBrollHold(brollProjectId, outcome);
+  } catch (error) {
+    reportError("Failed to settle b-roll generation hold", error, {
+      brollProjectId,
+      outcome: outcome.status,
+    });
+  }
+}
+
+/**
+ * Reclaim a character-set hold stranded by a crash: refund it and release the
+ * claim, but only if the claim has aged past `staleAfterMs`.
+ *
+ * The b-roll sibling of `reclaimStaleHold`, and it cannot reuse it — that one
+ * reads `projects` and quals on `transcript_status`, a column this table does
+ * not have. Here the claim's own age is the liveness signal, which is why
+ * `gen_claim_at` is written at reserve rather than left for the caller.
+ *
+ * **The default window is ten minutes, not `STALE_HOLD_MS`.** See
+ * `BROLL_STALE_HOLD_MS` — reclaiming at ten seconds would rob a generation that
+ * is still running and charge the user twice.
+ *
+ * Returns true if a hold was reclaimed (safe to retry the reserve).
+ */
+export async function reclaimStaleBrollHold(
+  brollProjectId: string,
+  staleAfterMs: number = BROLL_STALE_HOLD_MS
+): Promise<boolean> {
+  const [row] = await executeRows(sql`
+    WITH prev AS (
+      SELECT id, user_id, hold_micros AS held
+      FROM broll_projects
+      WHERE id = ${brollProjectId}
+        AND hold_micros IS NOT NULL
+        AND gen_claim_at IS NOT NULL
+        AND gen_claim_at < now() - (interval '1 millisecond' * ${staleAfterMs})
+    ),
+    rel AS (
+      UPDATE broll_projects p
+      SET hold_micros = NULL, gen_claim_at = NULL, updated_at = now()
+      FROM prev
+      WHERE p.id = prev.id
+        AND p.hold_micros IS NOT NULL
+        AND p.gen_claim_at IS NOT NULL
+        AND p.gen_claim_at < now() - (interval '1 millisecond' * ${staleAfterMs})
+      RETURNING prev.user_id, prev.held
+    ),
+    led AS (
+      INSERT INTO credit_ledger (user_id, delta_micros, reason, broll_project_id, cost_micros)
+      SELECT user_id, held, 'refund', ${brollProjectId}, 0
+      FROM rel WHERE held <> 0
+      RETURNING user_id, delta_micros
+    ),
+    bal AS (
+      UPDATE users u SET balance_micros = u.balance_micros + led.delta_micros
+      FROM led WHERE u.id = led.user_id
+    )
+    SELECT (SELECT count(*)::int FROM rel) AS reclaimed
+  `);
+
+  const reclaimed = Number(row?.reclaimed ?? 0) > 0;
+  if (reclaimed) {
+    console.warn(
+      `Reclaimed an abandoned b-roll generation hold on project ${brollProjectId}.`
+    );
+  }
+  return reclaimed;
+}
+
+export type BrollPlanChargeResult =
+  | { status: "charged" }
+  /** First run on this project — bundled into the character-set price (AC-25). */
+  | { status: "bundled" }
+  | { status: "insufficient" }
+  /** No such project for this user. */
+  | { status: "not_found" };
+
+/**
+ * Charge a scene-plan re-run, and count the run — one statement.
+ *
+ * `broll_projects.plan_runs` is the only value separating a bundled first run
+ * from a charged re-run (AC-25, AC-41), so reading it in the app and charging
+ * on the answer would be check-then-act: two concurrent first runs would both
+ * read zero and both go free. The counter is therefore incremented here, in the
+ * same statement as the charge, and the pre-increment value decides.
+ *
+ * Eager, like `chargeAiCut`, because a plan run is one synchronous call.
+ * `idempotencyKey` rides in the same generic unique `stripe_event_id` slot
+ * under a `broll_plan:` prefix (AC-45), so a double-click charges once.
+ *
+ * **Known, bounded imprecision.** The `dup` guard stops a *sequential* retry
+ * from re-incrementing `plan_runs`, but two genuinely concurrent requests
+ * carrying the same key both see no duplicate and both increment, while only
+ * one insert survives the `ON CONFLICT`. The user is charged exactly once —
+ * that is the invariant that matters — and `plan_runs` can over-count by one.
+ * Over-counting only ever moves a run from bundled to charged at the very first
+ * boundary, and never charges twice for one run. Tightening it further needs a
+ * row lock the single-statement style here deliberately avoids.
+ */
+export async function chargeBrollPlanRerun(
+  userId: string,
+  brollProjectId: string,
+  idempotencyKey?: string,
+  priceMicros: number = BROLL_PLAN_RERUN_MICROS
+): Promise<BrollPlanChargeResult> {
+  const ledgerKey = idempotencyKey ? `broll_plan:${idempotencyKey}` : null;
+  try {
+    const [row] = await executeRows(sql`
+      WITH dup AS (
+        SELECT 1 FROM credit_ledger
+        WHERE ${ledgerKey}::text IS NOT NULL AND stripe_event_id = ${ledgerKey}
+      ),
+      claim AS (
+        UPDATE broll_projects
+        SET plan_runs = plan_runs + 1, updated_at = now()
+        WHERE id = ${brollProjectId} AND user_id = ${userId}
+          AND NOT EXISTS (SELECT 1 FROM dup)
+        RETURNING user_id, (plan_runs - 1) AS prior_runs
+      ),
+      ins AS (
+        INSERT INTO credit_ledger (user_id, delta_micros, reason, broll_project_id, cost_micros, stripe_event_id)
+        SELECT user_id,
+               CASE WHEN prior_runs > 0 THEN ${-priceMicros} ELSE 0 END,
+               'broll_plan_rerun', ${brollProjectId},
+               ${BROLL_PLAN_RERUN_COST_MICROS}, ${ledgerKey}
+        FROM claim
+        ON CONFLICT (stripe_event_id) DO NOTHING
+        RETURNING user_id, delta_micros
+      ),
+      charged AS (
+        UPDATE users u SET balance_micros = u.balance_micros + ins.delta_micros
+        FROM ins WHERE u.id = ins.user_id
+      )
+      SELECT (SELECT count(*)::int FROM dup) AS duplicate,
+             (SELECT count(*)::int FROM claim) AS claimed,
+             (SELECT prior_runs FROM claim) AS prior_runs
+    `);
+
+    // A key we have already charged: the work was paid for, report success.
+    if (Number(row?.duplicate ?? 0) > 0) return { status: "charged" };
+    if (!row || Number(row.claimed) === 0) return { status: "not_found" };
+    return Number(row.prior_runs) > 0
+      ? { status: "charged" }
+      : { status: "bundled" };
+  } catch (error) {
+    if (isCheckViolation(error)) return { status: "insufficient" };
+    throw error;
+  }
+}
+
+/**
+ * Refund a plan re-run that did not deliver a usable plan (the Gemini call
+ * failed, or the response failed the planner's validator). A straight
+ * credit-back — there is no hold to reconcile, matching `refundAiCut`.
+ *
+ * Keyed under its own `broll_plan_refund:` prefix so a retried refund cannot
+ * double-credit. `plan_runs` is deliberately left alone: the run happened, it
+ * simply did not produce anything, and decrementing it would hand out a second
+ * bundled run.
+ */
+export async function refundBrollPlanRerun(
+  userId: string,
+  brollProjectId: string,
+  idempotencyKey?: string,
+  priceMicros: number = BROLL_PLAN_RERUN_MICROS
+): Promise<void> {
+  const ledgerKey = idempotencyKey
+    ? `broll_plan_refund:${idempotencyKey}`
+    : null;
+  await executeRows(sql`
+    WITH ins AS (
+      INSERT INTO credit_ledger (user_id, delta_micros, reason, broll_project_id, cost_micros, stripe_event_id)
+      SELECT id, ${priceMicros}, 'refund', ${brollProjectId},
+             ${BROLL_PLAN_RERUN_COST_MICROS}, ${ledgerKey}
+      FROM users WHERE id = ${userId}
+      ON CONFLICT (stripe_event_id) DO NOTHING
       RETURNING user_id, delta_micros
     )
     UPDATE users u SET balance_micros = u.balance_micros + ins.delta_micros

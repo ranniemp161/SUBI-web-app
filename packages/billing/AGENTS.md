@@ -17,7 +17,7 @@ was dead code that no test covered. **Do not re-implement any of this app-side.*
 | File | Owns |
 |---|---|
 | `src/pricing.ts` | Rates, metering, conversions, and display — pure, no imports at all, safe in a client bundle. `MICROS_PER_USD`, `RETAIL_MICROS_PER_MINUTE` (env-overridable), `chargeMicrosForSeconds`, `formatUsd`, the per-second cost estimates that populate `credit_ledger.cost_micros`, hold sizing (`costSecondsForDurationMs`, `secondsFromDeepgramDuration`), and the member grant helpers. |
-| `src/ledger.ts` | Every statement that moves money: `reserveCredits`, `reclaimStaleHold`, `settleHold`/`settleHoldQuietly`, `depositPurchase`, `chargeAiCut`, `refundAiCut`, `ensureMonthlyGrant`. Server-only, enforced by an `import "server-only"` at the top. |
+| `src/ledger.ts` | Every statement that moves money. Rough-cut/wallet: `reserveCredits`, `reclaimStaleHold`, `settleHold`/`settleHoldQuietly`, `depositPurchase`, `chargeAiCut`, `refundAiCut`, `ensureMonthlyGrant`. B-roll: `reserveBrollHold`, `settleBrollHold`/`settleBrollHoldQuietly`, `reclaimStaleBrollHold`, `chargeBrollPlanRerun`, `refundBrollPlanRerun`. Server-only, enforced by an `import "server-only"` at the top. |
 | `src/index.ts` | Barrel re-exporting both, for the common server-side case. |
 
 ## Conventions
@@ -53,6 +53,32 @@ was dead code that no test covered. **Do not re-implement any of this app-side.*
   override carries no `NEXT_PUBLIC_` prefix, so the browser always resolves to
   `DEFAULT_RETAIL_MICROS_PER_MINUTE`. A pre-flight "you probably can't afford
   this" hint is fine; the charge itself is always computed in `ledger.ts`.
+- **B-roll's statements are siblings, not extensions, and must stay that way.**
+  `reserveCredits`, `reclaimStaleHold` and `settleHold` each hardcode
+  `UPDATE projects` in their SQL, and `reclaimStaleHold` also quals on
+  `transcript_status`, a column `broll_projects` does not have. None of them can
+  be pointed at a second table, so `broll/0002` build step 6 called for parallel
+  functions up front rather than a refactor that would rewrite proven money SQL.
+  Two shapes: a character set **holds first** (a ~110 s run of external image
+  calls, so the money is reserved before the vendor is paid), a plan re-run
+  **charges eagerly** like `chargeAiCut` (one synchronous call).
+- **B-roll prices are flat per action, not per second.** `flatRateMicros` is the
+  primitive; `chargeMicrosForSeconds` and the `*_PER_SECOND` constants price
+  video duration and have no slot for a per-call price. `flatRateMicros` is
+  deliberately stricter than the `Number(x) || default` idiom used for
+  `RETAIL_MICROS_PER_MINUTE`: an empty env var falls back instead of parsing to
+  `0` and silently making an action free, and a configured `0` is honoured
+  because "free for now" is a real setting.
+- **`BROLL_STALE_HOLD_MS` is ten minutes; `STALE_HOLD_MS` is ten seconds.** They
+  are not interchangeable. The short one is sized for an in-memory gap between
+  reserving a transcription and marking it processing; reclaiming a character
+  set that fast would rob a generation still in flight and charge twice.
+- **`settleBrollHold` UPDATEs `cost_micros` on the reserve row** — the one place
+  anything here mutates an existing ledger row instead of appending. It is safe
+  because `cost_micros` is margin reporting, carries no balance effect, and is
+  not part of the SUM the cached balance reconciles against. The real per-call
+  vendor cost is not knowable until the call returns, and AC-16 wants the real
+  figure, not the estimate written at reserve.
 - Import via the package exports, not deep relative paths: `@repo/billing`,
   `@repo/billing/pricing`, `@repo/billing/ledger`.
 - No build step — consumed as TypeScript source directly (workspace package),

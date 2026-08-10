@@ -59,6 +59,92 @@ export function formatUsd(micros: number): string {
 }
 
 /**
+ * Resolve a flat, per-action price from an env var, falling back to a default.
+ *
+ * The primitive every rate above this line is missing: they all price per
+ * *second*, because everything charged until now has been video duration. A
+ * b-roll character set is priced per image call and a plan re-run per call, so
+ * neither has a seconds slot to plug into.
+ *
+ * Deliberately stricter than `RETAIL_MICROS_PER_MINUTE`'s `Number(x) || default`:
+ *
+ * - An empty or whitespace env var falls back, rather than parsing to `0`.
+ *   `Number("")` is `0`, so the loose form would silently make an action free.
+ * - A configured `0` is honoured, because "free for now" is a real thing a
+ *   client may want to switch on. That is exactly why the `||` idiom is wrong
+ *   here — it cannot tell a deliberate zero from an absent value.
+ * - A negative or non-integer value falls back rather than throwing. A bad env
+ *   var must not take the app down, and money is integer micros everywhere.
+ */
+export function flatRateMicros(
+  configured: string | undefined,
+  fallback: number
+): number {
+  if (configured == null || configured.trim() === "") return fallback;
+  const n = Number(configured);
+  return Number.isInteger(n) && n >= 0 ? n : fallback;
+}
+
+/**
+ * B-Roll retail prices — flat per action, not per second.
+ *
+ * $2.00 a character emotion set and $0.25 a scene-plan re-run, decided
+ * 2026-08-09 and **tentative pending client review**. Env-overridable for
+ * exactly that reason: a reprice is a Vercel env change and a redeploy, never a
+ * code change (the repo's standing rule that prices are config, not code).
+ *
+ * $2.00 is ~2.4x our cost at the `gemini-3-pro-image` tier Phase 0 actually
+ * measured, and ~4.9x if the `gemini-3.1-flash-image` A/B wins later — chosen so
+ * the number is healthy either way and the tier question does not gate Phase 2.
+ * The working is in `docs/specs/broll/0001-high-level-design/index.md` §8.1.
+ *
+ * Same client-side caveat as `RETAIL_MICROS_PER_MINUTE`: neither var carries a
+ * `NEXT_PUBLIC_` prefix, so a browser always resolves the default. Showing
+ * "Generate — $2.00" from these is fine; the charge is always computed in
+ * `./ledger` on the server.
+ */
+export const DEFAULT_BROLL_CHARACTER_SET_MICROS = 2_000_000;
+export const DEFAULT_BROLL_PLAN_RERUN_MICROS = 250_000;
+
+export const BROLL_CHARACTER_SET_MICROS = flatRateMicros(
+  process.env.BROLL_CHARACTER_SET_MICROS,
+  DEFAULT_BROLL_CHARACTER_SET_MICROS
+);
+export const BROLL_PLAN_RERUN_MICROS = flatRateMicros(
+  process.env.BROLL_PLAN_RERUN_MICROS,
+  DEFAULT_BROLL_PLAN_RERUN_MICROS
+);
+
+/**
+ * Fallback real-world cost estimates for b-roll, in USD micros per action.
+ *
+ * Only a fallback: AC-16 wants `cost_micros` populated from the Gemini call's
+ * **real reported usage**, which is not known until the call returns. These are
+ * what the reserve row carries until `settleBrollHold` trues it up, and what a
+ * caller with no usage metadata in hand falls back to.
+ *
+ * The character-set figure is six images at the Pro tier's $0.134 plus roughly
+ * $0.03 of multi-turn image input. The plan figure is a rough placeholder for
+ * one text call over a transcript — it has never been measured, and unlike the
+ * character set it was never sized against a published per-call rate. Replace
+ * it with real usage data as soon as Phase 3 produces any.
+ */
+export const BROLL_CHARACTER_SET_COST_MICROS = 840_000;
+export const BROLL_PLAN_RERUN_COST_MICROS = 2_000;
+
+/**
+ * How long a b-roll generation claim may sit before it is treated as abandoned.
+ *
+ * **Ten minutes, not `STALE_HOLD_MS`.** That constant is 10 seconds, sized for
+ * the in-memory gap between reserving a transcription and marking it
+ * processing. A character set is a ~110 s run of external image calls (measured
+ * in Phase 0), so reclaiming at 10 s would steal the hold out from under a
+ * generation that is still going and charge the user twice. Ten minutes is
+ * roughly five times the measured run.
+ */
+export const BROLL_STALE_HOLD_MS = 600_000;
+
+/**
  * Estimated real-world cost, in USD micros per second (1,000,000 = $1), used
  * to populate credit_ledger.cost_micros for margin visibility — this is our
  * cost, not the retail price the user is charged (that is delta_micros).
