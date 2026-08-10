@@ -525,8 +525,8 @@ export async function settleBrollHold(
 ): Promise<void> {
   const refund = outcome.status === "failed";
   const actualCost =
-    outcome.status === "generated" && outcome.costMicros != null
-      ? Math.max(0, Math.round(outcome.costMicros))
+    outcome.status === "generated" && Number.isFinite(outcome.costMicros)
+      ? Math.max(0, Math.round(outcome.costMicros as number))
       : null;
 
   await executeRows(sql`
