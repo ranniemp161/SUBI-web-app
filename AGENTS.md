@@ -11,7 +11,7 @@ Turborepo monorepo (npm workspaces: `apps/*`, `packages/*`). Node 22, TypeScript
 
 ## Commands
 ```bash
-npm run dev         # turbo dev — runs all apps (rough-cut :3000, wallet :3001, founders-frame :3002)
+npm run dev         # turbo dev — runs all apps (rough-cut :3000, wallet :3001, founders-frame :3002, broll :3003)
 npm run build       # turbo build
 npm run lint        # turbo lint
 npm run typecheck   # turbo typecheck
@@ -23,7 +23,7 @@ Scope any command to one workspace with `-w`, e.g. `npm run dev -w @repo/rough-c
 Tracer Bullet — vertical slices; each feature built end-to-end through every layer, working. (Set by `/scope`; see `docs/scope/index.md` and the `**Build approach:**` line on each workspace scope.)
 
 ## Rules
-- Ports are pinned: rough-cut = 3000, wallet = 3001, founders-frame = 3002. Cross-app URLs must go through each app's `src/lib/env.ts`, never a raw `process.env.NEXT_PUBLIC_*` read.
+- Ports are pinned: rough-cut = 3000, wallet = 3001, founders-frame = 3002, broll = 3003. Cross-app URLs must go through each app's `src/lib/env.ts`, never a raw `process.env.NEXT_PUBLIC_*` read.
 - Production domains: rough-cut = `myfirstcut.app`, wallet = `myframecredits.app`; founders-frame is the marketing site. How a missing URL env var is handled differs per app: rough-cut and wallet throw at import time, founders-frame falls back to the production domain in a production build and to `localhost` otherwise.
 - Schema changes go through `packages/db` only (`db:generate` + `db:migrate`, prod-safe); `db:push` is dev-only, never prod. See `packages/db/AGENTS.md`.
 - **Time-to-frame conversion has exactly one implementation, in `@repo/transcript`.** Every app converts through it, so two apps can never round the same timecode differently — the guarantee that a clip labelled 2:35 really sits at 2:35. `apps/rough-cut/src/lib/frame-math.ts` and `src/lib/export/timebase.ts` survive only as one line re-export shims; never reimplement the arithmetic behind them.
@@ -72,6 +72,7 @@ Stored in `docs/adr/`. Format: `docs/adr/NNNN-title.md`.
 - [apps/rough-cut/AGENTS.md](./apps/rough-cut/AGENTS.md) — video transcription + AI cutting product app
 - [apps/wallet/AGENTS.md](./apps/wallet/AGENTS.md) — centralized billing/credits app
 - [apps/founders-frame/AGENTS.md](./apps/founders-frame/AGENTS.md) — static marketing site (no accounts, no DB)
+- [apps/broll/AGENTS.md](./apps/broll/AGENTS.md) — B-roll generator: transcript plus photo to a folder of timecode-named clips (port 3003)
 - [packages/billing/AGENTS.md](./packages/billing/AGENTS.md) — the only implementation of the money invariant: rates, metering, and every ledger statement
 - [packages/db/AGENTS.md](./packages/db/AGENTS.md) — shared Drizzle schema, migrations, DB connection
 - [packages/transcript/AGENTS.md](./packages/transcript/AGENTS.md) — the cross-app transcript document contract and the repo's only frame arithmetic

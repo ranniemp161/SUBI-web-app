@@ -56,10 +56,43 @@ describe("public routes", () => {
     }
   });
 
-  it("lists exactly the three public patterns and nothing more", () => {
-    // A fourth entry appearing here is a real widening of the anonymous
+  // Vercel calls the cron with a Bearer token and no Clerk session, so behind
+  // the session gate it would 401 before its own CRON_SECRET check ever ran —
+  // the same reason Ruff Cut's `blob-sweep` is public there.
+  it("treats the character sweep cron as public (it self-gates on CRON_SECRET)", async () => {
+    const { auth, protect } = authStub();
+    const response = await (proxy as unknown as Handler)(
+      auth,
+      request("/api/cron/character-sweep")
+    );
+    expect(response).toBeUndefined();
+    expect(protect).not.toHaveBeenCalled();
+  });
+
+  it("lists exactly these four public patterns and nothing more", () => {
+    // A fifth entry appearing here is a real widening of the anonymous
     // surface, so it should have to change this test deliberately.
-    expect(PUBLIC_ROUTES).toEqual(["/", "/sign-in(.*)", "/sign-up(.*)"]);
+    expect(PUBLIC_ROUTES).toEqual([
+      "/",
+      "/sign-in(.*)",
+      "/sign-up(.*)",
+      "/api/cron/character-sweep",
+    ]);
+  });
+
+  // The cron path is the only `/api/` route that skips the session gate. If a
+  // sibling under `/api/cron/` ever slipped in by a looser pattern, this is
+  // where it would show.
+  it("still protects every other api route", async () => {
+    for (const pathname of [
+      "/api/cron/character-sweep/extra",
+      "/api/cron",
+      "/api/projects/p1/character",
+    ]) {
+      const { auth } = authStub();
+      const response = await (proxy as unknown as Handler)(auth, request(pathname));
+      expect(response?.status, `${pathname} should be 401`).toBe(401);
+    }
   });
 });
 

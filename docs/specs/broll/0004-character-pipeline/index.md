@@ -1,7 +1,7 @@
 # 0004. Character pipeline
 
 **Date**: 2026-08-10
-**Status**: Proposed
+**Status**: In Progress
 
 ## Summary
 

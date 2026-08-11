@@ -67,3 +67,4 @@ packages/db/scripts/grant-credits.ts
 # docs/adr, docs/specs, docs/scope and docs/roadmap are the agent workflow's
 # durable state (see jsmastery-pro/skills). They must stay tracked.
 docs/.vitepress/dist/
+/blueprint

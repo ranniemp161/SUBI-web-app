@@ -76,6 +76,12 @@ and writes real ledger rows.
       **valid pathname belonging to another user's project**, which is the case
       that matters: it must also be rejected. Then confirm the browser never
       chooses a pathname at all, it uses the one the stream sent.
+      **Shape half is unit covered** by `src/lib/asset-path.test.ts`: another
+      project's well formed path, traversal, a sibling id that shares a prefix,
+      and every non matching shape are all rejected there and re-checked on
+      every run. What still needs a live drive is the **authorization** half,
+      that the upload route resolves the project through an owner scoped query
+      and 401s a caller who does not own it.
 - [ ] **AC-73** — Abandon a run after some uploads have landed (kill the tab mid
       upload). Confirm no object survives under the project's prefix without a
       row referencing it, once the sweep has run.
@@ -94,6 +100,13 @@ and writes real ledger rows.
       id honours `BROLL_IMAGE_MODEL`. Point that variable at a retired model id
       and confirm the error names the model and says it needs a code or config
       change, rather than surfacing a raw vendor error.
+      **Unit covered** by `src/lib/character-prompt.test.ts`: the pinned values
+      (including the uppercase `K` the API requires), the env override, the empty
+      override falling back rather than becoming undefined, and the error text
+      naming the overridden model. What needs a live drive is that the
+      **generation route actually sends** those parameters, and one check no test
+      can make: that `BROLL_IMAGE_MODEL` is in `turbo.json`'s build env list, or
+      a Vercel build reads it as undefined with no error.
 - [ ] **AC-68** — Both routes rate limit per user through `@repo/server-shared`,
       checked before any charge: 5 sets per hour, 30 regenerations per hour.
       Exceeding either returns 429 with no ledger row written.
@@ -102,6 +115,12 @@ and writes real ledger rows.
       each later request carries the previous turn's output image as an input
       part. This is the identity mechanism Phase 0 measured; if it regresses,
       identity degrades quietly rather than failing.
+      **Prompt half is unit covered** by `src/lib/character-prompt.test.ts`,
+      which asserts the style phrases appear in turn 1 and in no later turn, that
+      framing, background and lighting are not restated either, and that turn
+      order starts with `neutral`. What still needs a live drive is that the
+      **request actually carries the previous turn's output image** as an input
+      part, which only the real call shows.
 - [ ] Per turn timeout and run budget hold: stall one turn and confirm it is
       abandoned at 40 seconds and retried, and that the whole run aborts at 240
       seconds rather than running into the route's 300 second ceiling.
@@ -130,6 +149,10 @@ and writes real ledger rows.
 - [ ] **AC-66** — The reference photo upload control states, before the file
       picker, all three: we never store it, Google does not train on it, and
       Google deletes it from their logs within 55 days.
+      **Copy is unit covered** by `src/lib/character-prompt.test.ts`, which
+      asserts all three clauses are present and that it never claims immediate
+      deletion, which we cannot promise. What needs a live drive is that the copy
+      is actually **rendered before the file picker**, not merely exported.
 
 ## Security
 
@@ -147,6 +170,46 @@ and writes real ledger rows.
       after creation, so confirm it before any real data is written.
 
 ---
+
+## Added by the build, 2026-08-11
+
+_These five come from decisions taken during the build rather than from the spec,
+so they could not have been written above. Everything else on this page is
+unchanged._
+
+- [ ] **AC-16, the cost derivation.** The spec's value sourcing says "usageMetadata
+      summed across the six responses", but `usageMetadata` is tokens and
+      `cost_micros` is money, and no rate in this repo converts one to the other.
+      The build prices it by **images actually generated**, at
+      `IMAGE_OUTPUT_COST_MICROS` (134,000) in `character-prompt.ts`, taken from
+      the same Pro tier $0.134 figure `BROLL_CHARACTER_SET_COST_MICROS` is built
+      from. Confirm a clean run settles at **804,000** and a run where one turn
+      was retried settles at **938,000**. Read the ledger row, do not infer it.
+      This is worth ratifying in the spec, not just checking.
+- [ ] **AC-16, the transport.** The figure crosses from the generate stream to
+      the commit request through the browser. Post a commit body with a
+      `costMicros` of 99,000,000,000 and confirm the stored value is clamped to
+      3,360,000. This is only acceptable because `cost_micros` carries no balance
+      effect; confirm the balance is untouched by the tampered value.
+- [ ] **AC-72 in reverse, and the claim that costs nothing.** A regeneration takes
+      the claim through `claimBrollGeneration` with a **zero** hold and writes no
+      ledger row. Confirm all three: a set run cannot start while a redraw holds
+      it, a completed redraw's `variant` commit clears it, and a redraw abandoned
+      mid flight is cleared by `reclaimStaleBrollHold` after ten minutes **with
+      no refund row written**, because the hold was zero. The last one is what
+      stops a crashed redraw stranding the project permanently.
+- [ ] **AC-22, the Sentry gap.** `apps/broll` has no Sentry init today (no
+      `instrumentation.ts`, no `sentry.*.config.ts`), so `reportError` forwards to
+      a no-op. Confirm that is still true, or if Sentry has since been wired here,
+      that request body capture is off — a multipart body carrying a face photo
+      would otherwise reach Sentry on any error thrown during a generate request,
+      with nothing failing and nothing to notice.
+- [ ] **AC-73, the scheduled half.** Call `/api/cron/character-sweep` with the
+      `CRON_SECRET` Bearer token and confirm two things: an orphan older than an
+      hour is deleted, and an object uploaded seconds ago is **spared**. The age
+      guard is the whole safety of this route — without it the sweep would delete
+      a set out from under the run still uploading it, since the browser uploads
+      all six before committing once.
 
 ## Notes on coverage
 
