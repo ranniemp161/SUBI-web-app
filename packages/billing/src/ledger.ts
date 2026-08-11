@@ -644,6 +644,76 @@ export async function reclaimStaleBrollHold(
   return reclaimed;
 }
 
+export type BrollClaimResult = "claimed" | "already_held";
+
+/**
+ * Take the generation claim **without moving money**, for a free single-variant
+ * regeneration (spec `broll/0004` AC-72, invariant 7).
+ *
+ * A regeneration is free, so it writes no ledger row — but it still has to be
+ * the only writer on the project, because a regeneration landing while a full
+ * set run sits between reserve and commit would have two writers racing for the
+ * same emotion row and the loser's work would vanish with no error.
+ *
+ * **It lives here, not in the app, because `gen_claim_at` is the money path's
+ * column.** Every write to it is in this file, which is what keeps the pair
+ * invariant checkable by reading one place. Two writers to a claim column, one
+ * of them outside the package, is the same shape of mistake `@repo/billing`
+ * exists to prevent.
+ *
+ * `hold_micros` is set to **zero rather than left NULL**, and that is the load
+ * bearing detail: it keeps the pair moving together, and it means the existing
+ * release paths already handle this claim correctly with no new SQL.
+ * `settleBrollHold` and `reclaimStaleBrollHold` both qual on
+ * `hold_micros IS NOT NULL` (so they can see it) and both guard their refund
+ * insert with `held <> 0` (so they move no money for it). A claim left NULL
+ * would be invisible to the stale reclaim and would strand the project forever
+ * the first time a regeneration crashed.
+ */
+export async function claimBrollGeneration(
+  userId: string,
+  brollProjectId: string
+): Promise<BrollClaimResult> {
+  const [row] = await executeRows(sql`
+    WITH claim AS (
+      UPDATE broll_projects
+      SET hold_micros = 0, gen_claim_at = now(), updated_at = now()
+      WHERE id = ${brollProjectId} AND user_id = ${userId}
+        AND hold_micros IS NULL AND gen_claim_at IS NULL
+      RETURNING id
+    )
+    SELECT (SELECT count(*)::int FROM claim) AS claimed
+  `);
+
+  return Number(row?.claimed ?? 0) > 0 ? "claimed" : "already_held";
+}
+
+/**
+ * Release a zero-money claim taken by `claimBrollGeneration`.
+ *
+ * The same statement as a failed settle, because a failed settle of a zero hold
+ * *is* this: it clears the claim and the hold together, and its refund insert is
+ * guarded by `held <> 0`, so nothing reaches the ledger or the balance. Named
+ * separately so a regeneration's release does not read as a refund at the call
+ * site — the outcome word would be a lie about what happened.
+ */
+export async function releaseBrollClaim(brollProjectId: string): Promise<void> {
+  await settleBrollHold(brollProjectId, { status: "failed" });
+}
+
+/** Best-effort release — a claim that will not clear must not mask a good image. */
+export async function releaseBrollClaimQuietly(
+  brollProjectId: string
+): Promise<void> {
+  try {
+    await releaseBrollClaim(brollProjectId);
+  } catch (error) {
+    reportError("Failed to release b-roll generation claim", error, {
+      brollProjectId,
+    });
+  }
+}
+
 export type BrollPlanChargeResult =
   | { status: "charged" }
   /** First run on this project — bundled into the character-set price (AC-25). */
