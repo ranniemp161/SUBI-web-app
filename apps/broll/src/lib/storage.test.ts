@@ -52,7 +52,7 @@ describe("isStorageConfigured", () => {
   it("is true with the read write token alone", async () => {
     // The load bearing case. Requiring a second, unobtainable variable here is
     // what turned "storage works" into a permanent 503.
-    process.env.BLOB_READ_WRITE_TOKEN = "vercel_blob_rw_ABC123_secret";
+    process.env.BLOB_READ_WRITE_TOKEN = "test-token-not-a-credential";
     delete process.env.BLOB_WEBHOOK_PUBLIC_KEY;
     expect(await isConfigured()).toBe(true);
   });
@@ -63,7 +63,7 @@ describe("isStorageConfigured", () => {
   });
 
   it("does not become false when a webhook key happens to be set", async () => {
-    process.env.BLOB_READ_WRITE_TOKEN = "vercel_blob_rw_ABC123_secret";
+    process.env.BLOB_READ_WRITE_TOKEN = "test-token-not-a-credential";
     process.env.BLOB_WEBHOOK_PUBLIC_KEY = "whatever";
     expect(await isConfigured()).toBe(true);
   });

@@ -62,7 +62,7 @@ beforeEach(() => {
   state.dbUser = { id: "user-db" };
   state.project = { id: "p" };
   state.configured = true;
-  process.env.BLOB_READ_WRITE_TOKEN = "vercel_blob_rw_ABC123_secret";
+  process.env.BLOB_READ_WRITE_TOKEN = "test-token-not-a-credential";
   vi.clearAllMocks();
 });
 
