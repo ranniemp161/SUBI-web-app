@@ -12,11 +12,13 @@
   },
   "dependencies": {
     "@clerk/nextjs": "^7.6.4",
+    "@imgly/background-removal": "^1.7.0",
     "@repo/billing": "*",
     "@repo/db": "*",
     "@repo/server-shared": "*",
     "@repo/transcript": "*",
     "@repo/ui": "*",
+    "@vercel/blob": "^2.7.0",
     "drizzle-orm": "^0.45.2",
     "next": "16.2.12",
     "react": "19.2.8",

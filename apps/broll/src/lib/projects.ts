@@ -115,3 +115,31 @@ export async function getBrollProject(
   if (!row) return null;
   return { ...row, transcript: row.transcript as TranscriptDocument };
 }
+
+/**
+ * Whether a generation currently holds this project, and for how much.
+ *
+ * Read only, and deliberately never written here: `hold_micros` and
+ * `gen_claim_at` are set and cleared together inside `@repo/billing`, which is
+ * what keeps spec `broll/0002`'s invariant 5 checkable by reading one file. This
+ * exists so the commit route can tell a run that still holds its money from one
+ * whose claim was already reclaimed and refunded — storing a set for the second
+ * would hand over six images the user has been given their money back for.
+ *
+ * Owner scoped like every other query in this file.
+ */
+export async function getBrollGenerationState(
+  userId: string,
+  id: string
+): Promise<{ holdMicros: number | null; genClaimAt: Date | null } | null> {
+  const rows = await db
+    .select({
+      holdMicros: brollProjects.holdMicros,
+      genClaimAt: brollProjects.genClaimAt,
+    })
+    .from(brollProjects)
+    .where(and(eq(brollProjects.id, id), eq(brollProjects.userId, userId)))
+    .limit(1);
+
+  return rows[0] ?? null;
+}

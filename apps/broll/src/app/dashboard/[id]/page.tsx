@@ -1,11 +1,18 @@
 import { auth } from "@clerk/nextjs/server";
 import { redirect, notFound } from "next/navigation";
 import { getAuthorizedDbUser } from "@repo/server-shared/authz";
-import { formatUsd, BROLL_PLAN_RERUN_MICROS } from "@repo/billing/pricing";
+import {
+  formatUsd,
+  BROLL_PLAN_RERUN_MICROS,
+  BROLL_CHARACTER_SET_MICROS,
+} from "@repo/billing/pricing";
 import { getBrollProject } from "@/lib/projects";
 import { listBrollScenes } from "@/lib/scenes";
+import { listCharacterAssets, regenerationsUsed } from "@/lib/assets";
+import { presignAssetReads } from "@/lib/storage";
 import { checkTranscriptFreshness } from "@/lib/staleness";
 import { PlanPanel } from "./plan-panel";
+import { CharacterPanel, type ReviewAsset } from "./character-panel";
 import Link from "next/link";
 
 /** `2:35`, or `1:02:35` once past an hour. Timecodes render tabular so a column of them lines up. */
@@ -36,7 +43,7 @@ export default async function ProjectPage({
   // 403, so a project id is never confirmed to a stranger (AC-38).
   if (!project) notFound();
 
-  const [scenes, freshness] = await Promise.all([
+  const [scenes, freshness, characterAssets, regensUsed] = await Promise.all([
     listBrollScenes(user.id, id),
     // Advisory only, and never fatal: a linked project asks Ruff Cut whether
     // the edit has moved since this transcript was taken (AC-49).
@@ -45,7 +52,25 @@ export default async function ProjectPage({
       storedFingerprint: project.edlFingerprint,
       token: await getToken(),
     }),
+    listCharacterAssets(user.id, id),
+    regenerationsUsed(user.id, id),
   ]);
+
+  // Signed here rather than fetched by the browser, so the first paint of the
+  // review gate needs no round trip. The urls point at the blob host, so the
+  // images still load directly and no Function sits in the data path (AC-17).
+  const signed = await presignAssetReads(
+    characterAssets.map((asset) => asset.pathname)
+  ).catch(() => []);
+  const signedFor = new Map(signed.map((entry) => [entry.pathname, entry.url]));
+
+  const reviewAssets: ReviewAsset[] = characterAssets.map((asset) => ({
+    emotion: asset.emotion,
+    width: asset.width,
+    height: asset.height,
+    attempt: asset.attempt,
+    url: signedFor.get(asset.pathname) ?? null,
+  }));
 
   const { transcript } = project;
   const wordCount = transcript.segments.reduce(
@@ -126,6 +151,14 @@ export default async function ProjectPage({
           as it was — start a new b-roll project to pick up the newer cut.
         </p>
       )}
+
+      <CharacterPanel
+        projectId={project.id}
+        initialAssets={reviewAssets}
+        initialRegenerationsUsed={regensUsed}
+        // Formatted here because the price env override is server side only.
+        setPrice={formatUsd(BROLL_CHARACTER_SET_MICROS)}
+      />
 
       <PlanPanel
         projectId={project.id}

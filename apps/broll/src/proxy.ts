@@ -6,10 +6,20 @@ import { NextResponse } from "next/server";
  * signed-in user, because every b-roll row is scoped by `user_id` and there is
  * no anonymous surface beyond the landing page.
  *
+ * The cron path is public here and **self-gates on `CRON_SECRET`** instead.
+ * Vercel calls it with a Bearer token and no Clerk session, so leaving it behind
+ * this gate would 401 it before its own secret check ever ran — the same shape
+ * Ruff Cut's `blob-sweep` already has.
+ *
  * Next.js 16 renamed this file from `middleware.ts` to `proxy.ts`. That is not
  * a mistake — see the root AGENTS.md.
  */
-export const PUBLIC_ROUTES = ["/", "/sign-in(.*)", "/sign-up(.*)"];
+export const PUBLIC_ROUTES = [
+  "/",
+  "/sign-in(.*)",
+  "/sign-up(.*)",
+  "/api/cron/character-sweep",
+];
 
 const isPublicRoute = createRouteMatcher(PUBLIC_ROUTES);
 

@@ -21,3 +21,44 @@ export async function planRateLimit(clerkId: string): Promise<RateLimitResult> {
     failClosed: true,
   });
 }
+
+/**
+ * Per-user caps on the character pipeline, both checked **before any charge**
+ * (AC-68).
+ *
+ * Five sets an hour is ten dollars an hour of retail and roughly four dollars of
+ * vendor cost, which is far past any honest use of a feature that produces one
+ * reusable set per project. Thirty regenerations an hour is above the twelve per
+ * project cap on purpose: the cap is the real limit on regeneration, and this
+ * bucket exists to stop a script, not to second guess a user working across
+ * several projects.
+ *
+ * **Fails closed**, like the planner's. A set run spends real money at the
+ * vendor before it produces anything, so a Redis blip that silently disabled the
+ * cap here would let a scripted client burn balance and vendor cost together.
+ */
+const CHARACTER_SET_LIMIT = 5;
+const CHARACTER_REGEN_LIMIT = 30;
+const CHARACTER_WINDOW_SECONDS = 3600;
+
+export async function characterSetRateLimit(
+  clerkId: string
+): Promise<RateLimitResult> {
+  return rateLimit(
+    `broll-character:${clerkId}`,
+    CHARACTER_SET_LIMIT,
+    CHARACTER_WINDOW_SECONDS,
+    { failClosed: true }
+  );
+}
+
+export async function characterRegenRateLimit(
+  clerkId: string
+): Promise<RateLimitResult> {
+  return rateLimit(
+    `broll-character-regen:${clerkId}`,
+    CHARACTER_REGEN_LIMIT,
+    CHARACTER_WINDOW_SECONDS,
+    { failClosed: true }
+  );
+}
