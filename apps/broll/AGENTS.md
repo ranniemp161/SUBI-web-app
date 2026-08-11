@@ -72,6 +72,13 @@ npm -w @repo/broll typecheck
 - **PNG in, PNG out, with no JPEG anywhere between Gemini and storage.** JPEG
   ringing lands exactly on the character edge the product is judged by, and JPEG
   has no alpha channel at all.
+- **Never give a test a credential shaped literal.** A fake token written to look
+  real (`vercel_blob_rw_ABC123_...`) trips the repo's secret scanner, and every
+  such hit trains the next reader to skim past that shape. These tests only need
+  the variable to be set, so a value that is obviously not a credential does the
+  same job. The one place the shape is required is
+  `apps/rough-cut/src/lib/blob.test.ts`, because `deriveExpectedBlobHostname`
+  parses `vercel_blob_rw_<storeId>_<secret>`.
 
 ## Gotchas
 - **The Ruff Cut handoff is server to server on purpose, and must stay that way.**
