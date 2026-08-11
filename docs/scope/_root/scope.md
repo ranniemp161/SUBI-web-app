@@ -22,7 +22,7 @@ any, and mark a feature `done` when you decide it is._
 | 1 | USD denominated Wallet | Slice 1 | done |
 | 4 | Transcript contract and `@repo/transcript` | Slice 2 | in-progress |
 | 5 | Architecture review leftovers | Slice 3 | planned |
-| 6 | B-roll money statements in `@repo/billing` | Slice 4 | planned |
+| 6 | B-roll money statements in `@repo/billing` | Slice 4 | in-progress |
 | 2 | Auto recharge notification channel | Deferred | planned |
 | 3 | AI Cut differentiated retail rate | Deferred | planned |
 
@@ -163,7 +163,7 @@ on anything else.
 
 ## Slice 4
 
-### 6. B-roll money statements in `@repo/billing` · planned `from spec broll/0002`
+### 6. B-roll money statements in `@repo/billing` · in-progress `from spec broll/0002`
 
 Enrolled by `/architect` on 2026-08-08, surfaced while designing the b-roll data
 model. It belongs here rather than in the b-roll scope because it changes the
@@ -176,16 +176,18 @@ so the money invariant keeps having one home when a third app starts spending.
 ledger statement living in `apps/broll`, and a character set can be priced per
 call rather than per second.
 
-- [ ] Design it (spec): covered by
+- [x] Design it (spec): covered by
       [broll/0002](../../specs/broll/0002-data-model/index.md), build plan steps
       6 and 7. No separate spec needed unless the pricing shape turns out to be
       contentious.
-- [ ] Build it: `/develop broll money statements`
-  - [ ] Hold pair: `reserveBrollHold` and `settleBrollHold` as **new sibling
+- [x] Build it: `/develop broll money statements`. All three shapes live in
+      [packages/billing/src/ledger.ts](../../../packages/billing/src/ledger.ts)
+      and are covered by `ledger.test.ts`.
+  - [x] Hold pair: `reserveBrollHold` and `settleBrollHold` as **new sibling
         functions**, plus a b-roll stale reclaim on a 10 minute window
-  - [ ] Eager charge: `chargeBrollPlanRerun`, shaped like `chargeAiCut`, keyed on
+  - [x] Eager charge: `chargeBrollPlanRerun`, shaped like `chargeAiCut`, keyed on
         a `broll_plan:` idempotency key so a double click charges once
-  - [ ] Flat rate pricing primitive beside the existing per second one
+  - [x] Flat rate pricing primitive beside the existing per second one
 - [ ] Verify it: `/check verify broll money statements`
 - [ ] Test it: `/test broll money statements`
 

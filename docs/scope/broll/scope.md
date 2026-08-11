@@ -25,7 +25,7 @@ any, and mark a feature `done` when you decide it is._
 | # | Feature | Phase | Status |
 |---|---------|-------|--------|
 | 1 | Spikes: client-side encode + segmentation | Phase 0 | done |
-| 2 | Skeleton: workspace, schema, transcript contract | Phase 1 | in-progress |
+| 2 | Skeleton: workspace, schema, transcript contract | Phase 1 | done |
 | 3 | Character pipeline | Phase 2 | in-progress |
 | 4 | Scene planner | Phase 3 | in-progress |
 | 5 | One template end to end | Phase 4 | planned |
@@ -58,7 +58,7 @@ not code.
 
 ## Phase 1
 
-### 2. Skeleton: workspace, schema, transcript contract · in-progress
+### 2. Skeleton: workspace, schema, transcript contract · done
 
 **Intent**: Wire `apps/broll` end to end through the shared packages, and build the
 transcript contract that makes the Rough Cut handoff real rather than aspirational.
@@ -297,20 +297,104 @@ stored — with credits reserved and settled, and no double charge on a double-c
       object, nothing persisted a regenerated variant, and the regeneration cap
       contradicted the paid re-run so a $2 purchase burned half the free
       allowance. All fixed; the reasoning records what changed.
-- [ ] Build it: /develop character pipeline (AC-14 to AC-22, AC-61 to AC-74)
-  - [ ] Storage seam, server minted paths, and the capability probe that refuses
+- [x] Build it: /develop character pipeline (AC-14 to AC-22, AC-61 to AC-74).
+      Started 2026-08-10, all eight of spec 0004's build plan tasks landed
+      2026-08-11. Code in
+      [apps/broll/src/lib/](../../../apps/broll/src/lib/) (`asset-path.ts`,
+      `storage.ts`, `segmentation.ts`, `character-prompt.ts`, `character.ts`,
+      `assets.ts`, `trim.ts`),
+      [apps/broll/src/app/api/](../../../apps/broll/src/app/api/) (the four
+      character routes, the blob upload route and the sweep cron) and
+      [apps/broll/src/app/dashboard/[id]/character-panel.tsx](../../../apps/broll/src/app/dashboard/%5Bid%5D/character-panel.tsx).
+      Lint, typecheck and test green, and `next build` compiles every route;
+      b-roll went from 170 tests to 287. No migration: every column this feature
+      uses shipped in `0015`/`0016`.
+
+      **Built, gated, and never once run against the real vendor.** Not a single
+      Gemini image call has been made by this code: the whole suite mocks
+      `fetch`, and no local run has had an image capable `GEMINI_API_KEY` or a
+      connected Blob store pointed at it. So the prompt wording spec 0004 wrote
+      down for the first time is still unjudged, exactly as its Follow up says,
+      and so is the segmentation quality on real output. Everything below
+      describes code that typechecks and is unit covered, not behaviour anyone
+      has watched.
+
+      **One decision the spec left open, settled during the build and worth
+      ratifying.** AC-16 asks the ledger row to carry the Gemini call's real
+      reported usage, and the value sourcing table says "usageMetadata summed
+      across the six responses" — but `usageMetadata` is tokens and
+      `cost_micros` is money, and no rate in this repo converts one to the
+      other. The engineer chose to price it by **images actually generated**, at
+      a named `IMAGE_OUTPUT_COST_MICROS` of 134,000 taken from the same Pro tier
+      $0.134 figure `BROLL_CHARACTER_SET_COST_MICROS` is already built from. So
+      a retried turn genuinely costs more than a clean run, and no token rate
+      was invented. The figure crosses the stream-to-commit request boundary
+      through the browser and is clamped server side; that is safe only because
+      `cost_micros` is margin reporting with no balance effect, and the clamp
+      test says so.
+
+      **One addition to `@repo/billing`**, because a free regeneration still has
+      to be the only writer on the project (AC-72) and `gen_claim_at` is the
+      money path's column: `claimBrollGeneration` takes the claim with a **zero**
+      hold and writes no ledger row, and `releaseBrollClaim` lets it go. Zero
+      rather than NULL is load bearing — `settleBrollHold` and
+      `reclaimStaleBrollHold` both qual on `hold_micros IS NOT NULL` and both
+      guard their refund insert with `held <> 0`, so the existing release paths
+      already handle it with no new SQL, while a NULL hold would be invisible to
+      the stale reclaim and would strand the project forever the first time a
+      regeneration crashed.
+  - [x] Storage seam, server minted paths, and the capability probe that refuses
         a browser which cannot segment **before** any money moves (AC-17, AC-61,
-        AC-70)
-  - [ ] The prompt module and the thin thread: one turn, end to end through
+        AC-70). The pathname module is the security piece: it validates the whole
+        shape rather than a prefix, so traversal is impossible by construction
+        rather than filtered, and the upload route re-derives and re-checks the
+        project even though the generate route minted the path. `@vercel/blob`
+        2.7.0's signed URL API was verified against the installed types, not the
+        docs, before anything was built on it.
+  - [x] The prompt module and the thin thread: one turn, end to end through
         Gemini, segmentation, trim, upload and a visible stored asset (AC-67,
-        AC-19, AC-74, AC-18, AC-20)
-  - [ ] The full six turn chain and the money boundary: streaming, retry once
+        AC-19, AC-74, AC-18, AC-20). `character-prompt.ts` carries the
+        reconstructed §8.1 verbatim, and `character-prompt.test.ts` asserts
+        AC-74 by checking the style phrases appear in turn 1 and in none of the
+        five that follow, which is what makes the identity mechanism a fact
+        rather than an intention. The thread itself was built as the whole chain
+        rather than one turn, because a one turn version would have needed a
+        second pass over the same route to become six. `trim.ts` splits the
+        geometry out as a pure function so the off by one that would shave the
+        character's outermost column is unit tested without a canvas, and so is
+        the alpha floor: trimming at `> 0` keeps segmentation's low alpha halo
+        and silently trims nothing at all, which is the failure mode that looks
+        like success.
+  - [x] The full six turn chain and the money boundary: streaming, retry once
         then abort, reserve, the idempotent commit, settle (AC-21, AC-62, AC-14,
-        AC-15, AC-16, AC-63, AC-71)
-  - [ ] The review gate and the remaining edges: per variant regeneration and
+        AC-15, AC-16, AC-63, AC-71). The route tests assert **order**, not
+        output, because that is what costs money when it regresses: the rate
+        limit and the reserve both land before any Gemini call, a second
+        concurrent Generate gets 409 rather than a second charge, and a chain
+        that gives up settles as failed with no variant line ever emitted. The
+        commit route carries one gate the spec asked for and the first draft
+        would have missed: a `set` commit whose hold was already reclaimed
+        answers 409, because storing those images would hand over a set the user
+        has already had their money back for.
+  - [x] The review gate and the remaining edges: per variant regeneration and
         its cap, the claim gate, the paid re-run, rate limits, the photo copy,
         the orphan sweep, and the photo audit (AC-64, AC-69, AC-72, AC-65,
-        AC-66, AC-68, AC-73, AC-22)
+        AC-66, AC-68, AC-73, AC-22).
+
+        **The photo audit found one real thing.** Nothing writes the photo to
+        storage, to a column, or to a log line — but `character.ts` logs the
+        vendor's error body to help diagnose a rejected call, and turn 1's
+        request carried the photo. Google's error bodies are JSON error objects
+        rather than echoes, so nothing leaks today; that is an assumption about
+        someone else's API, not a property of ours, so `redactImageData` now
+        strips any long base64 run before the body is logged and a test pins it.
+
+        **And one latent one, recorded rather than fixed:** `apps/broll` has no
+        Sentry init at all (no `instrumentation.ts`, no `sentry.*.config.ts`), so
+        `reportError` forwards to a no-op here. Whoever wires Sentry into this
+        app must keep request body capture off, or a multipart body carrying a
+        face photo reaches Sentry on any error thrown during a generate request.
+        AC-22 would break with nothing failing.
 - [ ] Verify it: /check verify character pipeline
 - [ ] Test it: /test character pipeline
 
