@@ -1,0 +1,77 @@
+import type { Render2DContext } from "./context";
+
+/**
+ * Layout maths shared by every template.
+ *
+ * Both pieces here were written for `character-left` and are needed verbatim by
+ * `character-center` and `text-card`, so they live in one place rather than
+ * being copied. A second copy of the fitting rule would let two templates
+ * disagree about where a character stands.
+ */
+
+/**
+ * Breaks `text` into lines that fit `maxWidth`, measured through the context.
+ *
+ * A word longer than the line is left on its own line rather than split: these
+ * are the speaker's own words burned on screen, so an overhang reads better
+ * than a hyphen, and dropping it would lose what was said.
+ */
+export function wrapText(
+  ctx: Pick<Render2DContext, "measureText">,
+  text: string,
+  maxWidth: number
+): string[] {
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length === 0) return [];
+
+  const lines: string[] = [];
+  let current = words[0];
+
+  for (const word of words.slice(1)) {
+    const candidate = `${current} ${word}`;
+    if (ctx.measureText(candidate).width <= maxWidth) {
+      current = candidate;
+    } else {
+      lines.push(current);
+      current = word;
+    }
+  }
+  lines.push(current);
+  return lines;
+}
+
+/**
+ * Fits an image into a box while preserving its aspect ratio, anchored to the
+ * bottom centre of the box.
+ *
+ * Character cutouts are portrait and their widths vary per emotion (the stored
+ * set runs 686 to 866 wide against a constant 1126 tall), because each is
+ * cropped to its own bounding box. Anchoring to the bottom is what keeps them
+ * standing on the same floor line rather than bobbing between scenes.
+ *
+ * There is deliberately no "cover" mode. One was written for the full bleed
+ * centred template and removed: a portrait cutout inside a landscape frame is
+ * already height bound under contain, so the two produce identical results for
+ * every image this app generates (the generation frame is 3:4). The mode only
+ * differed for a landscape source, which cannot occur here.
+ */
+export function fitCharacter(
+  image: { width: number; height: number },
+  box: { x: number; y: number; width: number; height: number }
+): { x: number; y: number; width: number; height: number } {
+  if (image.width <= 0 || image.height <= 0) {
+    return { x: box.x, y: box.y, width: 0, height: 0 };
+  }
+
+  const scale = Math.min(box.width / image.width, box.height / image.height);
+
+  const width = image.width * scale;
+  const height = image.height * scale;
+
+  return {
+    x: box.x + (box.width - width) / 2,
+    y: box.y + box.height - height,
+    width,
+    height,
+  };
+}
