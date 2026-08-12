@@ -6,6 +6,7 @@ import type { SceneSummary } from "@/lib/scenes";
 import { formatClock } from "@/lib/utterances";
 import { loadCharacterBitmaps } from "@/lib/render/character-assets";
 import type { Renderable } from "@/lib/render/renderable";
+import { BatchExport, type BatchScene } from "./batch-export";
 import { RenderSceneButton } from "./render-scene-button";
 import { ScenePreview } from "./scene-preview";
 
@@ -148,6 +149,27 @@ export function PlanPanel({
     }
   }, [projectId, running]);
 
+  // Every scene that can actually be exported, in plan order.
+  const batchScenes = useMemo<BatchScene[]>(
+    () =>
+      scenes
+        .map((scene, position) => ({ scene, position }))
+        .map(({ scene, position }) => {
+          const renderable = toRenderable(scene, bitmaps);
+          return renderable
+            ? {
+                id: scene.id,
+                index: position + 1,
+                startMs: scene.startMs,
+                durationMs: scene.durationMs,
+                renderable,
+              }
+            : null;
+        })
+        .filter((entry): entry is BatchScene => entry !== null),
+    [scenes, bitmaps]
+  );
+
   const droppedCharts = useMemo(
     () => rejections.filter((r) => r.kind === "chart").length,
     [rejections]
@@ -276,6 +298,10 @@ export function PlanPanel({
             </ul>
           )}
         </div>
+      )}
+
+      {batchScenes.length > 0 && (
+        <BatchExport batchScenes={batchScenes} width={outputWidth} height={outputHeight} fps={fps} />
       )}
 
       {scenes.length > 0 && (
@@ -413,7 +439,40 @@ function SceneRenderRow({
   outputHeight: number;
   fps: VideoFps;
 }) {
-  const renderable = useMemo<Renderable | null>(() => {
+  const renderable = useMemo(() => toRenderable(scene, bitmaps), [scene, bitmaps]);
+
+  if (!renderable) return null;
+
+  return (
+    <>
+      <ScenePreview
+        renderable={renderable}
+        durationMs={scene.durationMs}
+        aspectWidth={outputWidth}
+        aspectHeight={outputHeight}
+      />
+      <RenderSceneButton
+        renderable={renderable}
+        index={index}
+        startMs={scene.startMs}
+        durationMs={scene.durationMs}
+        width={outputWidth}
+        height={outputHeight}
+        fps={fps}
+      />
+    </>
+  );
+}
+
+/**
+ * The drawable form of a scene, or null when its template has no renderer yet.
+ *
+ * At module scope rather than inside a component because the batch export needs
+ * the same answer for the same scene. Two copies of this mapping would let the
+ * list and the batch disagree about what is exportable.
+ */
+function toRenderable(scene: SceneSummary, bitmaps: Map<string, ImageBitmap>): Renderable | null {
+
     if (scene.layoutTemplate === "chart-full" && scene.chart) {
       return {
         template: "chart-full",
@@ -450,27 +509,4 @@ function SceneRenderRow({
     }
 
     return null;
-  }, [scene, bitmaps]);
-
-  if (!renderable) return null;
-
-  return (
-    <>
-      <ScenePreview
-        renderable={renderable}
-        durationMs={scene.durationMs}
-        aspectWidth={outputWidth}
-        aspectHeight={outputHeight}
-      />
-      <RenderSceneButton
-        renderable={renderable}
-        index={index}
-        startMs={scene.startMs}
-        durationMs={scene.durationMs}
-        width={outputWidth}
-        height={outputHeight}
-        fps={fps}
-      />
-    </>
-  );
 }
