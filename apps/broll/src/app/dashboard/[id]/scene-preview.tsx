@@ -15,6 +15,14 @@ import { drawRenderable, type Renderable } from "@/lib/render/renderable";
  *
  * It holds a settled frame by default rather than looping. A page of scenes
  * each animating forever is noise, and burns a core for nothing.
+ *
+ * **Canvas discipline** (spec `0001` rationale §2.9, written down from Phase 0's
+ * two worst rendering bugs, and both live here now that scenes are editable):
+ * reset the context before repainting, and mount the render loop once, reading
+ * current values from refs. Listing the scene in the loop's dependencies would
+ * tear it down on every keystroke, and under React's dev double invoke that
+ * leaves two loops driving one canvas. With twenty scenes that shows up as
+ * flicker and a hot fan rather than obvious ghosting.
  */
 
 /** Long enough to be past the entrance, so the still shows the settled figure. */
@@ -38,28 +46,46 @@ export function ScenePreview({
   const frameRef = useRef<number | null>(null);
   const [playing, setPlaying] = useState(false);
 
+  // Hazard 2: the loop reads what it draws through refs, never through a
+  // dependency, so typing in the text field beside it cannot restart it. The
+  // refs are synced in an effect rather than during render, which is the only
+  // sanctioned way to write one.
+  const renderableRef = useRef(renderable);
+  const durationRef = useRef(durationMs);
+
+  useEffect(() => {
+    renderableRef.current = renderable;
+    durationRef.current = durationMs;
+  }, [renderable, durationMs]);
+
   const height = Math.max(1, Math.round((previewWidth * aspectHeight) / aspectWidth));
 
-  const paint = useCallback(
-    (elapsedMs: number) => {
-      const canvas = canvasRef.current;
-      const ctx = canvas?.getContext("2d");
-      if (!canvas || !ctx) return;
-      // Drawing is written in ratios of the frame, so a small canvas is the
-      // same picture at a smaller size, not a different layout.
-      drawRenderable(ctx, renderable, {
-        width: canvas.width,
-        height: canvas.height,
-        elapsedMs,
-      });
-    },
-    [renderable]
-  );
+  const paint = useCallback((elapsedMs: number) => {
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext("2d");
+    if (!canvas || !ctx) return;
 
-  // The settled still, redrawn whenever the scene or the size changes.
+    // Hazard 1: reset before repainting, every frame. A stray transform or a
+    // globalAlpha below 1 left behind makes the repaint itself scaled or
+    // translucent, and the previous frame bleeds through. It presents as
+    // compositing ghosting and is really bookkeeping.
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = 1;
+
+    // Drawing is written in ratios of the frame, so a small canvas is the
+    // same picture at a smaller size, not a different layout.
+    drawRenderable(ctx, renderableRef.current, {
+      width: canvas.width,
+      height: canvas.height,
+      elapsedMs,
+    });
+  }, []);
+
+  // The settled still does depend on the scene: it has no loop to tear down,
+  // so repainting on every edit is exactly what should happen.
   useEffect(() => {
     if (!playing) paint(SETTLED_MS);
-  }, [paint, playing, previewWidth, height]);
+  }, [paint, playing, renderable, previewWidth, height]);
 
   useEffect(() => {
     if (!playing) return;
@@ -67,7 +93,7 @@ export function ScenePreview({
 
     const step = () => {
       const elapsed = performance.now() - startedAt;
-      if (elapsed >= durationMs) {
+      if (elapsed >= durationRef.current) {
         paint(SETTLED_MS);
         setPlaying(false);
         return;
@@ -81,7 +107,7 @@ export function ScenePreview({
       if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
       frameRef.current = null;
     };
-  }, [playing, durationMs, paint]);
+  }, [playing, paint]);
 
   return (
     <div className="mt-2">

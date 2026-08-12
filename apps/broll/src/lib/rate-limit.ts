@@ -62,3 +62,21 @@ export async function characterRegenRateLimit(
     { failClosed: true }
   );
 }
+
+/**
+ * Per-user cap on Scene Studio edits.
+ *
+ * Deliberately generous and deliberately **fail open**, unlike the money paths
+ * above. Editing a scene spends nothing at any vendor and writes two columns,
+ * so the worst a burst costs is database writes. A Redis blip that blocked a
+ * creator from excluding a scene would break the review flow to protect
+ * nothing, which is the wrong trade in the other direction.
+ */
+const SCENE_EDIT_LIMIT = 120;
+const SCENE_EDIT_WINDOW_SECONDS = 60;
+
+export async function writeRateLimit(clerkId: string): Promise<RateLimitResult> {
+  return rateLimit(`broll-scene-edit:${clerkId}`, SCENE_EDIT_LIMIT, SCENE_EDIT_WINDOW_SECONDS, {
+    failClosed: false,
+  });
+}
