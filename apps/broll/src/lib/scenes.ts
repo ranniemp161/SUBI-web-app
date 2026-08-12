@@ -5,6 +5,7 @@ import { and, asc, eq, sql } from "drizzle-orm";
 import type { SceneChart, VisualType, LayoutTemplate } from "./scene-schema";
 import type { CharacterEmotion } from "./emotions";
 import type { PlannedScene } from "./planner";
+import { MAX_OVERLAY_TEXT_CHARS } from "./scene-limits";
 
 /**
  * Every query that reaches `broll_scenes`, for the same reason
@@ -142,4 +143,66 @@ export async function replacePlannerScenes(
 
   const rows = (result as unknown as { rows: { committed?: number }[] }).rows ?? [];
   return Number(rows[0]?.committed ?? 0);
+}
+
+/** The fields Scene Studio may override on a single scene. */
+export interface SceneOverride {
+  /** Whether the scene is exported. Excluding never deletes it. */
+  included?: boolean;
+  /** The words burned on screen, or null to show none. */
+  overlayText?: string | null;
+}
+
+
+/**
+ * Applies a Scene Studio override to one scene.
+ *
+ * **Owner scoped in the statement, not before it.** The update joins through
+ * `broll_projects` and matches on `user_id`, so a caller who passes someone
+ * else's scene id changes nothing and gets `false` back. Reading the row first
+ * to check ownership and then updating would be two statements racing.
+ *
+ * Excluding a scene sets a flag; it never deletes. A creator who excludes a
+ * scene, re-runs the plan, and finds the scene gone has lost work that looked
+ * reversible. `replacePlannerScenes` already keeps manual scenes for the same
+ * reason.
+ *
+ * Returns whether a row actually changed, so a caller can answer 404 rather
+ * than reporting a success that did nothing.
+ */
+export async function updateBrollScene(
+  userId: string,
+  projectId: string,
+  sceneId: string,
+  override: SceneOverride
+): Promise<boolean> {
+  const patch: Record<string, unknown> = {};
+  if (override.included !== undefined) patch.included = override.included;
+  if (override.overlayText !== undefined) {
+    const trimmed = override.overlayText?.trim() ?? "";
+    // Empty means "no words on screen", which is null in the column rather than
+    // an empty string, so every reader has one absent case to handle.
+    patch.overlayText = trimmed === "" ? null : trimmed.slice(0, MAX_OVERLAY_TEXT_CHARS);
+  }
+  if (Object.keys(patch).length === 0) return false;
+
+  patch.updatedAt = new Date();
+
+  const updated = await db
+    .update(brollScenes)
+    .set(patch)
+    .where(
+      and(
+        eq(brollScenes.id, sceneId),
+        eq(brollScenes.brollProjectId, projectId),
+        sql`EXISTS (
+          SELECT 1 FROM ${brollProjects}
+          WHERE ${brollProjects.id} = ${projectId}
+            AND ${brollProjects.userId} = ${userId}
+        )`
+      )
+    )
+    .returning({ id: brollScenes.id });
+
+  return updated.length > 0;
 }

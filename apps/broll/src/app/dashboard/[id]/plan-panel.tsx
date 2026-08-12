@@ -7,6 +7,7 @@ import { formatClock } from "@/lib/utterances";
 import { loadCharacterBitmaps } from "@/lib/render/character-assets";
 import type { Renderable } from "@/lib/render/renderable";
 import { BatchExport, type BatchScene } from "./batch-export";
+import { SceneOverrides } from "./scene-overrides";
 import { RenderSceneButton } from "./render-scene-button";
 import { ScenePreview } from "./scene-preview";
 
@@ -149,11 +150,25 @@ export function PlanPanel({
     }
   }, [projectId, running]);
 
+  // Applied locally the moment a control changes, so the preview and the batch
+  // react without waiting for the round trip.
+  const patchScene = useCallback(
+    (sceneId: string, patch: { included?: boolean; overlayText?: string | null }) => {
+      setScenes((previous) =>
+        previous.map((scene) => (scene.id === sceneId ? { ...scene, ...patch } : scene))
+      );
+    },
+    []
+  );
+
   // Every scene that can actually be exported, in plan order.
   const batchScenes = useMemo<BatchScene[]>(
     () =>
       scenes
+        // Position is taken before excluding, so a clip's number keeps matching
+        // the row the creator is looking at.
         .map((scene, position) => ({ scene, position }))
+        .filter(({ scene }) => scene.included)
         .map(({ scene, position }) => {
           const renderable = toRenderable(scene, bitmaps);
           return renderable
@@ -307,7 +322,11 @@ export function PlanPanel({
       {scenes.length > 0 && (
         <ul className="mt-4 grid gap-2">
           {scenes.map((scene, position) => (
-            <li key={scene.id} className="broll-glass rounded-lg px-4 py-3">
+            <li
+              key={scene.id}
+              className="broll-glass rounded-lg px-4 py-3"
+              style={scene.included ? undefined : { opacity: 0.55 }}
+            >
               <div className="flex gap-4">
                 <span
                   className="broll-tabular text-sm shrink-0 pt-0.5"
@@ -326,6 +345,14 @@ export function PlanPanel({
                     {scene.chart ? ` · chart: ${scene.chart.title}` : ""}
                     {scene.origin === "manual" ? " · manual" : ""}
                   </p>
+                  <SceneOverrides
+                    projectId={projectId}
+                    sceneId={scene.id}
+                    included={scene.included}
+                    overlayText={scene.overlayText}
+                    onChange={(patch) => patchScene(scene.id, patch)}
+                  />
+
                   <SceneRenderRow
                     scene={scene}
                     bitmaps={bitmaps}
