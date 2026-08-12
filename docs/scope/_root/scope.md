@@ -188,8 +188,23 @@ call rather than per second.
   - [x] Eager charge: `chargeBrollPlanRerun`, shaped like `chargeAiCut`, keyed on
         a `broll_plan:` idempotency key so a double click charges once
   - [x] Flat rate pricing primitive beside the existing per second one
+  - [x] Claim pair: `claimBrollGeneration` and `releaseBrollClaim`, added
+        2026-08-11 by the character pipeline build (PR #137) because a **free**
+        regeneration still has to be the only writer on the project, and
+        `gen_claim_at` is the money path's column. The claim takes a **zero**
+        hold and writes no ledger row. Zero rather than NULL is load bearing:
+        `settleBrollHold` and `reclaimStaleBrollHold` both qualify on
+        `hold_micros IS NOT NULL` and both guard their refund insert with
+        `held <> 0`, so the existing release paths handle it with no new SQL,
+        while a NULL hold would be invisible to the stale reclaim and would
+        strand the project forever the first time a regeneration crashed.
 - [ ] Verify it: `/check verify broll money statements`
-- [ ] Test it: `/test broll money statements`
+- [ ] Test it: `/test broll money statements`. **Start with the claim pair.**
+      Every other statement in `ledger.ts` carries four to eleven assertions in
+      `ledger.test.ts`; `claimBrollGeneration` and `releaseBrollClaim` have zero,
+      and they are exported money path functions. The zero hold behaviour above
+      is precisely the kind of invariant that is obvious while it is being
+      written and invisible six months later.
 
 **Bigger than it sounds, and that is the point of enrolling it.** The obvious
 reading is that b-roll reuses the proven reserve and settle path. It cannot:

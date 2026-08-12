@@ -10,8 +10,12 @@ slot into an edit already in progress.
 
 **Build approach:** Tracer Bullet (vertical slices; each feature built end to end
 through every layer, working).
-**Workflow:** Alpha until Phase 2 lands, then Beta. Rendering is client-side and
-canvas-based, so a meaningful share of this app's surface is only checkable in a
+**Workflow:** **Beta since 2026-08-12**, when Phase 2 landed and this line's own
+condition fired. Beta means `/check verify` then `/test` close a feature. The
+risk profile is what makes that the right tier now rather than a formality: this
+app spends real money at a vendor, handles a photograph of a person's face, and
+writes ledger rows. Rendering is client-side and canvas-based, so a meaningful
+share of this app's surface is only checkable in a
 browser — but the pure logic (planner validator, frame math, credit reserve and
 settle) carries unit tests and those are not optional. The repo-wide gates apply:
 `lint`, `typecheck`, and `test` run for this workspace in the required `check`
@@ -31,6 +35,26 @@ any, and mark a feature `done` when you decide it is._
 | 5 | One template end to end | Phase 4 | planned |
 | 6 | Remaining templates + Scene Studio | Phase 5 | planned |
 | 7 | Batch export, zip, credits | Phase 6 | planned |
+| 8 | Production deploy and error reporting | Deploy | planned |
+
+**The next slice is the live verification of Phases 2 and 3.** Features 3 and 4
+are both built and both stopped at the same wall: no Gemini image call made by
+this code had ever succeeded. **The wall came down on 2026-08-12** when billing
+was enabled on the API key's Google Cloud project and a private Blob store was
+created. Checked the same day: `apps/broll/.env.local` carries both keys, the
+blob token belongs to a **different store from Ruff Cut's**, and the app points
+at the dev branch (`ep-holy-hall-aoe13azt`), which is what
+[verify.md](../../specs/broll/0004-character-pipeline/verify.md) requires. Two
+things that only a real run proves are still unproven: that billing is actually
+live on that project, and that the store was created **private** (access cannot
+be changed afterwards).
+
+So four open boxes are now runnable, and they should run before anything in
+Phase 4 starts: feature 3's verify and test, feature 4's AC-28 tuning, and the
+human judgement of the reconstructed prompt. Everything after Phase 4 is
+repetition rather than discovery, and building it on money paths and a prompt
+nobody has watched run is how a $2.00 charge ships against output no one has
+judged.
 
 ## Phase 0
 
@@ -395,10 +419,52 @@ stored — with credits reserved and settled, and no double charge on a double-c
         app must keep request body capture off, or a multipart body carrying a
         face photo reaches Sentry on any error thrown during a generate request.
         AC-22 would break with nothing failing.
-- [ ] Verify it: /check verify character pipeline
-- [ ] Test it: /test character pipeline
+- [ ] Verify it: /check verify character pipeline. **Runnable since 2026-08-12**,
+      when the two vendor preconditions were met. Both were discovered by trying
+      on 2026-08-11 rather than by reading docs, and both stay written down
+      because the next person to set this up hits them again. First, every Gemini
+      image model's free tier quota is literally `0`, so a key without billing
+      enabled on its Google Cloud project answers 429 with
+      `free_tier ... limit: 0` and no model id avoids it (`gemini-3-pro-image`,
+      `gemini-3.1-flash-image` and `gemini-2.5-flash-image` were all tried, all
+      429). Second, the Blob store must be created **private** and must be a
+      **different store from Ruff Cut's**: access cannot be changed after
+      creation, every read here is a signed URL that a public store would make
+      meaningless, and pasting Ruff Cut's public token here would appear to work
+      while handing out permanent unauthenticated links to generated faces. Both
+      are recorded in [apps/broll/AGENTS.md](../../../apps/broll/AGENTS.md). The
+      criteria are written and waiting in
+      [verify.md](../../specs/broll/0004-character-pipeline/verify.md), including
+      five added by the build; none are ticked yet.
+
+      **This run costs real money and that is the point.** A full set is six
+      images at the Pro tier, and the judgement it exists for cannot be automated:
+      look at identity across all six emotions and at the cutout edge at high
+      zoom, then revise the prompt wording in spec 0004 before the price goes
+      live. AC-22 and AC-61 are the two worth the most care, because both fail
+      silently: the photo criterion breaks by a file simply starting to exist
+      somewhere it should not, and the capability probe breaks by charging someone
+      two dollars for a run their browser could never finish.
+- [ ] Test it: /test character pipeline. **Two coverage holes are already known,
+      so this box has a named starting point rather than a survey.** Four modules
+      have no tests at all: `segmentation.ts`, `assets.ts`, the signed URL route,
+      and the sweep cron. And the claim pair added to `@repo/billing` for this
+      feature is uncovered, which is tracked on the `_root` side: see
+      [_root feature 6](../_root/scope.md).
 
 Self-contained and demoable alone.
+
+**Two corrections owed to the specs, which `/architect` owns and `/scope` does
+not edit.** Spec [0004](../../specs/broll/0004-character-pipeline/index.md)
+requires `BLOB_WEBHOOK_PUBLIC_KEY` as provisioned configuration and no such
+Vercel variable exists: measured 2026-08-11 against a project that has had a Blob
+store connected for a month, which holds exactly one blob variable. The route
+works around it with an inert key and by rejecting `blob.upload-completed`
+outright. Separately, the cost derivation settled during the build (pricing by
+images actually generated at `IMAGE_OUTPUT_COST_MICROS`, not by token usage) is a
+build time decision that the spec's value sourcing table still contradicts. Both
+are written down in [apps/broll/AGENTS.md](../../../apps/broll/AGENTS.md) and in
+the verify page; neither is in the spec itself.
 
 **Storage is Vercel Blob for now, and that is a deliberate deviation.** Spec
 [0001 §5.3](../../specs/broll/0001-high-level-design/index.md) chose R2 and its
@@ -479,7 +545,12 @@ against evidence, and the validator provably rejects fabricated charts.
         `GEMINI_API_KEY` to say whether `1.2` scenes per minute survives contact
         with real speech. Until it runs, `SCENES_PER_MINUTE` stays a guess that
         happens to be implemented.
-- [ ] Verify it: /check verify scene planner
+- [ ] Verify it: /check verify scene planner. **Runnable since 2026-08-12**, by
+      the same unblock that cleared feature 3. Run the two in one sitting: the
+      planner needs a live `GEMINI_API_KEY` and nothing else, and AC-28's
+      selectivity tuning against project `0620` is the box that has been waiting
+      on it. Until that measurement lands, `SCENES_PER_MINUTE` at `1.2` is a
+      guess that happens to be implemented.
 - [ ] Test it: /test scene planner
 
 **The decision that gated this is settled, and narrower than it looked.**
@@ -530,6 +601,49 @@ through the Wallet without leaving the workflow broken.
 
 - [ ] Build it: /develop batch export (AC-35, AC-36)
 - [ ] Verify it: /check verify batch export
+
+## Deploy
+
+### 8. Production deploy and error reporting · planned
+
+Enrolled by `/scope` on 2026-08-12. Every piece of this already existed as prose
+scattered through feature 2's blocker paragraph and the Phase 2 build notes, and
+prose does not get ticked. Half of it is not code at all, which is exactly why it
+needs a row: a step nobody can run a command for is the step that gets forgotten.
+
+**Intent**: Make this app deployable and observable, on its own domain, without
+the observability wiring quietly breaking the one privacy promise the character
+pipeline makes.
+**Done when**: b-roll runs on a real production domain as a Clerk satellite, its
+Vercel build gates `main` alongside the other three, and an error in a generate
+request reaches Sentry carrying no request body.
+
+- [ ] Wire Sentry into `apps/broll`, **with request body capture off**. There is
+      no Sentry init here today: no `instrumentation.ts` and no
+      `sentry.*.config.ts`, while `apps/rough-cut` carries four such files. So
+      `reportError` forwards to a no-op in this app, and the AC-22 promise (the
+      reference photo exists in no blob, no column and no log line) currently
+      holds partly by accident. A default Sentry setup with body capture on would
+      send a multipart body carrying a face photo on any error thrown during a
+      generate request, with nothing failing and nothing to notice. This is the
+      one item here that is a live risk rather than a launch gate, and it is the
+      reason the row is not simply "deploy it".
+- [ ] Production domain, then register b-roll as a Clerk satellite in the Clerk
+      Dashboard. The domain choice is settled: b-roll gets **its own domain**, not
+      a subdomain of `myfirstcut.app`, which is what made the Ruff Cut handoff
+      server to server in the first place. Founder's Frame cannot supply one, it
+      is a fully static export.
+- [ ] Fourth Vercel project, with every server variable the build needs listed by
+      name in `turbo.json`'s `build` env array. A secret set in Vercel and missing
+      from that list reads as `undefined` during `next build` with no error;
+      `BLOB_READ_WRITE_TOKEN` and `BROLL_IMAGE_MODEL` are the ones this app added.
+- [ ] Add that Vercel build to branch protection **by hand**. That list lives in
+      GitHub settings, not in this repo, and it has silently stopped gating once
+      before.
+- [ ] Settle the storage vendor with the client (Vercel Blob today, R2 in spec
+      0001 §5.3). Tracked in full under feature 3; it blocks general availability
+      rather than any build, and the swap is contained behind
+      `apps/broll/src/lib/storage.ts`.
 
 ## Legend
 

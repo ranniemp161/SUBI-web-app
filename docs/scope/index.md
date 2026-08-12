@@ -9,20 +9,24 @@ through every layer, working).
 
 | Workspace | Scope | Workflow | Status rollup |
 |---|---|---|---|
-| `_root` (ecosystem wide) | [_root/scope.md](_root/scope.md) | Beta | 1 done, 1 in-progress, 2 planned, 3 existing, 2 deferred, 1 open question |
+| `_root` (ecosystem wide) | [_root/scope.md](_root/scope.md) | Beta | 1 done, 2 in-progress, 1 planned, 3 existing, 2 deferred, 1 open question |
 | `apps/rough-cut` | [rough-cut/scope.md](rough-cut/scope.md) | Beta | 3 done, 2 in-progress, 13 existing, 5 deferred |
 | `apps/founders-frame` | [founders-frame/scope.md](founders-frame/scope.md) | Alpha | 1 done, 1 planned, 2 existing |
-| `apps/broll` | [broll/scope.md](broll/scope.md) | Alpha | 1 done (Phase 0 spikes), 1 in-progress, 5 planned |
+| `apps/broll` | [broll/scope.md](broll/scope.md) | Beta | 2 done, 2 in-progress (built, not verified), 4 planned |
 | `apps/wallet` | tracked under `_root` | see `_root` | the Wallet app **is** the ecosystem wide billing feature |
 
 ## Notes
 
-- `apps/broll` has a scope but **still no workspace** — Phase 0 was a throwaway
-  prototype outside this repo, and the `apps/broll` directory does not exist until
-  Phase 1 scaffolds it. The scope is listed because the design is settled and the
-  spikes are done, not because there is code. Phase 1 began anyway: the parts that
-  do not need the workspace (the shared package, the schema migration, Rough Cut's
-  export) are built, and the scaffold itself is blocked on a production domain.
+- `apps/broll` **is a real workspace now**, and this note used to say the opposite.
+  It was scaffolded in PR #128 on 2026-08-08 and the line stayed stale for four
+  days. As of 2026-08-11 the app has three phases of code in it: transcript
+  intake, the scene planner, and the character pipeline. Its tier moved from
+  Alpha to Beta on 2026-08-12, on the condition its own scope had already written
+  down. Both in-progress features are built, unit covered and **unverified**: no
+  Gemini call made by this code had ever succeeded until the vendor was unblocked
+  on 2026-08-12 (billing enabled, private Blob store created), so the live
+  verification of Phases 2 and 3 is the next slice. It also has no production
+  deploy, which is now feature 8 there rather than a paragraph.
 - **One piece of work, three scopes, one set of boxes.** The transcript contract
   spans `_root` (a new shared package plus a shared schema migration),
   `apps/rough-cut` (a new export surface and route), and `apps/broll` (which drove
