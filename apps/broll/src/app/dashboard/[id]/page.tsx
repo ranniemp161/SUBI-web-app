@@ -166,6 +166,11 @@ export default async function ProjectPage({
         planRuns={project.planRuns}
         // Formatted here because the price env override is server side only.
         rerunPrice={formatUsd(BROLL_PLAN_RERUN_MICROS)}
+        outputWidth={project.outputWidth}
+        outputHeight={project.outputHeight}
+        // Carried as a rational, never a decimal: 30000/1001 is not 29.97, and
+        // the difference accumulates into visible drift over a clip.
+        fps={{ numerator: project.outputFpsNum, denominator: project.outputFpsDen }}
       />
 
       <h2 className="mt-10 text-sm font-semibold uppercase tracking-wide" style={{ color: "var(--broll-muted)" }}>

@@ -44,6 +44,17 @@ export type ProjectDetail = ProjectSummary & {
    * reading it here and charging on the answer would be check-then-act.
    */
   planRuns: number;
+  /** Output frame size the renderer encodes at (spec `0001` Phase 4). */
+  outputWidth: number;
+  outputHeight: number;
+  /**
+   * Output rate as an exact rational. Kept as numerator and denominator rather
+   * than a decimal because 30000/1001 is not 29.97, and rounding it there would
+   * put the encoder on a different frame grid from the timecode in the
+   * filename — the one disagreement `@repo/transcript` exists to prevent.
+   */
+  outputFpsNum: number;
+  outputFpsDen: number;
 };
 
 /**
@@ -106,6 +117,10 @@ export async function getBrollProject(
       sourceProjectId: brollProjects.sourceProjectId,
       edlFingerprint: brollProjects.edlFingerprint,
       planRuns: brollProjects.planRuns,
+      outputWidth: brollProjects.outputWidth,
+      outputHeight: brollProjects.outputHeight,
+      outputFpsNum: brollProjects.outputFpsNum,
+      outputFpsDen: brollProjects.outputFpsDen,
     })
     .from(brollProjects)
     .where(and(eq(brollProjects.id, id), eq(brollProjects.userId, userId)))

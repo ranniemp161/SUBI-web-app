@@ -1,8 +1,10 @@
 "use client";
 
 import { useCallback, useMemo, useRef, useState } from "react";
+import type { VideoFps } from "@repo/transcript";
 import type { SceneSummary } from "@/lib/scenes";
 import { formatClock } from "@/lib/utterances";
+import { RenderSceneButton } from "./render-scene-button";
 
 /**
  * The Plan button, the phases while a run is in flight, and the resulting
@@ -38,12 +40,20 @@ export function PlanPanel({
   initialScenes,
   planRuns,
   rerunPrice,
+  outputWidth,
+  outputHeight,
+  fps,
 }: {
   projectId: string;
   initialScenes: SceneSummary[];
   planRuns: number;
   /** Formatted server side: the price env override is not public. */
   rerunPrice: string;
+  /** The project's output frame size, which the renderer encodes at. */
+  outputWidth: number;
+  outputHeight: number;
+  /** The project's output rate as an exact rational, never a decimal. */
+  fps: VideoFps;
 }) {
   const [scenes, setScenes] = useState<SceneSummary[]>(initialScenes);
   const [phase, setPhase] = useState<string | null>(null);
@@ -228,7 +238,7 @@ export function PlanPanel({
 
       {scenes.length > 0 && (
         <ul className="mt-4 grid gap-2">
-          {scenes.map((scene) => (
+          {scenes.map((scene, position) => (
             <li key={scene.id} className="broll-glass rounded-lg px-4 py-3">
               <div className="flex gap-4">
                 <span
@@ -248,6 +258,27 @@ export function PlanPanel({
                     {scene.chart ? ` · chart: ${scene.chart.title}` : ""}
                     {scene.origin === "manual" ? " · manual" : ""}
                   </p>
+                  {/*
+                    Phase 4 proves the spine on exactly one template, so the
+                    control appears only where it can actually render: a
+                    chart-full scene whose chart survived the honesty check.
+                  */}
+                  {scene.layoutTemplate === "chart-full" && scene.chart && (
+                    <RenderSceneButton
+                      index={position + 1}
+                      startMs={scene.startMs}
+                      durationMs={scene.durationMs}
+                      width={outputWidth}
+                      height={outputHeight}
+                      fps={fps}
+                      scene={{
+                        title: scene.chart.title,
+                        values: scene.chart.values,
+                        labels: scene.chart.labels,
+                        unit: scene.chart.unit,
+                      }}
+                    />
+                  )}
                 </div>
               </div>
             </li>
