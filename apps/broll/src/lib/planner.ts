@@ -208,7 +208,7 @@ function translateFailure(status: number, body: string): PlannerError {
  * Everything about *time* is resolved here from the utterance the model cited,
  * never from what the model wrote: `start_ms` is the line's own start, and the
  * only timing the model contributes is how long the cutaway holds, clamped into
- * the four to eight second window spec `0002` fixes. A model can misjudge how
+ * the window `scene-schema.ts` fixes. A model can misjudge how
  * long a cutaway should run; it cannot misreport where a line sits, because it
  * is never asked to.
  */

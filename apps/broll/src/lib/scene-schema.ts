@@ -33,8 +33,14 @@ export const VISUAL_TYPES = ["character", "infographic", "text"] as const;
 export type VisualType = (typeof VISUAL_TYPES)[number];
 
 /**
- * How long a b-roll asset runs. Four to eight seconds, fixed in spec
- * `broll/0002`'s column table.
+ * How long a b-roll asset runs. Four to ten seconds.
+ *
+ * **These two constants are the only home for that window.** The prompt's field
+ * description interpolates them, the clamp reads them, and the tests assert
+ * against them rather than against literals, so the range can move in one edit.
+ * The ceiling went from eight to ten seconds on 2026-08-12 at the engineer's
+ * call: b roll is a cutaway, so the number is bounded by what a talking head
+ * edit can absorb, not by anything technical.
  *
  * The model proposes a length inside this window and nothing else about
  * timing: a scene's `start_ms` is taken from the utterance it cites, never from
@@ -42,7 +48,7 @@ export type VisualType = (typeof VISUAL_TYPES)[number];
  * misreport where the line it cited actually sits, because it is never asked.
  */
 export const MIN_SCENE_DURATION_MS = 4_000;
-export const MAX_SCENE_DURATION_MS = 8_000;
+export const MAX_SCENE_DURATION_MS = 10_000;
 
 /**
  * A quantified claim lifted from one line, with the span it was read out of.

@@ -16,6 +16,7 @@ import {
   PLANNER_MODEL,
   MAX_PLAN_INPUT_TOKENS,
 } from "./planner";
+import { MAX_SCENE_DURATION_MS, MIN_SCENE_DURATION_MS } from "./scene-schema";
 import type { Utterance } from "./utterances";
 
 const utterances: Utterance[] = [
@@ -116,12 +117,17 @@ describe("collectScenes", () => {
     });
   });
 
-  it("clamps the model's duration into the four to eight second window", () => {
+  it("clamps the model's duration into the window the schema fixes", () => {
+    // Asserted against the constants, not against literals, so the window can
+    // move (it went from 8s to 10s) without this test quietly encoding the old
+    // number and passing anyway.
     const long = collectScenes([modelScene({ duration_ms: 45_000 })], utterances);
     const short = collectScenes([modelScene({ duration_ms: 200 })], utterances);
 
-    expect(long.scenes[0].durationMs).toBe(8_000);
-    expect(short.scenes[0].durationMs).toBe(4_000);
+    expect(long.scenes[0].durationMs).toBe(MAX_SCENE_DURATION_MS);
+    expect(short.scenes[0].durationMs).toBe(MIN_SCENE_DURATION_MS);
+    // B roll is a cutaway, so the ceiling has to stay in cutaway territory.
+    expect(MAX_SCENE_DURATION_MS).toBeLessThanOrEqual(10_000);
   });
 
   it("keeps a chart whose numbers are in the cited line", () => {
