@@ -78,3 +78,19 @@ Stored in `docs/adr/`. Format: `docs/adr/NNNN-title.md`.
 - [packages/transcript/AGENTS.md](./packages/transcript/AGENTS.md) — the cross-app transcript document contract and the repo's only frame arithmetic
 - [packages/ui/AGENTS.md](./packages/ui/AGENTS.md) — thin shared design tokens + cn() helper
 - [packages/server-shared/AGENTS.md](./packages/server-shared/AGENTS.md) — shared rate limiting and error reporting
+
+## Agent skills
+The workflow skills this repo assumes, all from `JavaScript-Mastery-Pro/skills` (pinned in the tracked [skills-lock.json](./skills-lock.json)). The files themselves are **machine-local**: they live in `.agents/skills/<name>/`, which is gitignored, and `.claude/skills/<name>` is a symlink to it. A fresh clone has none of them — reinstall from the lock file. An installer that writes to `.claude/skills/<name>/SKILL.md` follows that symlink and overwrites the real file, which is how the AI Blueprint overlay silently replaced `check` and `audit` on 2026-08-11; both were restored from source on 2026-08-12.
+- [.agents/skills/scope/](./.agents/skills/scope/) — the live plan in `docs/scope/`; seeds *what* to build
+- [.agents/skills/architect/](./.agents/skills/architect/) — settles a load-bearing decision, writes the spec to `docs/specs/`
+- [.agents/skills/develop/](./.agents/skills/develop/) — builds from an approved spec, advances the scope
+- [.agents/skills/check/](./.agents/skills/check/) — `verify` drives the real app against the spec; `review` is a fresh-model code review
+- [.agents/skills/test/](./.agents/skills/test/) — writes the suite for what was just built
+- [.agents/skills/debug/](./.agents/skills/debug/) — root-cause loop plus a regression test
+- [.agents/skills/audit/](./.agents/skills/audit/) — bootstraps and maintains the `AGENTS.md` files every other skill reads
+- [.agents/skills/sync/](./.agents/skills/sync/) — post-merge reconciliation of `AGENTS.md`, scope, and spec statuses
+- [.agents/skills/document/](./.agents/skills/document/) — PR text, changelogs, release notes
+
+Declined: next, react, typescript, turborepo, drizzle, neon, clerk, stripe, upstash-redis, vercel-kv, sentry, vitest, playwright, tailwind — the stack is settled and documented above, so skill/MCP discovery should not re-offer these on a dependency bump. Ask before adding a genuinely new tool.
+
+**Do not install a workflow overlay that brings its own plan files.** `docs/scope/` is the single live plan (see [docs/scope/index.md](./docs/scope/index.md)); a second plan tree is the hand-mirroring problem that retired `docs/roadmap/`.
