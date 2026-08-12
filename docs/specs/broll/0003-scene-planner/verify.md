@@ -174,7 +174,8 @@ deliberate them in; until then these two steps check code against a decision tha
 lives in a comment.
 
 - [ ] A planner scene's `start_ms` equals the cited utterance's start, and its
-      `duration_ms` is the model's proposal clamped to 4,000 to 8,000ms. No
+      `duration_ms` is the model's proposal clamped to `MIN_SCENE_DURATION_MS`
+      to `MAX_SCENE_DURATION_MS` (4,000 to 10,000ms since 2026-08-12). No
       timecode comes from the model. Confirm by returning a wild `duration_ms`
       and an unrelated implied placement, and checking the stored row.
 - [ ] `emotion` accepts exactly the six in `src/lib/emotions.ts` (neutral, happy,

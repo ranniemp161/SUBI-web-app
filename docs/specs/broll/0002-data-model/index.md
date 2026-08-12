@@ -150,7 +150,7 @@ rather than merely intended (AC-40).
 | `id` | uuid, primary key | no | random | |
 | `broll_project_id` | uuid, FK `broll_projects.id` on delete cascade | no | | |
 | `start_ms` | integer | no | | The timecode, and the sort key (AC-42) |
-| `duration_ms` | integer | no | | Four to eight seconds |
+| `duration_ms` | integer | no | | Four to ten seconds (raised from eight on 2026-08-12; the ceiling lives in `MAX_SCENE_DURATION_MS`, never here) |
 | `source_text` | text | **yes** | | The verbatim transcript line that triggered the scene. What makes a scene identifiable in a two second scan. **Null exactly when `origin = 'manual'`**, because a hand added scene has no line behind it (AC-46) |
 | `source_start_ms` | integer | **yes** | | Where that line sits, for provenance. Null on a manual scene |
 | `source_end_ms` | integer | **yes** | | |

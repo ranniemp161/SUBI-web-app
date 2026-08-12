@@ -26,7 +26,7 @@ The mental model, in one line:
 
 > "You talked about Nigeria's fuel imports at 2:35 — here's a clip for it."
 
-The output is **not** a finished video. It's a batch of independent 4–8 second MP4
+The output is **not** a finished video. It's a batch of independent 4–10 second MP4
 assets that slot into an edit already in progress. The app never sees the
 creator's video file.
 

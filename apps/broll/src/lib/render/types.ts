@@ -20,7 +20,7 @@ export interface RenderSceneRequest {
   height: number;
   /** The project's output rate, as an exact rational. */
   fps: VideoFps;
-  /** How long the clip runs. The planner clamps this to 4 to 8 seconds. */
+  /** How long the clip runs. The planner clamps this to 4 to 10 seconds. */
   durationMs: number;
 }
 

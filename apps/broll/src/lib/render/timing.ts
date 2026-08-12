@@ -17,7 +17,7 @@ import { frameToSeconds, msToFrame, type VideoFps } from "@repo/transcript";
  *
  * A scene shorter than a single frame still has to produce a playable file, so
  * it renders one frame rather than an empty track. The planner clamps durations
- * to 4 to 8 seconds, so that case only arises from bad data, and an empty MP4
+ * to 4 to 10 seconds, so that case only arises from bad data, and an empty MP4
  * would be a worse answer than a very short one.
  */
 export function renderFrameCount(durationMs: number, fps: VideoFps): number {
