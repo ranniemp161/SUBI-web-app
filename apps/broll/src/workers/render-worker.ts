@@ -6,7 +6,7 @@ import {
   QUALITY_HIGH,
   canEncodeVideo,
 } from "mediabunny";
-import { drawChartFullFrame } from "@/lib/render/chart-full";
+import { drawRenderable } from "@/lib/render/renderable";
 import { frameDurationSeconds, frameElapsedMs, frameTimestampSeconds, renderFrameCount } from "@/lib/render/timing";
 import type {
   RenderErrorCode,
@@ -84,7 +84,7 @@ self.onmessage = async (event: MessageEvent<RenderRequestMessage>) => {
 };
 
 async function renderScene(request: RenderSceneRequest): Promise<ArrayBuffer | null> {
-  const { width, height, fps, durationMs, scene } = request;
+  const { width, height, fps, durationMs } = request;
 
   if (width % 2 !== 0 || height % 2 !== 0 || width <= 0 || height <= 0) {
     throw new RenderError("bad-request", `Output size ${width}x${height} can't be encoded as H.264.`);
@@ -132,7 +132,7 @@ async function renderScene(request: RenderSceneRequest): Promise<ArrayBuffer | n
       return null;
     }
 
-    drawChartFullFrame(ctx, scene, {
+    drawRenderable(ctx, request, {
       width,
       height,
       elapsedMs: frameElapsedMs(index, fps),

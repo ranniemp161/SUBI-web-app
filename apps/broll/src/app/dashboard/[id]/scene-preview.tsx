@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { drawChartFullFrame, type ChartFullScene } from "@/lib/render/chart-full";
+import { drawRenderable, type Renderable } from "@/lib/render/renderable";
 
 /**
  * Shows what a scene will actually look like, in the page.
@@ -21,13 +21,13 @@ import { drawChartFullFrame, type ChartFullScene } from "@/lib/render/chart-full
 const SETTLED_MS = 2_000;
 
 export function ScenePreview({
-  scene,
+  renderable,
   durationMs,
   aspectWidth,
   aspectHeight,
   previewWidth = 320,
 }: {
-  scene: ChartFullScene;
+  renderable: Renderable;
   durationMs: number;
   /** The project's output size, used only for the aspect ratio here. */
   aspectWidth: number;
@@ -47,9 +47,13 @@ export function ScenePreview({
       if (!canvas || !ctx) return;
       // Drawing is written in ratios of the frame, so a small canvas is the
       // same picture at a smaller size, not a different layout.
-      drawChartFullFrame(ctx, scene, { width: canvas.width, height: canvas.height, elapsedMs });
+      drawRenderable(ctx, renderable, {
+        width: canvas.width,
+        height: canvas.height,
+        elapsedMs,
+      });
     },
-    [scene]
+    [renderable]
   );
 
   // The settled still, redrawn whenever the scene or the size changes.
@@ -87,7 +91,7 @@ export function ScenePreview({
         height={height}
         className="rounded-md"
         style={{ width: previewWidth, height, display: "block" }}
-        aria-label={`Preview of ${scene.title}`}
+        aria-label={previewLabel(renderable)}
         role="img"
       />
       <button
@@ -101,4 +105,14 @@ export function ScenePreview({
       </button>
     </div>
   );
+}
+
+/** A short description of the frame, for anyone using a screen reader. */
+function previewLabel(renderable: Renderable): string {
+  if (renderable.template === "character-left") {
+    return renderable.scene.text
+      ? `Preview: character with the words ${renderable.scene.text}`
+      : "Preview: character with no on screen text";
+  }
+  return `Preview: chart, ${renderable.scene.title}`;
 }

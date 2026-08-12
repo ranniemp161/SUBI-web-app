@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { VideoFps } from "@repo/transcript";
 import type { SceneSummary } from "@/lib/scenes";
 import { formatClock } from "@/lib/utterances";
-import type { ChartFullScene } from "@/lib/render/chart-full";
+import { loadCharacterBitmaps } from "@/lib/render/character-assets";
+import type { Renderable } from "@/lib/render/renderable";
 import { RenderSceneButton } from "./render-scene-button";
 import { ScenePreview } from "./scene-preview";
 
@@ -62,6 +63,40 @@ export function PlanPanel({
   const [error, setError] = useState<string | null>(null);
   const [rejections, setRejections] = useState<PlanRejection[]>([]);
   const [confirming, setConfirming] = useState(false);
+  const [bitmaps, setBitmaps] = useState<Map<string, ImageBitmap>>(new Map());
+
+  // The emotions this plan actually uses. A plan touching three of the six
+  // variants must not download the other three.
+  const emotionsUsed = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          scenes
+            .filter((scene) => scene.layoutTemplate === "character-left" && scene.emotion)
+            .map((scene) => scene.emotion as string)
+        )
+      ).sort(),
+    [scenes]
+  );
+
+  // Character cutouts live in a private store, so each needs a short lived
+  // signed URL. Loaded once per set of emotions, on the page rather than in the
+  // worker, because signing is authorized by the Clerk session.
+  useEffect(() => {
+    if (emotionsUsed.length === 0) return;
+    let active = true;
+    loadCharacterBitmaps(projectId, emotionsUsed)
+      .then((loaded) => {
+        if (active) setBitmaps(loaded);
+      })
+      .catch(() => {
+        // A missing character set is not an error worth interrupting the plan
+        // for: those scenes render their text and say nothing about images.
+      });
+    return () => {
+      active = false;
+    };
+  }, [projectId, emotionsUsed]);
 
   const running = phase !== null;
   const isRerun = planRuns > 0;
@@ -260,31 +295,14 @@ export function PlanPanel({
                     {scene.chart ? ` · chart: ${scene.chart.title}` : ""}
                     {scene.origin === "manual" ? " · manual" : ""}
                   </p>
-                  {/*
-                    Phase 4 proves the spine on exactly one template, so the
-                    control appears only where it can actually render: a
-                    chart-full scene whose chart survived the honesty check.
-                  */}
-                  {scene.layoutTemplate === "chart-full" && scene.chart && (
-                    <ChartFullScenePreview
-                      chart={{
-                        // `type` decides the shape. Dropping it here drew every
-                        // chart as bars, which turned a single statistic into a
-                        // one bar bar chart.
-                        type: scene.chart.type,
-                        title: scene.chart.title,
-                        values: scene.chart.values,
-                        labels: scene.chart.labels,
-                        unit: scene.chart.unit,
-                      }}
-                      index={position + 1}
-                      startMs={scene.startMs}
-                      durationMs={scene.durationMs}
-                      outputWidth={outputWidth}
-                      outputHeight={outputHeight}
-                      fps={fps}
-                    />
-                  )}
+                  <SceneRenderRow
+                    scene={scene}
+                    bitmaps={bitmaps}
+                    index={position + 1}
+                    outputWidth={outputWidth}
+                    outputHeight={outputHeight}
+                    fps={fps}
+                  />
                 </div>
               </div>
             </li>
@@ -369,39 +387,71 @@ function lastJsonLine(text: string): TerminalLine | null {
 }
 
 /**
- * A chart-full scene's preview and its render control, kept together so the
- * chart is mapped out of the database shape exactly once.
+ * A scene's preview and its render control, when the template has a renderer.
+ *
+ * Returns nothing for a template that is still plan only, which is most of
+ * them: `chart-full` and `character-left` are built, the other four are not.
+ * Deciding that here keeps the scene list itself free of template knowledge.
  */
-function ChartFullScenePreview({
-  chart,
+function SceneRenderRow({
+  scene,
+  bitmaps,
   index,
-  startMs,
-  durationMs,
   outputWidth,
   outputHeight,
   fps,
 }: {
-  chart: ChartFullScene;
+  scene: SceneSummary;
+  bitmaps: Map<string, ImageBitmap>;
   index: number;
-  startMs: number;
-  durationMs: number;
   outputWidth: number;
   outputHeight: number;
   fps: VideoFps;
 }) {
+  const renderable = useMemo<Renderable | null>(() => {
+    if (scene.layoutTemplate === "chart-full" && scene.chart) {
+      return {
+        template: "chart-full",
+        scene: {
+          // `type` decides the shape. Dropping it here drew every chart as
+          // bars, which turned a single statistic into a one bar bar chart.
+          type: scene.chart.type,
+          title: scene.chart.title,
+          values: scene.chart.values,
+          labels: scene.chart.labels,
+          unit: scene.chart.unit,
+        },
+      };
+    }
+
+    if (scene.layoutTemplate === "character-left") {
+      // A scene whose cutout has not loaded still renders: the text carries it,
+      // and waiting would leave the row blank for no gain.
+      return {
+        template: "character-left",
+        scene: { text: scene.overlayText ?? scene.sourceText },
+        image: scene.emotion ? (bitmaps.get(scene.emotion) ?? null) : null,
+      };
+    }
+
+    return null;
+  }, [scene, bitmaps]);
+
+  if (!renderable) return null;
+
   return (
     <>
       <ScenePreview
-        scene={chart}
-        durationMs={durationMs}
+        renderable={renderable}
+        durationMs={scene.durationMs}
         aspectWidth={outputWidth}
         aspectHeight={outputHeight}
       />
       <RenderSceneButton
-        scene={chart}
+        renderable={renderable}
         index={index}
-        startMs={startMs}
-        durationMs={durationMs}
+        startMs={scene.startMs}
+        durationMs={scene.durationMs}
         width={outputWidth}
         height={outputHeight}
         fps={fps}

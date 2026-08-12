@@ -1,5 +1,5 @@
 import type { VideoFps } from "@repo/transcript";
-import type { ChartFullScene } from "./chart-full";
+import type { Renderable } from "./renderable";
 
 /**
  * The contract between the page and the render worker.
@@ -9,12 +9,8 @@ import type { ChartFullScene } from "./chart-full";
  * the page bundle. Same reason `blob-path.ts` exists separately in Rough Cut.
  */
 
-/** Everything the worker needs to render one scene to one file. */
-export interface RenderSceneRequest {
-  type: "render";
-  /** Which template to draw. Only `chart-full` exists in Phase 4. */
-  template: "chart-full";
-  scene: ChartFullScene;
+/** How big the clip is and how long it runs. Shared by every template. */
+export interface RenderFrameSpec {
   /** Output frame size in pixels. Both must be even for H.264. */
   width: number;
   height: number;
@@ -23,6 +19,17 @@ export interface RenderSceneRequest {
   /** How long the clip runs. The planner clamps this to 4 to 10 seconds. */
   durationMs: number;
 }
+
+/**
+ * A scene to render.
+ *
+ * `character-left` carries an already decoded `ImageBitmap` rather than a URL.
+ * The store is private, so reading an image needs a signed URL fetched with the
+ * Clerk session, and the session lives on the page, not in the worker. The page
+ * decodes and transfers the bitmap in, which also means one download serves
+ * both the on page preview and the encode.
+ */
+export type RenderSceneRequest = RenderFrameSpec & { type: "render" } & Renderable;
 
 export type RenderRequestMessage = RenderSceneRequest | { type: "cancel" };
 

@@ -77,8 +77,17 @@ function recorder(charWidth = 10) {
 
 type Rec = ReturnType<typeof recorder>;
 
+/**
+ * A stand in for a decoded cutout. `DrawableImage` is the browser's real image
+ * source union, because a structural type could not be satisfied by an actual
+ * canvas context, so a test stub has to be cast. The renderer only ever reads
+ * `width` and `height` off it, which is what makes the cast safe here.
+ */
+const bitmap = (width: number, height: number): DrawableImage =>
+  ({ width, height }) as unknown as DrawableImage;
+
 /** Matches a real stored cutout: portrait, cropped to its own bounding box. */
-const CUTOUT: DrawableImage = { width: 686, height: 1126 };
+const CUTOUT: DrawableImage = bitmap(686, 1126);
 
 const SCENE: CharacterLeftScene = {
   text: "that Trump agreement does not bind us",

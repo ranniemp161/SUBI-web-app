@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { VideoFps } from "@repo/transcript";
 import { checkRenderCapability } from "@/lib/render/capability";
 import { sceneClipFilename } from "@/lib/render/clip-filename";
-import type { ChartFullScene } from "@/lib/render/chart-full";
+import type { Renderable } from "@/lib/render/renderable";
 import type { RenderResponseMessage, RenderSceneRequest } from "@/lib/render/types";
 
 /**
@@ -29,7 +29,7 @@ type Status =
   | { phase: "failed"; message: string };
 
 export function RenderSceneButton({
-  scene,
+  renderable,
   index,
   startMs,
   durationMs,
@@ -37,7 +37,7 @@ export function RenderSceneButton({
   height,
   fps,
 }: {
-  scene: ChartFullScene;
+  renderable: Renderable;
   /** 1 based position in the plan, which is what the filename carries. */
   index: number;
   startMs: number;
@@ -122,15 +122,19 @@ export function RenderSceneButton({
 
     const request: RenderSceneRequest = {
       type: "render",
-      template: "chart-full",
-      scene,
+      ...renderable,
       width,
       height,
       fps,
       durationMs,
     };
+    // Posted without a transfer list on purpose. An ImageBitmap is both
+    // serializable and transferable; transferring it would detach the page's
+    // copy and blank the preview beside this button. The copy costs a few
+    // megabytes once per render, which is worth not breaking what the creator
+    // is looking at.
     worker.postMessage(request);
-  }, [status.phase, scene, index, startMs, durationMs, width, height, fps]);
+  }, [status.phase, renderable, index, startMs, durationMs, width, height, fps]);
 
   if (status.phase === "unsupported") {
     return (

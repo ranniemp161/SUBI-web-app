@@ -54,8 +54,15 @@ export interface Render2DContext {
  * signed URL, a network round trip, a decode) belongs to the caller. That is
  * what keeps the encoder and the preview able to share one renderer while
  * fetching in whatever way suits each.
+ *
+ * These are the concrete sources a real `drawImage` accepts, rather than a
+ * structural `{ width, height }`. A structural type reads more testable and is
+ * wrong: it would make this interface impossible for a real canvas context to
+ * satisfy, because the browser's `drawImage` accepts only these. Every one of
+ * them carries `width` and `height`, which is all the layout maths reads.
  */
-export interface DrawableImage {
-  readonly width: number;
-  readonly height: number;
-}
+export type DrawableImage =
+  | ImageBitmap
+  | HTMLImageElement
+  | HTMLCanvasElement
+  | OffscreenCanvas;
