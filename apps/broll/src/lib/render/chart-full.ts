@@ -1,4 +1,5 @@
 import { formatChartValue } from "./chart-label";
+import type { Render2DContext } from "./context";
 
 /**
  * The `chart-full` template: the chart fills the frame (`design-prompt.md`).
@@ -54,33 +55,36 @@ export const CHART_FULL_THEME = {
 } as const;
 
 /**
- * The subset of a 2D context this renderer uses. Keeps the tests honest, and
- * has to stay assignable **from** the real `OffscreenCanvasRenderingContext2D`,
- * which is why `fillStyle` carries the full union even though this file only
- * ever assigns strings to it.
+ * Exactly what this template draws with, picked out of the shared surface.
+ *
+ * Derived rather than declared so there is one definition of the canvas across
+ * every template, while this one still asks for nothing it does not use: it
+ * draws no images and needs no clipping, so a caller is not made to supply
+ * them.
  */
-export interface Chart2DContext {
-  fillStyle: string | CanvasGradient | CanvasPattern;
-  strokeStyle: string | CanvasGradient | CanvasPattern;
-  lineWidth: number;
-  lineJoin: CanvasLineJoin;
-  lineCap: CanvasLineCap;
-  font: string;
-  textAlign: CanvasTextAlign;
-  textBaseline: CanvasTextBaseline;
-  save(): void;
-  restore(): void;
-  translate(x: number, y: number): void;
-  beginPath(): void;
-  closePath(): void;
-  moveTo(x: number, y: number): void;
-  lineTo(x: number, y: number): void;
-  arc(x: number, y: number, radius: number, startAngle: number, endAngle: number): void;
-  fill(): void;
-  stroke(): void;
-  fillRect(x: number, y: number, width: number, height: number): void;
-  fillText(text: string, x: number, y: number): void;
-}
+export type Chart2DContext = Pick<
+  Render2DContext,
+  | "fillStyle"
+  | "strokeStyle"
+  | "lineWidth"
+  | "lineJoin"
+  | "lineCap"
+  | "font"
+  | "textAlign"
+  | "textBaseline"
+  | "save"
+  | "restore"
+  | "translate"
+  | "beginPath"
+  | "closePath"
+  | "moveTo"
+  | "lineTo"
+  | "arc"
+  | "fill"
+  | "stroke"
+  | "fillRect"
+  | "fillText"
+>;
 
 /** The shapes the planner may ask for. */
 export type ChartShape = "number" | "bar" | "line" | "pie";
