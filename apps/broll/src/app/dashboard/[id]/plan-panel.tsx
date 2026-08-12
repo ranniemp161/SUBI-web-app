@@ -4,7 +4,9 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import type { VideoFps } from "@repo/transcript";
 import type { SceneSummary } from "@/lib/scenes";
 import { formatClock } from "@/lib/utterances";
+import type { ChartFullScene } from "@/lib/render/chart-full";
 import { RenderSceneButton } from "./render-scene-button";
+import { ScenePreview } from "./scene-preview";
 
 /**
  * The Plan button, the phases while a run is in flight, and the resulting
@@ -264,14 +266,8 @@ export function PlanPanel({
                     chart-full scene whose chart survived the honesty check.
                   */}
                   {scene.layoutTemplate === "chart-full" && scene.chart && (
-                    <RenderSceneButton
-                      index={position + 1}
-                      startMs={scene.startMs}
-                      durationMs={scene.durationMs}
-                      width={outputWidth}
-                      height={outputHeight}
-                      fps={fps}
-                      scene={{
+                    <ChartFullScenePreview
+                      chart={{
                         // `type` decides the shape. Dropping it here drew every
                         // chart as bars, which turned a single statistic into a
                         // one bar bar chart.
@@ -281,6 +277,12 @@ export function PlanPanel({
                         labels: scene.chart.labels,
                         unit: scene.chart.unit,
                       }}
+                      index={position + 1}
+                      startMs={scene.startMs}
+                      durationMs={scene.durationMs}
+                      outputWidth={outputWidth}
+                      outputHeight={outputHeight}
+                      fps={fps}
                     />
                   )}
                 </div>
@@ -364,4 +366,46 @@ function lastJsonLine(text: string): TerminalLine | null {
     if (parsed && typeof parsed.phase !== "string") return parsed as TerminalLine;
   }
   return null;
+}
+
+/**
+ * A chart-full scene's preview and its render control, kept together so the
+ * chart is mapped out of the database shape exactly once.
+ */
+function ChartFullScenePreview({
+  chart,
+  index,
+  startMs,
+  durationMs,
+  outputWidth,
+  outputHeight,
+  fps,
+}: {
+  chart: ChartFullScene;
+  index: number;
+  startMs: number;
+  durationMs: number;
+  outputWidth: number;
+  outputHeight: number;
+  fps: VideoFps;
+}) {
+  return (
+    <>
+      <ScenePreview
+        scene={chart}
+        durationMs={durationMs}
+        aspectWidth={outputWidth}
+        aspectHeight={outputHeight}
+      />
+      <RenderSceneButton
+        scene={chart}
+        index={index}
+        startMs={startMs}
+        durationMs={durationMs}
+        width={outputWidth}
+        height={outputHeight}
+        fps={fps}
+      />
+    </>
+  );
 }
