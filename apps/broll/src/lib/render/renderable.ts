@@ -1,6 +1,8 @@
+import { drawCharacterCenterFrame } from "./character-center";
 import { drawCharacterLeftFrame } from "./character-left";
 import { drawChartFullFrame, type ChartFullScene } from "./chart-full";
 import type { Render2DContext } from "./context";
+import { drawTextCardFrame } from "./text-card";
 
 /**
  * One scene, in the form both the page preview and the encoder draw from.
@@ -13,15 +15,21 @@ import type { Render2DContext } from "./context";
  */
 export type Renderable =
   | { template: "chart-full"; scene: ChartFullScene }
+  | { template: "text-card"; scene: { text: string | null } }
   | {
-      template: "character-left";
+      template: "character-left" | "character-center";
       scene: { text: string | null };
       /** Already decoded. Null draws the text alone rather than failing. */
       image: ImageBitmap | null;
     };
 
 /** Which templates can be drawn today. The rest of the plan is still listed only. */
-export const RENDERABLE_TEMPLATES = ["chart-full", "character-left"] as const;
+export const RENDERABLE_TEMPLATES = [
+  "chart-full",
+  "character-left",
+  "character-center",
+  "text-card",
+] as const;
 
 /** Whether a scene's template has a renderer yet. */
 export function isRenderableTemplate(template: string): boolean {
@@ -34,9 +42,17 @@ export function drawRenderable(
   renderable: Renderable,
   frame: { width: number; height: number; elapsedMs: number }
 ): void {
-  if (renderable.template === "character-left") {
-    drawCharacterLeftFrame(ctx, { text: renderable.scene.text, image: renderable.image }, frame);
-    return;
+  switch (renderable.template) {
+    case "character-left":
+      drawCharacterLeftFrame(ctx, { text: renderable.scene.text, image: renderable.image }, frame);
+      return;
+    case "character-center":
+      drawCharacterCenterFrame(ctx, { text: renderable.scene.text, image: renderable.image }, frame);
+      return;
+    case "text-card":
+      drawTextCardFrame(ctx, renderable.scene, frame);
+      return;
+    default:
+      drawChartFullFrame(ctx, renderable.scene, frame);
   }
-  drawChartFullFrame(ctx, renderable.scene, frame);
 }

@@ -109,10 +109,15 @@ export function ScenePreview({
 
 /** A short description of the frame, for anyone using a screen reader. */
 function previewLabel(renderable: Renderable): string {
-  if (renderable.template === "character-left") {
-    return renderable.scene.text
-      ? `Preview: character with the words ${renderable.scene.text}`
-      : "Preview: character with no on screen text";
+  if (renderable.template === "chart-full") {
+    return `Preview: chart, ${renderable.scene.title}`;
   }
-  return `Preview: chart, ${renderable.scene.title}`;
+  if (renderable.template === "text-card") {
+    return renderable.scene.text
+      ? `Preview: text card reading ${renderable.scene.text}`
+      : "Preview: empty text card";
+  }
+  return renderable.scene.text
+    ? `Preview: character with the words ${renderable.scene.text}`
+    : "Preview: character with no on screen text";
 }

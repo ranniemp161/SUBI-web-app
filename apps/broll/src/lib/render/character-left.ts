@@ -1,4 +1,5 @@
 import type { DrawableImage, Render2DContext } from "./context";
+import { fitCharacter, wrapText } from "./layout";
 
 /**
  * The `character-left` template: character 40% left, text right
@@ -64,64 +65,6 @@ export function textEntrance(elapsedMs: number): number {
   const theme = CHARACTER_LEFT_THEME;
   if (!Number.isFinite(elapsedMs)) return 0;
   return easeOutCubic((elapsedMs - theme.textDelayMs) / theme.textEntranceMs);
-}
-
-/**
- * Breaks `text` into lines that fit `maxWidth`, measured through the context.
- *
- * A word longer than the line is left on its own line rather than split: these
- * are a few words of burned in caption, so a hyphenated break would read worse
- * than an overhang, and silently dropping it would lose what the speaker said.
- */
-export function wrapText(
-  ctx: Pick<Render2DContext, "measureText">,
-  text: string,
-  maxWidth: number
-): string[] {
-  const words = text.split(/\s+/).filter(Boolean);
-  if (words.length === 0) return [];
-
-  const lines: string[] = [];
-  let current = words[0];
-
-  for (const word of words.slice(1)) {
-    const candidate = `${current} ${word}`;
-    if (ctx.measureText(candidate).width <= maxWidth) {
-      current = candidate;
-    } else {
-      lines.push(current);
-      current = word;
-    }
-  }
-  lines.push(current);
-  return lines;
-}
-
-/**
- * Fits an image into a box while preserving its aspect ratio, anchored to the
- * bottom centre of the box.
- *
- * Character cutouts are portrait and their widths vary per emotion (the stored
- * set runs 686 to 866 wide against a constant 1126 tall), because each is
- * cropped to its own bounding box. Anchoring to the bottom is what keeps them
- * standing on the same floor line rather than bobbing between scenes.
- */
-export function fitCharacter(
-  image: { width: number; height: number },
-  box: { x: number; y: number; width: number; height: number }
-): { x: number; y: number; width: number; height: number } {
-  if (image.width <= 0 || image.height <= 0) {
-    return { x: box.x, y: box.y, width: 0, height: 0 };
-  }
-  const scale = Math.min(box.width / image.width, box.height / image.height);
-  const width = image.width * scale;
-  const height = image.height * scale;
-  return {
-    x: box.x + (box.width - width) / 2,
-    y: box.y + box.height - height,
-    width,
-    height,
-  };
 }
 
 /**

@@ -72,7 +72,12 @@ export function PlanPanel({
       Array.from(
         new Set(
           scenes
-            .filter((scene) => scene.layoutTemplate === "character-left" && scene.emotion)
+            .filter(
+              (scene) =>
+                (scene.layoutTemplate === "character-left" ||
+                  scene.layoutTemplate === "character-center") &&
+                scene.emotion
+            )
             .map((scene) => scene.emotion as string)
         )
       ).sort(),
@@ -424,13 +429,23 @@ function SceneRenderRow({
       };
     }
 
-    if (scene.layoutTemplate === "character-left") {
+    if (
+      scene.layoutTemplate === "character-left" ||
+      scene.layoutTemplate === "character-center"
+    ) {
       // A scene whose cutout has not loaded still renders: the text carries it,
       // and waiting would leave the row blank for no gain.
       return {
-        template: "character-left",
+        template: scene.layoutTemplate,
         scene: { text: scene.overlayText ?? scene.sourceText },
         image: scene.emotion ? (bitmaps.get(scene.emotion) ?? null) : null,
+      };
+    }
+
+    if (scene.layoutTemplate === "text-card") {
+      return {
+        template: "text-card",
+        scene: { text: scene.overlayText ?? scene.sourceText },
       };
     }
 
