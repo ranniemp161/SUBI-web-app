@@ -272,6 +272,10 @@ export function PlanPanel({
                       height={outputHeight}
                       fps={fps}
                       scene={{
+                        // `type` decides the shape. Dropping it here drew every
+                        // chart as bars, which turned a single statistic into a
+                        // one bar bar chart.
+                        type: scene.chart.type,
                         title: scene.chart.title,
                         values: scene.chart.values,
                         labels: scene.chart.labels,
