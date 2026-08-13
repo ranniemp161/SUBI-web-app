@@ -35,6 +35,7 @@ any, and mark a feature `done` when you decide it is._
 | 5 | One template end to end | Phase 4 | in-progress |
 | 6 | Remaining templates + Scene Studio | Phase 5 | in-progress |
 | 7 | Batch export, zip, credits | Phase 6 | in-progress |
+| 9 | Scene Studio screen design | Phase 7 | planned |
 | 8 | Production deploy and error reporting | Deploy | in-progress |
 
 **The next slice is the live verification of Phases 2 and 3.** Features 3 and 4
@@ -64,6 +65,17 @@ judged.
 > verifications it was waiting on is still owed. Reconciled by `/sync` on
 > 2026-08-13, which is also when this scope was first ticked since #140 — three
 > shipped features had been sitting here written as `planned`.
+
+> **And the next slice moved again on 2026-08-13, deliberately this time.**
+> Feature 9, the Scene Studio screen design, was enrolled and put in front of the
+> owed verifications at the engineer's call. The reason is narrow and worth
+> keeping: feature 6's `/check verify` came back BLOCKED with every screen box
+> unexercised, and those boxes need a human driving the Scene Studio screen. Doing
+> the redesign first means driving that screen once rather than twice, and it
+> means not verifying a layout that is about to be replaced. **The four
+> verifications above are still owed and still unstarted**, and feature 9 does not
+> touch them: it is UI composition, no money path, no vendor call. Nothing here
+> withdraws the warning two paragraphs up.
 
 ## Phase 0
 
@@ -771,6 +783,85 @@ through the Wallet without leaving the workflow broken.
       and this app still contains no Stripe integration at all (AC-36). Neither
       has been driven live.
 - [ ] Verify it: /check verify batch export
+
+## Phase 7
+
+### 9. Scene Studio screen design · planned · Alpha · Journey
+
+Enrolled by `/scope` on 2026-08-13, from the engineer looking at the screen and
+not liking it. That is a legitimate way for a feature to arrive, and this one was
+predicted: the UI brief
+([design-prompt.md](../../specs/broll/design-prompt.md) B4) calls Scene Studio
+"the core screen, design this one most carefully", then leaves its central
+question open for whoever designs it, and nobody ever did.
+
+> Key layout question to solve, the user is scanning 10 to 20 scenes and needs to
+> judge each in about two seconds. The source line is what makes a scene
+> identifiable, so it cannot be truncated into uselessness. Consider a list and
+> detail split rather than a grid of equal cards.
+
+So this is not polish and it is not a rewrite. Feature 6 settled **which fields a
+creator may change** and built every one of them correctly. It settled nothing
+about **composition**, so what shipped is every control the criteria asked for,
+stacked vertically inside one list item. Functionally complete, visually a form.
+
+**Intent**: Make the core screen scannable, so a creator can judge twenty
+proposed scenes at about two seconds each and change the ones that are wrong,
+without the screen fighting them.
+
+**Done when**: a creator can open a planned project, scan every scene and tell
+at a glance which are strong, which are excluded and which were downgraded to
+text, open one and change it, and reach export, all without scrolling past
+anything that is not helping them decide.
+
+- [ ] Design it (spec): /architect scene studio layout
+
+**Three things this feature owns, and one it must not touch.**
+
+The list and detail split B4 asks for is the whole of it, and the two second
+scan is the measure to design against rather than a nice sentence.
+
+**The parsed segments list has to go, or become something.** It is the plain list
+of every transcript line at the bottom of the project page, and it does nothing:
+you cannot click it, filter it, or act on it. It is there because feature 2's
+**Done when** was literally "see its parsed segments", so it was proof that
+intake worked, in Phase 1, when the page held nothing else. It has outlived that.
+On project `0620` it is 254 rows, and since the Add Scene picker shipped the same
+segments are now listed twice on one page. Retiring it is the obvious call;
+folding it into the add flow is the other one worth weighing.
+
+**Where the chart citation belongs is a real product question, not a layout
+one.** The brief's B5 describes a **chart confirmation step before render**, with
+the quoted span and its highlighted figures as the centrepiece, because "a
+fabricated statistic rendered as a clean bar chart gets published under the
+creator's name". What shipped puts that citation inline on the scene row. Inline
+or its own step is the decision, and it is the screen where this product's one
+promise is actually cashed, so it is worth deciding deliberately rather than
+inheriting from build order.
+
+**What it must not touch: which fields are editable.** Spec
+[0005](../../specs/broll/0005-scene-studio/index.md) settled that, and the rule
+is one line: presentation is editable, claims are not. A redesign may move the
+chart values control anywhere it likes, including nowhere, but it may never make
+them writable. Same for a scene's timings.
+
+**Why it runs before the verification it is queued in front of.** Feature 6's
+`Verify it` came back BLOCKED on 2026-08-13 with every screen box unexercised,
+and those boxes need a human sitting in front of this exact screen. Redesigning
+first means driving it once. Verifying first means driving a layout that is about
+to be replaced, then driving it again.
+
+**Alpha, not the project default.** A layout redesign moves no money, changes no
+schema, and adds no pure logic worth pinning in a unit test. The risk here is
+"does it read well", which `/check verify` answers by watching it and a test
+cannot answer at all. If the design turns out to need real logic (a virtualised
+list, a filter, a sort), that logic earns its own tests and this tag is worth
+revisiting.
+
+**Journey, not the project default.** The value shows up only when one whole path
+works: open a planned project, scan, judge, change one scene, export. A thin
+slice through the layers buys nothing here, because every layer under this screen
+is already built.
 
 ## Deploy
 

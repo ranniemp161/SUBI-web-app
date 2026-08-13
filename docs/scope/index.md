@@ -12,7 +12,7 @@ through every layer, working).
 | `_root` (ecosystem wide) | [_root/scope.md](_root/scope.md) | Beta | 1 done, 2 in-progress, 1 planned, 3 existing, 2 deferred, 1 open question |
 | `apps/rough-cut` | [rough-cut/scope.md](rough-cut/scope.md) | Beta | 3 done, 2 in-progress, 13 existing, 5 deferred |
 | `apps/founders-frame` | [founders-frame/scope.md](founders-frame/scope.md) | Alpha | 1 done, 1 planned, 2 existing |
-| `apps/broll` | [broll/scope.md](broll/scope.md) | Beta | 2 done, 2 in-progress (built, not verified), 4 planned |
+| `apps/broll` | [broll/scope.md](broll/scope.md) | Beta | 2 done, 6 in-progress (all built, none verified), 1 planned |
 | `apps/wallet` | tracked under `_root` | see `_root` | the Wallet app **is** the ecosystem wide billing feature |
 
 ## Notes
@@ -22,11 +22,17 @@ through every layer, working).
   days. As of 2026-08-11 the app has three phases of code in it: transcript
   intake, the scene planner, and the character pipeline. Its tier moved from
   Alpha to Beta on 2026-08-12, on the condition its own scope had already written
-  down. Both in-progress features are built, unit covered and **unverified**: no
+  down. Every in-progress feature is built, unit covered and **unverified**: no
   Gemini call made by this code had ever succeeded until the vendor was unblocked
-  on 2026-08-12 (billing enabled, private Blob store created), so the live
-  verification of Phases 2 and 3 is the next slice. It also has no production
+  on 2026-08-12 (billing enabled, private Blob store created), and the live
+  verification of Phases 2 and 3 is still owed. It also has no production
   deploy, which is now feature 8 there rather than a paragraph.
+  **The rollup above went from "2 in-progress, 4 planned" to "6 in-progress, 1
+  planned" on 2026-08-13**, and only one of those moves was new work: four rows
+  had already shipped and the count here had not caught up. The one genuinely new
+  row is feature 9, the Scene Studio screen design, enrolled that day and placed
+  ahead of the owed verifications because those verifications need a human driving
+  the very screen it is about to replace.
 - **One piece of work, three scopes, one set of boxes.** The transcript contract
   spans `_root` (a new shared package plus a shared schema migration),
   `apps/rough-cut` (a new export surface and route), and `apps/broll` (which drove
