@@ -21,15 +21,24 @@ import { sceneCreateRateLimit, writeRateLimit } from "@/lib/rate-limit";
  * figure the honesty check had just refused to store.
  *
  * That rule is enforced by the **shape** of the schema below rather than by a
- * blocklist. It names four fields and rejects everything else, so a column
- * added later is unwritable until someone deliberately adds it here.
+ * blocklist. It names four fields and drops everything else, so a column added
+ * later is unwritable until someone deliberately adds it here — there is no
+ * list of forbidden fields for anyone to forget to update.
+ *
+ * **Unknown fields are ignored, not rejected** (AC-76). A body carrying
+ * `visualType` or `chart` beside a valid caption has those fields stripped
+ * before anything reads the object, and the caption still saves. `z.object`
+ * rather than `z.strictObject` is what does that, and the difference is
+ * deliberate: refusing the whole request would make one stray field cost the
+ * edit the creator actually made, and it protects nothing extra, because a
+ * stripped field never reaches a column either way.
  *
  * Excluding sets a flag rather than deleting, so it stays reversible. Deleting
  * is reserved for a scene the creator added by hand.
  */
 
 const overrideSchema = z
-  .strictObject({
+  .object({
     included: z.boolean().optional(),
     overlayText: z.string().max(MAX_OVERLAY_TEXT_CHARS).nullable().optional(),
     layoutTemplate: z.enum(LAYOUT_TEMPLATES).optional(),
