@@ -67,7 +67,20 @@ export type PlannedScene = {
   layoutTemplate: LayoutTemplate;
   overlayText: string | null;
   chart: SceneChart | null;
+  /**
+   * Why this scene's chart was dropped, or null (spec `0005` AC-87).
+   *
+   * Stored on the scene rather than left in the run response, because a scene
+   * the planner meant as text and a scene that lost its chart are the same row
+   * once `chart` is NULL, so the difference cannot be recovered on a reload.
+   */
+  chartRejectionReason: string | null;
   strength: number;
+  /**
+   * Whether this scene starts checked (spec `0005` AC-85). Decided by
+   * `applySurplusRule`, and owned by the creator from the moment they see it.
+   */
+  included: boolean;
 };
 
 /** Why one proposed scene, or one chart, did not survive (AC-24, AC-54). */
@@ -218,6 +231,13 @@ function assembleScene(
   rejections: PlanRejection[]
 ): PlannedScene {
   let chart: SceneChart | null = null;
+  // Attributed here, on the scene being assembled, which is stronger than the
+  // `utteranceIndex` match spec `0005` asks for and never wrong for the same
+  // reason: this *is* the scene whose chart was dropped. Matching afterwards by
+  // array position would mis-attach, because `collectScenes` sorts by `startMs`
+  // once assembly is done; matching by `utteranceIndex` would still be ambiguous
+  // when two scenes cite the same line and both lose a chart.
+  let chartRejectionReason: string | null = null;
   if (parsed.chart) {
     const trace = traceChart(parsed.chart, utterance.text);
     if (trace.traced) {
@@ -225,6 +245,7 @@ function assembleScene(
     } else {
       // The scene survives as a text treatment — a bad chart never discards the
       // scene, and an untraceable number is never stored (AC-54).
+      chartRejectionReason = trace.reason;
       rejections.push({
         utteranceIndex: utterance.index,
         reason: `chart dropped: ${trace.reason}`,
@@ -249,8 +270,55 @@ function assembleScene(
     layoutTemplate: parsed.layout_template,
     overlayText: parsed.overlay_text,
     chart,
+    chartRejectionReason,
     strength: parsed.strength,
+    // Provisional. `applySurplusRule` decides this once the whole plan is in,
+    // because "beyond the target" is a fact about the plan, not about a scene.
+    included: true,
   };
+}
+
+/**
+ * Check the strongest scenes up to the planner's own target, and uncheck the
+ * rest (AC-85).
+ *
+ * **Unchecked, never dropped.** A surplus scene is still stored, still listed
+ * and still one click from being included — the model proposing more than the
+ * target is not evidence that the extras are bad, only that the creator should
+ * choose. Dropping them would decide for them and would lose material the
+ * planner was paid to find.
+ *
+ * The tiebreak is `start_ms` ascending, so two scenes the model scored
+ * identically resolve by where they sit rather than by the order they happened
+ * to arrive in. Without it the same transcript could plan differently twice.
+ *
+ * **The ranking has no evidence behind it**, exactly like `SCENES_PER_MINUTE`,
+ * which is the number it reuses rather than inventing a second one. AC-28's
+ * tuning run should revisit both together.
+ *
+ * Returns the scenes in the order given, so the plan order the rest of the app
+ * reads is untouched.
+ */
+export function applySurplusRule(
+  scenes: readonly PlannedScene[],
+  target: number
+): PlannedScene[] {
+  if (scenes.length <= target) {
+    return scenes.map((scene) => ({ ...scene, included: true }));
+  }
+
+  const keep = new Set(
+    scenes
+      .map((scene, position) => ({ scene, position }))
+      .sort(
+        (a, b) =>
+          b.scene.strength - a.scene.strength || a.scene.startMs - b.scene.startMs
+      )
+      .slice(0, target)
+      .map((entry) => entry.position)
+  );
+
+  return scenes.map((scene, position) => ({ ...scene, included: keep.has(position) }));
 }
 
 /**
@@ -419,5 +487,11 @@ export async function runScenePlan(input: {
     throw new PlannerError("failed", "The planner's answer could not be read. Try again.");
   }
 
-  return collectScenes(raw, input.utterances);
+  const result = collectScenes(raw, input.utterances);
+  return {
+    ...result,
+    // Applied to what survived validation, not to what the model returned: a
+    // scene that was rejected never had a claim on a slot (AC-85).
+    scenes: applySurplusRule(result.scenes, input.sceneTarget),
+  };
 }

@@ -171,6 +171,17 @@ export default async function ProjectPage({
         // Carried as a rational, never a decimal: 30000/1001 is not 29.97, and
         // the difference accumulates into visible drift over a clip.
         fps={{ numerator: project.outputFpsNum, denominator: project.outputFpsDen }}
+        // What this project has actually generated, which is what gates the
+        // character templates and fills the emotion picker (AC-75, AC-77).
+        committedEmotions={characterAssets.map((asset) => asset.emotion)}
+        // The lines a hand added scene may sit on. The index is what the route
+        // resolves the timing from, so it must be the position in the stored
+        // document rather than anything computed for display (AC-79).
+        transcriptChoices={transcript.segments.map((segment, index) => ({
+          index,
+          startMs: Math.max(0, Math.round(segment.start * 1000)),
+          text: segment.text,
+        }))}
       />
 
       <h2 className="mt-10 text-sm font-semibold uppercase tracking-wide" style={{ color: "var(--broll-muted)" }}>

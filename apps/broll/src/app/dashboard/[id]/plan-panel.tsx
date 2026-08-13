@@ -3,17 +3,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { VideoFps } from "@repo/transcript";
 import type { SceneSummary } from "@/lib/scenes";
+import type { CharacterEmotion } from "@/lib/emotions";
+import { MAX_MANUAL_SCENES_PER_PROJECT } from "@/lib/scene-limits";
 import { formatClock } from "@/lib/utterances";
 import { loadCharacterBitmaps } from "@/lib/render/character-assets";
 import type { Renderable } from "@/lib/render/renderable";
 import { BatchExport, type BatchScene } from "./batch-export";
-import { SceneOverrides } from "./scene-overrides";
+import { AddScene, type TranscriptChoice } from "./add-scene";
+import { SceneCitation } from "./scene-citation";
+import { SceneOverrides, type ScenePatch } from "./scene-overrides";
 import { RenderSceneButton } from "./render-scene-button";
 import { ScenePreview } from "./scene-preview";
 
 /**
- * The Plan button, the phases while a run is in flight, and the resulting
- * scenes read only (spec `broll/0003` AC-56, AC-58).
+ * Scene Studio: the Plan button, the phases while a run is in flight, and the
+ * review surface over the scenes it produced (spec `broll/0003`, `broll/0005`).
  *
  * A client component because the run is a stream it has to read incrementally:
  * the route sends HTTP 200 before the model answers, so a failure arrives as
@@ -48,6 +52,8 @@ export function PlanPanel({
   outputWidth,
   outputHeight,
   fps,
+  committedEmotions,
+  transcriptChoices,
 }: {
   projectId: string;
   initialScenes: SceneSummary[];
@@ -59,6 +65,10 @@ export function PlanPanel({
   outputHeight: number;
   /** The project's output rate as an exact rational, never a decimal. */
   fps: VideoFps;
+  /** The emotions this project has actually generated (AC-75, AC-77). */
+  committedEmotions: CharacterEmotion[];
+  /** The lines a hand added scene may sit on (AC-79). */
+  transcriptChoices: TranscriptChoice[];
 }) {
   const [scenes, setScenes] = useState<SceneSummary[]>(initialScenes);
   const [phase, setPhase] = useState<string | null>(null);
@@ -140,7 +150,11 @@ export function PlanPanel({
         return;
       }
       if (terminal.error) setError(terminal.error);
-      if (terminal.scenes) setScenes(terminal.scenes);
+      if (terminal.scenes) {
+        // A re-run replaces the planner's scenes and keeps the manual ones, so
+        // the list it returns is the whole truth about this project.
+        setScenes(terminal.scenes);
+      }
       if (terminal.rejected) setRejections(terminal.rejected);
     } catch {
       setError("The plan run failed. Try again.");
@@ -152,10 +166,39 @@ export function PlanPanel({
 
   // Applied locally the moment a control changes, so the preview and the batch
   // react without waiting for the round trip.
-  const patchScene = useCallback(
-    (sceneId: string, patch: { included?: boolean; overlayText?: string | null }) => {
+  const patchScene = useCallback((sceneId: string, patch: ScenePatch) => {
+    setScenes((previous) =>
+      previous.map((scene) => (scene.id === sceneId ? { ...scene, ...patch } : scene))
+    );
+  }, []);
+
+  const removeScene = useCallback((sceneId: string) => {
+    setScenes((previous) => previous.filter((scene) => scene.id !== sceneId));
+  }, []);
+
+  const addScene = useCallback(
+    (created: { id: string; startMs: number; durationMs: number; overlayText: string }) => {
+      // Built to match exactly what the server wrote, so the row reads the same
+      // before and after a reload: a manual scene has no cited line, no chart
+      // and no planner score, which is spec `0002`'s NULL invariant (AC-79).
+      const scene: SceneSummary = {
+        id: created.id,
+        startMs: created.startMs,
+        durationMs: created.durationMs,
+        sourceText: null,
+        visualType: "text",
+        emotion: null,
+        layoutTemplate: "text-card",
+        overlayText: created.overlayText,
+        chart: null,
+        chartRejectionReason: null,
+        strength: null,
+        included: true,
+        origin: "manual",
+        userEditedAt: new Date(),
+      };
       setScenes((previous) =>
-        previous.map((scene) => (scene.id === sceneId ? { ...scene, ...patch } : scene))
+        [...previous, scene].sort((a, b) => a.startMs - b.startMs || a.id.localeCompare(b.id))
       );
     },
     []
@@ -185,10 +228,32 @@ export function PlanPanel({
     [scenes, bitmaps]
   );
 
-  const droppedCharts = useMemo(
-    () => rejections.filter((r) => r.kind === "chart").length,
-    [rejections]
-  );
+  const includedCount = scenes.filter((scene) => scene.included).length;
+  const manualCount = scenes.filter((scene) => scene.origin === "manual").length;
+
+  /**
+   * How many charts the honesty check dropped, read from the scenes themselves
+   * rather than from the last run's response.
+   *
+   * That is the whole reason `chart_rejection_reason` is a column: the count
+   * used to live in this component's state and was gone on reload, so the
+   * product's central promise stopped being answerable the moment the page was
+   * refreshed (AC-87).
+   */
+  const droppedCharts = scenes.filter((scene) => scene.chartRejectionReason).length;
+
+  /**
+   * How much review work a re-run would destroy (AC-89).
+   *
+   * Counted from `user_edited_at` and from nothing else. `overlay_text` is
+   * written by the planner at plan time and `included = false` is written by
+   * the surplus rule, so either as a proxy would tell a creator who restyled
+   * ten scenes that nothing was at risk, immediately before deleting all of it.
+   */
+  const touchedCount = scenes.filter(
+    (scene) => scene.origin === "planner" && scene.userEditedAt !== null
+  ).length;
+
   const rejectedScenes = useMemo(
     () => rejections.filter((r) => r.kind === "scene").length,
     [rejections]
@@ -240,8 +305,24 @@ export function PlanPanel({
         <div className="broll-glow mt-4 rounded-lg px-4 py-3">
           <p className="text-sm">
             Re-running costs <strong>{rerunPrice}</strong> and replaces the{" "}
-            {scenes.filter((s) => s.origin === "planner").length} planned scenes below,
-            including any you had switched off. Scenes you added by hand are kept.
+            {scenes.filter((s) => s.origin === "planner").length} planned scenes below.
+            {/* Named, not implied: a creator deciding whether to spend needs to
+                know what the money buys and what it costs them (AC-89). */}
+            {touchedCount > 0 ? (
+              <>
+                {" "}
+                <strong>
+                  {touchedCount} of them {touchedCount === 1 ? "has" : "have"} edits you
+                  made
+                </strong>
+                , and those edits will be lost.
+              </>
+            ) : (
+              " You haven't edited any of them yet."
+            )}{" "}
+            {manualCount > 0
+              ? `The ${manualCount} scene${manualCount === 1 ? "" : "s"} you added by hand ${manualCount === 1 ? "is" : "are"} kept.`
+              : "Scenes you add by hand are always kept."}
           </p>
           <div className="mt-3 flex gap-2">
             <button
@@ -319,6 +400,16 @@ export function PlanPanel({
         <BatchExport batchScenes={batchScenes} width={outputWidth} height={outputHeight} fps={fps} />
       )}
 
+      {/* An empty archive is not an export, so the gate says what is missing
+          rather than handing over a zip with nothing in it (AC-90). */}
+      {scenes.length > 0 && batchScenes.length === 0 && (
+        <p className="broll-glass mt-6 rounded-lg px-4 py-3 text-sm" role="status">
+          {includedCount === 0
+            ? "Nothing is switched on to export yet. Tick “Include in export” on at least one scene."
+            : "None of the included scenes can be drawn yet. Pick a template that this project can render, or generate a character set first."}
+        </p>
+      )}
+
       {scenes.length > 0 && (
         <ul className="mt-4 grid gap-2">
           {scenes.map((scene, position) => (
@@ -334,7 +425,7 @@ export function PlanPanel({
                 >
                   {formatClock(scene.startMs)}
                 </span>
-                <div className="min-w-0">
+                <div className="min-w-0 flex-1">
                   <p className="text-sm leading-relaxed">
                     {scene.sourceText ?? <em>Added by hand</em>}
                   </p>
@@ -343,14 +434,42 @@ export function PlanPanel({
                     {scene.emotion ? ` · ${scene.emotion}` : ""}
                     {` · ${(scene.durationMs / 1000).toFixed(1)}s`}
                     {scene.chart ? ` · chart: ${scene.chart.title}` : ""}
-                    {scene.origin === "manual" ? " · manual" : ""}
+                    {/* A manual scene has no score, and a missing score is shown
+                        as absent rather than as zero — zero would read as "the
+                        planner thought this was worthless" (AC-84). */}
+                    {scene.strength !== null
+                      ? ` · strength ${scene.strength.toFixed(2)}`
+                      : " · added by hand"}
                   </p>
+
+                  {/* Keyed off the current template, not off the column: a scene
+                      styled away from chart-full keeps its chart but shows no
+                      citation, because those numbers are not on screen (AC-86). */}
+                  {scene.layoutTemplate === "chart-full" && scene.chart && scene.sourceText && (
+                    <SceneCitation sourceText={scene.sourceText} chart={scene.chart} />
+                  )}
+
+                  {/* A downgrade reads as a decision rather than a bug, and it
+                      survives a reload because it is a column (AC-87). */}
+                  {scene.chartRejectionReason && (
+                    <p className="mt-1 text-xs" style={{ color: "var(--broll-muted)" }}>
+                      Shown as text, not a chart: {scene.chartRejectionReason}. The number
+                      stays out rather than being guessed at.
+                    </p>
+                  )}
+
                   <SceneOverrides
                     projectId={projectId}
                     sceneId={scene.id}
                     included={scene.included}
                     overlayText={scene.overlayText}
+                    layoutTemplate={scene.layoutTemplate}
+                    emotion={scene.emotion}
+                    origin={scene.origin}
+                    hasChart={scene.chart !== null}
+                    committedEmotions={committedEmotions}
                     onChange={(patch) => patchScene(scene.id, patch)}
+                    onDelete={() => removeScene(scene.id)}
                   />
 
                   <SceneRenderRow
@@ -367,6 +486,13 @@ export function PlanPanel({
           ))}
         </ul>
       )}
+
+      <AddScene
+        projectId={projectId}
+        segments={transcriptChoices}
+        atCap={manualCount >= MAX_MANUAL_SCENES_PER_PROJECT}
+        onAdded={addScene}
+      />
     </section>
   );
 }
@@ -447,9 +573,9 @@ function lastJsonLine(text: string): TerminalLine | null {
 /**
  * A scene's preview and its render control, when the template has a renderer.
  *
- * Returns nothing for a template that is still plan only, which is most of
- * them: `chart-full` and `character-left` are built, the other four are not.
- * Deciding that here keeps the scene list itself free of template knowledge.
+ * Returns nothing for a template that is still plan only, which is two of the
+ * six. Deciding that here keeps the scene list itself free of template
+ * knowledge.
  */
 function SceneRenderRow({
   scene,

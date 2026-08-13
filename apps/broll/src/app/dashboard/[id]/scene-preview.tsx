@@ -28,6 +28,26 @@ import { drawRenderable, type Renderable } from "@/lib/render/renderable";
 /** Long enough to be past the entrance, so the still shows the settled figure. */
 const SETTLED_MS = 2_000;
 
+/**
+ * The one preview allowed to animate, as a stop callback (AC-88).
+ *
+ * Module scope rather than React state on purpose: this is a fact about the
+ * page, not about any one row, and threading it through twenty scenes as props
+ * would make every row re-render whenever any other row was hovered. A creator
+ * dragging the pointer down a long list would otherwise leave a trail of
+ * looping canvases, which is the cost this whole design exists to avoid.
+ */
+let activeStop: (() => void) | null = null;
+
+function claimPlayback(stop: () => void): void {
+  if (activeStop && activeStop !== stop) activeStop();
+  activeStop = stop;
+}
+
+function releasePlayback(stop: () => void): void {
+  if (activeStop === stop) activeStop = null;
+}
+
 export function ScenePreview({
   renderable,
   durationMs,
@@ -91,7 +111,14 @@ export function ScenePreview({
     if (!playing) return;
     const startedAt = performance.now();
 
+    // Claiming stops whichever preview was animating before this one, so a
+    // pointer travelling down the list leaves nothing running behind it.
+    const stop = () => setPlaying(false);
+    claimPlayback(stop);
+
     const step = () => {
+      // The scene's real duration, so what a creator watches is the length the
+      // clip will actually be rather than a fixed preview loop.
       const elapsed = performance.now() - startedAt;
       if (elapsed >= durationRef.current) {
         paint(SETTLED_MS);
@@ -106,11 +133,22 @@ export function ScenePreview({
     return () => {
       if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
       frameRef.current = null;
+      releasePlayback(stop);
     };
   }, [playing, paint]);
 
   return (
-    <div className="mt-2">
+    <div
+      className="mt-2"
+      // Hover plays it (AC-88). Focus does too, so this is reachable without a
+      // pointer, and the button below stays for touch, which has no hover at
+      // all. All three paths go through the same state, so the one animating
+      // preview rule holds however playback started.
+      onMouseEnter={() => setPlaying(true)}
+      onMouseLeave={() => setPlaying(false)}
+      onFocus={() => setPlaying(true)}
+      onBlur={() => setPlaying(false)}
+    >
       <canvas
         ref={canvasRef}
         width={previewWidth}

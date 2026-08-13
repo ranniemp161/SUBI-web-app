@@ -539,9 +539,21 @@ export const brollScenes = pgTable(
      */
     chart: jsonb("chart"),
     /**
-     * The planner's confidence, 0 to 1. Kept for display and for retuning the
-     * planner later — deliberately NOT used to decide `included`, because no
-     * threshold has any evidence behind it yet.
+     * Why the honesty check dropped this scene's chart, or NULL.
+     *
+     * **This cannot be derived, which is the only reason it is stored** (spec
+     * `broll/0005` AC-87). Once `chart` is NULL, a scene the planner meant as
+     * text and a scene that lost its chart are the same row, so the difference
+     * has to be written down at plan time or it is gone. NULL on a scene that
+     * never proposed a chart, which is the common case.
+     */
+    chartRejectionReason: text("chart_rejection_reason"),
+    /**
+     * The planner's confidence, 0 to 1. Read for display, and read at plan time
+     * to decide which scenes start `included` when the plan overshoots its own
+     * target (spec `broll/0005` AC-85). It was deliberately unused for that
+     * until 0005; the ranking still has no evidence behind it and is tuned
+     * alongside `SCENES_PER_MINUTE` in AC-28.
      */
     strength: real("strength"),
     /**
@@ -562,6 +574,20 @@ export const brollScenes = pgTable(
       .notNull()
       .default("pending"),
     renderedAt: timestamp("rendered_at", { withTimezone: true }),
+    /**
+     * When a human last changed this row through Scene Studio, or NULL if the
+     * planner's values are untouched (spec `broll/0005` AC-92).
+     *
+     * **A recorded fact, not an inferred one, and every writer must maintain
+     * it.** The re-run warning counts the review work a new plan is about to
+     * destroy, and no other column answers that: `overlay_text` is written by
+     * the planner at plan time, and after AC-85 so is `included = false`. Both
+     * proxies would tell a creator who restyled ten scenes that nothing was at
+     * risk. `updated_at` cannot stand in either, since the planner and any later
+     * background write move it too. A Scene Studio write that forgets this
+     * column makes the warning quietly under count.
+     */
+    userEditedAt: timestamp("user_edited_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),

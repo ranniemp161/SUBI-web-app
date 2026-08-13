@@ -11,11 +11,15 @@ Runs on port **3003**. Shares the Clerk instance and the Neon database with
 `apps/rough-cut` and `apps/wallet`; deep-links to Wallet for every top-up and
 never processes a payment itself.
 
-**Status: Phases 1 to 3 built, not yet verified.** A user can create a project by
+**Status: Phases 1 to 6 built, not yet verified.** A user can create a project by
 uploading a transcript or inheriting one from Ruff Cut, see its parsed segments,
-plan scenes, and generate a six emotion character set that is segmented, trimmed
-and stored. Nothing renders yet. The scope is the live plan; check it before
-trusting this line.
+plan scenes, generate a six emotion character set that is segmented, trimmed and
+stored, review that plan and override it, and render scenes to MP4 in the
+browser, one at a time or as a whole batch downloaded as a zip. Four of the six
+planned templates draw today (`chart-full`, `character-left`,
+`character-center`, `text-card`). **Not one `/check verify` box is ticked**, so
+everything here typechecks and is unit covered rather than watched running. The
+scope is the live plan; check it before trusting this line.
 
 ## Key files
 | File | Owns |
@@ -36,6 +40,16 @@ trusting this line.
 | `src/app/api/projects/[id]/character/` | Generate (streamed, Edge), regenerate, commit, and signed read URLs |
 | `src/app/api/blob/upload/route.ts` | Presigns one character asset PUT. **The authorization inside `getSignedToken` is the whole security of this route** — without it this is an anonymous write endpoint into the store |
 | `src/app/dashboard/[id]/character-panel.tsx` | The pipeline's whole browser half: reads the stream, cuts out, trims, uploads straight to storage, and owns the review gate |
+| `src/lib/render/renderable.ts` | **The app's only `switch` on template.** The page preview and the encoder both draw through `drawRenderable`, which is what stops what a creator judges on screen differing from what lands in the file. A new template is one case here |
+| `src/lib/render/context.ts` | The narrow 2D surface every template draws through, assignable from both canvas context types. One interface for all templates, so the tests can pass a recorder and assert draw calls with no canvas and no browser |
+| `src/lib/render/` (rest) | `layout.ts` and `timing.ts` (the frame math), `capability.ts` (the WebCodecs probe), `chart-label.ts` (AC-34), `clip-filename.ts` (AC-33), `zip.ts`, and the four template drawers |
+| `src/lib/render/types.ts` | The page to worker contract. Lives here, not in the worker, so a client component can import the types without pulling `mediabunny` into the page bundle |
+| `src/lib/render/run-render.ts` | The one driver for a render worker, shared by the single scene button and the batch. Always terminates the worker and always settles the promise; the batch depends on both |
+| `src/workers/render-worker.ts` | The encode itself: draws to an `OffscreenCanvas` and hands frames straight to `mediabunny`. Owns nothing else — no filename, no ledger, no idea what a project is |
+| `src/lib/sentry-scrub.ts` | Removes the request body from every Sentry event. Pure and unit tested, because an untested privacy guard is a comment. See Conventions |
+| `src/lib/scene-limits.ts` | Constants the browser needs out of `scenes.ts`, which is `server-only`. See Conventions |
+| `src/app/api/projects/[id]/scenes/[sceneId]/route.ts` | Scene Studio's `PATCH`. Ownership is enforced **inside** the `UPDATE`, see Conventions |
+| `src/app/dashboard/[id]/scene-overrides.tsx`, `scene-preview.tsx`, `batch-export.tsx` | Scene Studio: the two overrides, the live canvas preview, and the render everything to a zip flow |
 
 ## Commands
 ```bash
@@ -61,6 +75,50 @@ npm -w @repo/broll typecheck
   white on yellow fails contrast.
 - Rendering is client-side (WebCodecs in a Worker) by design: no render queue,
   no ffmpeg, and export is free to the user because it costs us nothing.
+- **Sentry never sends a request body from this app, and it is stopped twice on
+  purpose.** `sendDefaultPii` is off and `maxRequestBodySize` is `none`, so a
+  body is never collected; `beforeSend` then scrubs `request.data`, the cookies
+  and the auth header anyway. The second removal is not redundant — it survives
+  an SDK default changing, an integration attaching request data on its own, and
+  someone later turning PII on for a good reason without knowing that a
+  character generate `POST` carries a photograph of someone's face in its body.
+  That is AC-22, and it would break with nothing failing. Do not turn
+  `sendDefaultPii` on. Query strings are stripped from event URLs for the same
+  family of reason: a signed asset URL carries its token there. There is
+  deliberately **no Sentry feedback widget** here, unlike Rough Cut; a free text
+  box on a page holding someone's face is not a control this app should offer.
+- **A client component may not import from a `server-only` module, not even for
+  a constant.** `scenes.ts` carries `import "server-only"`, so
+  `MAX_OVERLAY_TEXT_CHARS` lives in the dependency free `scene-limits.ts` and
+  both sides import that. Same shape one level down: the page to worker types
+  live in `render/types.ts` rather than in the worker, or importing them would
+  drag `mediabunny` and the worker's globals into the page bundle. The build
+  refuses in both cases, which is the good outcome, but the fix is always this
+  one. Rough Cut has `blob-path.ts` and `transcript-limits.ts` for the same
+  reason.
+- **Scene Studio edits exactly two fields, and that is a product rule, not a
+  backlog.** A scene's timings come from the utterance it cited and its chart
+  only exists because it survived the honesty check against the transcript, so
+  both are measured rather than proposed. Making either editable would let a
+  creator put back a number the app had just refused to invent, which is the one
+  thing this product must never allow. Excluding a scene sets a flag and never
+  deletes, so changing your mind costs nothing.
+- **A scene write proves ownership inside the statement, never before it.** The
+  `UPDATE` joins through `broll_projects` on `user_id`, so another user's scene
+  id changes nothing and answers 404. Reading the row to check the owner and
+  then updating is two statements racing, and a 403 would confirm the scene
+  exists.
+- **Rate limiters here fail closed on money paths and open on the edit path.**
+  `writeRateLimit` is the only `failClosed: false` one in the app: it guards two
+  column writes that spend nothing at any vendor, so a Redis blip blocking a
+  creator from excluding a scene would break the review flow to protect nothing.
+- **The scene duration window has one home**, `MIN_SCENE_DURATION_MS` and
+  `MAX_SCENE_DURATION_MS` in `scene-schema.ts`. The prompt's field description
+  interpolates them, the clamp reads them, and the tests assert against them
+  rather than literals, so the range moves in a single edit. Four to ten seconds
+  since 2026-08-12, raised from eight at the engineer's call: b-roll is a
+  cutaway, so the ceiling is bounded by what a talking head edit can absorb
+  rather than by anything technical.
 - **No image byte crosses one of our Functions on a path the browser can take
   itself** (spec `0004` AC-17). Generated PNGs go browser to store by presigned
   PUT, and the review gate reads them by presigned GET. A route that proxies
@@ -156,6 +214,39 @@ npm -w @repo/broll typecheck
   model and WASM from `staticimgly.com` on every cold browser. `publicPath` can
   point at self hosted files instead. Spec `0001` does not record this as an
   accepted dependency.
+- **Never hardcode one H.264 profile when probing WebCodecs.** Phase 0's spike
+  probed `avc1.42001f`, Baseline level 3.1, which caps at 1280x720 and therefore
+  cannot express 1080p at all. The failure read as "this browser has no
+  WebCodecs" when the real answer was "we asked an invalid question", which is a
+  far more expensive conclusion to get wrong: it is the difference between
+  shipping a client side renderer and building a server side fallback nobody
+  needed. `capability.ts` probes a candidate list at the **real output size**
+  and takes the first profile the device accepts.
+- **A live canvas preview beside editable fields is the exact shape that
+  produced Phase 0's two worst rendering bugs** (spec `0001` rationale §2.9,
+  worth reading before touching `scene-preview.tsx`). First, reset the transform
+  and `globalAlpha` before every repaint: one stray value left behind makes the
+  repaint itself translucent and the previous frame bleeds through, which looks
+  like a compositing bug anywhere but where it is. Second, the render loop must
+  mount **once** and read the scene through refs, not dependencies. Listing an
+  editable field there tears the loop down on every keystroke, and React's dev
+  double invoke then leaves two loops driving one canvas. Refs are synced in an
+  effect, since writing one during render is not allowed.
+- **Scenes render one at a time, and that is not a simplification to optimize
+  away.** Encoding is GPU and memory heavy, so a dozen encoders racing on a
+  laptop is both slower than doing them in order and far likelier to kill the
+  tab. One scene failing does not stop a batch (AC-32): finished clips are held
+  between runs so a retry zips alongside the ones that already worked, and clips
+  are zipped in **plan order**, not completion order.
+- **The zip writer is ours, store only, and deliberately not a dependency.** The
+  payload is MP4, already compressed, so deflate would burn CPU to save nothing;
+  what is left is headers and offsets. Store only also makes extraction a byte
+  slice, which is why `zip.test.ts` reads the archive back with no library at
+  all and checks the CRC exactly as an unzip would. Two details in there are
+  load bearing: the size guard runs **before** any CRC is computed (hashing
+  first walked every byte of an archive about to be refused, and hung the suite),
+  and the DOS timestamp is a fixed constant rather than the clock, so the same
+  clips zip to a byte identical archive twice.
 
 ## Agent skills
 - Declined: `@vercel/blob` — the community skills found (jezweb, secondsky) could
@@ -165,6 +256,13 @@ npm -w @repo/broll typecheck
   background removal API, not the in browser library this app uses.
 - Declined: Vercel MCP server — the `vercel` CLI already covers reading project
   env vars and store metadata, with no connector setup.
+- Declined: `mediabunny` — searched 2026-08-13, three candidates, none a fit.
+  Two are Remotion specific (`remotion-dev/skills@mediabunny`,
+  `remotion-dev/remotion@upgrade-mediabunny`) and this app uses no Remotion; the
+  only dedicated one (`kevinrss01/mediabunny-skill`) had two installs and
+  unconfirmed contents. No MCP server exists for it. What this repo actually
+  relies on is the `canEncodeVideo` probe and the `Output` / `CanvasSource` /
+  `Mp4OutputFormat` path, all read from the installed types.
 
 ## Related specs
 - `docs/specs/broll/0001-high-level-design/index.md` — how this app sits in the

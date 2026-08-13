@@ -32,10 +32,10 @@ any, and mark a feature `done` when you decide it is._
 | 2 | Skeleton: workspace, schema, transcript contract | Phase 1 | done |
 | 3 | Character pipeline | Phase 2 | in-progress |
 | 4 | Scene planner | Phase 3 | in-progress |
-| 5 | One template end to end | Phase 4 | planned |
-| 6 | Remaining templates + Scene Studio | Phase 5 | planned |
-| 7 | Batch export, zip, credits | Phase 6 | planned |
-| 8 | Production deploy and error reporting | Deploy | planned |
+| 5 | One template end to end | Phase 4 | in-progress |
+| 6 | Remaining templates + Scene Studio | Phase 5 | in-progress |
+| 7 | Batch export, zip, credits | Phase 6 | in-progress |
+| 8 | Production deploy and error reporting | Deploy | in-progress |
 
 **The next slice is the live verification of Phases 2 and 3.** Features 3 and 4
 are both built and both stopped at the same wall: no Gemini image call made by
@@ -55,6 +55,15 @@ human judgement of the reconstructed prompt. Everything after Phase 4 is
 repetition rather than discovery, and building it on money paths and a prompt
 nobody has watched run is how a $2.00 charge ships against output no one has
 judged.
+
+> **That is not what happened, and the paragraph above is kept as written rather
+> than quietly corrected.** Between 2026-08-12 and 2026-08-13, Phases 4, 5 and 6
+> were all built (PRs #141, #142, #143) and Sentry was wired (PR #144), while
+> those four boxes stayed open. So the advice was sound and was overtaken, not
+> withdrawn: the render path is now large, and every one of the four
+> verifications it was waiting on is still owed. Reconciled by `/sync` on
+> 2026-08-13, which is also when this scope was first ticked since #140 — three
+> shipped features had been sitting here written as `planned`.
 
 ## Phase 0
 
@@ -562,49 +571,210 @@ that, and the Interactions API does not yet document an equivalent.
 
 ## Phase 4
 
-### 5. One template end to end · planned
+### 5. One template end to end · in-progress
 
 **Intent**: Prove the whole spine — plan to composited scene to downloadable MP4 —
 on exactly one template.
 **Done when**: `chart-full` renders one scene to a file a creator can drag into an
 NLE.
 
-- [ ] Build it: /develop chart-full end to end (AC-29 to AC-34)
+- [x] Build it: /develop chart-full end to end (AC-29 to AC-34). Landed
+      2026-08-12 in PR #141, in two halves. The pure half first, so it runs under
+      vitest rather than only in a browser: `clip-filename.ts` (AC-33),
+      `chart-label.ts` (AC-34) and `capability.ts` (AC-29). Then the drawing and
+      the encode: [apps/broll/src/lib/render/](../../../apps/broll/src/lib/render/)
+      and [apps/broll/src/workers/render-worker.ts](../../../apps/broll/src/workers/render-worker.ts),
+      with the button in
+      [render-scene-button.tsx](../../../apps/broll/src/app/dashboard/%5Bid%5D/render-scene-button.tsx).
+      Frames are drawn to an `OffscreenCanvas` and handed straight to the
+      encoder, which is exactly the path Phase 0's spike de-risked.
+
+      Three things the build settled that are worth carrying. `clip-filename.ts`
+      derives its timecode from `formatTimecode` in `@repo/transcript` rather
+      than doing the minutes arithmetic locally, because a clip labelled 2:35
+      belonging at 2:35 is the whole product promise and a second implementation
+      of that rounding is what the repo rule forbids. Writing its test taught us
+      the rule rounds to the nearest frame rather than truncating, so a label
+      crosses a second at the half frame; the test documents that now. And AC-29
+      is checked **at load**, in front of the spend rather than in front of the
+      encoder, which is what its wording actually asks for.
 - [ ] Verify it: /check verify chart-full end to end
 
 Deliberately narrow. Everything after this is repetition rather than discovery.
 
 ## Phase 5
 
-### 6. Remaining templates + Scene Studio · planned
+### 6. Remaining templates + Scene Studio · in-progress
 
 **Intent**: The review UI, and the five templates that make the output worth
 shipping.
 **Done when**: a user can review, override, exclude, and manually add scenes.
 
-- [ ] Design it (spec): `/architect scene studio`
-- [ ] Build it: /develop scene studio
-- [ ] Verify it: /check verify scene studio
+- [x] Design it (spec)
+      [0005](../../specs/broll/0005-scene-studio/index.md), 2026-08-13. Written
+      after part of the feature had already shipped, which is why it both records
+      the build's own reasoning and corrects it. **The rule is one line:
+      presentation is editable, claims are not.** A creator may change a scene's
+      template, emotion, caption and inclusion, and may add and delete their own
+      scenes; chart values and timings are never writable, because both are traced
+      back to the transcript and editing them would let someone publish a number
+      the app had just refused to invent. The shipped build reached that answer
+      through a wider test and locked presentation too.
+
+      Cross checked on a second model, which found eleven gaps, two load bearing,
+      both verified against the code before being accepted. The serious one was
+      self inflicted: the plan re-run warning counted `overlay_text` and
+      `included` as proxies for "the creator edited this", and both are false. The
+      planner writes the model's caption at plan time, and AC-85 in this same spec
+      makes the planner write `included = false` for surplus scenes. A creator who
+      restyled ten scenes would have been told nothing was at risk immediately
+      before a re-run deleted all of it. `user_edited_at` now records the fact
+      rather than inferring it, which is why the migration carries two columns.
+- [x] Build it: /develop scene studio. Finished 2026-08-13 against spec
+      [0005](../../specs/broll/0005-scene-studio/index.md); the first two
+      changes had shipped ahead of that spec, both 2026-08-12.
+      PR #142 added the `character-center` and `text-card` templates, taking the
+      reference project from 4 of 12 scenes renderable to 11 of 12; the one left
+      is a `chart-full` scene whose chart the honesty check dropped, which is a
+      data outcome rather than a missing renderer. PR #143 made the plan
+      editable: exclude a scene, and override the burned in caption. Code in
+      [apps/broll/src/lib/render/](../../../apps/broll/src/lib/render/),
+      [scenes.ts](../../../apps/broll/src/lib/scenes.ts), the
+      [scene PATCH route](../../../apps/broll/src/app/api/projects/%5Bid%5D/scenes/%5BsceneId%5D/route.ts)
+      and
+      [scene-overrides.tsx](../../../apps/broll/src/app/dashboard/%5Bid%5D/scene-overrides.tsx)
+      plus [scene-preview.tsx](../../../apps/broll/src/app/dashboard/%5Bid%5D/scene-preview.tsx).
+
+      **Four overrides now, and still not the two that matter.** The build of
+      2026-08-12 allowed exactly two and called that a product rule; spec 0005
+      found the rule was drawn in the wrong place and widened it. A creator may
+      now also change a scene's template and its emotion, because neither
+      carries a claim. What stayed locked is what the original reasoning
+      actually justified: a scene's timings come from the utterance it cited,
+      and its chart only exists because the honesty check traced it back to the
+      transcript. Both are measured rather than proposed, and making either
+      editable would let a creator put back a number the app had just refused to
+      invent. The lock is now a property of the route's shape rather than of a
+      list someone has to keep current: the PATCH schema names four fields and
+      rejects any body carrying another.
+
+      **The rest of the build, 2026-08-13.** Migration `0017` adds
+      `chart_rejection_reason` and `user_edited_at`, both nullable, applied to
+      the dev branch and confirmed live by querying
+      `information_schema.columns`, not by reading the migration file. New code
+      in [scene-templates.ts](../../../apps/broll/src/lib/scene-templates.ts),
+      [citation.ts](../../../apps/broll/src/lib/citation.ts), the
+      [scenes POST route](../../../apps/broll/src/app/api/projects/%5Bid%5D/scenes/route.ts),
+      [add-scene.tsx](../../../apps/broll/src/app/dashboard/%5Bid%5D/add-scene.tsx)
+      and
+      [scene-citation.tsx](../../../apps/broll/src/app/dashboard/%5Bid%5D/scene-citation.tsx).
+      B-roll went from 433 tests to 456; lint, typecheck and the full repo suite
+      are green and `next build` compiles both scene routes.
+
+      **Two things the build settled that the spec did not.** The chart
+      rejection reason is attributed to a scene **at assembly**, inside
+      `assembleScene`, rather than matched back afterwards by `utteranceIndex`
+      as the spec describes. That is strictly stronger and cannot mis-attach:
+      the scene being assembled is the one whose chart was dropped, whereas an
+      `utteranceIndex` match is ambiguous the moment two scenes cite the same
+      line and both lose a chart. And `citation.ts` matches figures literally
+      while the honesty check accepts word forms, so a chart citing "three
+      times" is drawn and traced but its number is not emphasised. That is
+      deliberate: the highlight is presentation and decides nothing, and
+      underlining a word as a figure reads more into the sentence than the
+      offsets support.
+
+      **Two tests corrected the code rather than confirming it**, which is worth
+      recording because both had been passing for the wrong reason.
+      `fitTextSize` derived its size range from the margin inset box while the
+      theme documents those ratios as shares of frame height, so every text card
+      rendered smaller than specified. And the test recorder's `measureText`
+      charged a tenth of an em per character, so nothing ever wrapped and the
+      wrapping and shrinking paths were never exercised at all. A `coverHeight`
+      fitting mode added for the full bleed character was then deleted: the test
+      proved a portrait cutout in a landscape frame is already height bound
+      under `contain`, so the two modes are identical for every image this app
+      can generate.
+  - [x] The four renderers, the two overrides that shipped (exclude and caption),
+        and the live preview canvas. PRs #142 and #143.
+  - [x] Migration (`chart_rejection_reason`, `user_edited_at`) plus the editable
+        presentation set: the PATCH route on a closed field list, the per scene
+        template picker, `visual_type` derived server side, `emotion` cleared off
+        a character template, and every write stamping `user_edited_at`
+        (AC-75, AC-76, AC-77, AC-78, AC-87, AC-92, AC-93). Migration `0017`,
+        applied to the dev branch only; production has no b-roll rows and no
+        deploy yet, so it is applied there with the rest of feature 8.
+  - [x] Manual scenes: create from a picked transcript segment, delete restricted
+        to `origin = 'manual'`, the per project cap evaluated inside the insert,
+        and the new fail closed limiter (AC-79, AC-80, AC-81, AC-82, AC-83,
+        AC-91). **The cap is narrower than AC-82 claims, and the code says so
+        rather than the comment repeating the claim.** The count is a subquery
+        of the insert, so no read then write race exists, but under Postgres'
+        default read committed isolation two inserts overlapping inside one
+        statement's execution can still both see the same count. What this
+        closes is every race longer than a statement, which is the shape a
+        double click and a retried request take. The Neon HTTP driver gives each
+        statement its own transaction, so there is no wider one to serialize
+        them in, and a lost race costs one extra row on a path that spends
+        nothing.
+  - [x] The surplus rule at plan time: rank by strength, keep the planner's own
+        target count, uncheck the rest (AC-85). Unchecked, never dropped: the
+        model overshooting the target is not evidence the extras are bad, only
+        that the creator should choose.
+  - [x] The review reads and the three gates: strength on every row, the cited
+        quote with its figures highlighted, the per scene downgrade note, preview
+        on hover, the re-run warning, and the export gate when nothing is included
+        (AC-84, AC-86, AC-88, AC-89, AC-90). The dropped chart count now comes
+        from the column rather than from the last run's response, so the
+        product's central promise survives a page reload, which was the whole
+        reason that column exists.
+- [ ] Verify it: /check verify scene studio, against
+      [verify.md](../../specs/broll/0005-scene-studio/verify.md). Nothing there
+      needs a vendor key or spends money, unlike features 3 and 4.
+- [ ] Test it: /test scene studio
 
 **Read rationale §2.9 before starting.** Scene Studio is a live preview canvas
 beside editable overrides, which is exactly the shape that produced Phase 0's two
-worst rendering bugs.
+worst rendering bugs. **This was read, and it applied.** Both bugs now have
+guards in `scene-preview.tsx`: the transform and alpha reset before every
+repaint, and the render loop mounts once and reads the scene through refs, since
+listing an editable field in its dependencies tears the loop down on every
+keystroke and React's dev double invoke then leaves two loops on one canvas.
 
 ## Phase 6
 
-### 7. Batch export, zip, credits · planned
+### 7. Batch export, zip, credits · in-progress
 
 **Intent**: Turn a reviewed scene list into a folder of files, and close the
 billing loop.
 **Done when**: a user exports a batch, retries a single failure, and tops up
 through the Wallet without leaving the workflow broken.
 
-- [ ] Build it: /develop batch export (AC-35, AC-36)
+- [x] Build it: /develop batch export (AC-35, AC-36). Landed 2026-08-12 in
+      PR #142: render every scene in one go and download them as a zip. Code in
+      [batch-export.tsx](../../../apps/broll/src/app/dashboard/%5Bid%5D/batch-export.tsx),
+      [zip.ts](../../../apps/broll/src/lib/render/zip.ts) and
+      [run-render.ts](../../../apps/broll/src/lib/render/run-render.ts). This is
+      the step the product description actually names: until now a creator
+      pressed twelve buttons and hunted twelve files out of Downloads.
+
+      **AC-32 is the criterion this feature exists for, and it holds**: a run
+      where the fourth clip fails still hands over the other eleven and offers to
+      retry just that one, with its error shown. Finished clips are held between
+      runs so the retry zips alongside them, and clips are zipped in plan order
+      rather than completion order so the archive reads like the timeline.
+
+      **AC-35 and AC-36 are both satisfied, but by absence rather than by new
+      code, so they are worth stating plainly.** Nothing in the render or export
+      path touches the ledger, so rendering and downloading debit nothing
+      (AC-35). The Wallet top-up deep link already existed on the project list,
+      and this app still contains no Stripe integration at all (AC-36). Neither
+      has been driven live.
 - [ ] Verify it: /check verify batch export
 
 ## Deploy
 
-### 8. Production deploy and error reporting · planned
+### 8. Production deploy and error reporting · in-progress
 
 Enrolled by `/scope` on 2026-08-12. Every piece of this already existed as prose
 scattered through feature 2's blocker paragraph and the Phase 2 build notes, and
@@ -618,16 +788,32 @@ pipeline makes.
 Vercel build gates `main` alongside the other three, and an error in a generate
 request reaches Sentry carrying no request body.
 
-- [ ] Wire Sentry into `apps/broll`, **with request body capture off**. There is
-      no Sentry init here today: no `instrumentation.ts` and no
-      `sentry.*.config.ts`, while `apps/rough-cut` carries four such files. So
-      `reportError` forwards to a no-op in this app, and the AC-22 promise (the
-      reference photo exists in no blob, no column and no log line) currently
-      holds partly by accident. A default Sentry setup with body capture on would
-      send a multipart body carrying a face photo on any error thrown during a
-      generate request, with nothing failing and nothing to notice. This is the
-      one item here that is a live risk rather than a launch gate, and it is the
-      reason the row is not simply "deploy it".
+- [x] Wire Sentry into `apps/broll`, **with request body capture off**. Done
+      2026-08-12 in PR #144. This was the one item here that was a live risk
+      rather than a launch gate, and it is the reason the row was never simply
+      "deploy it": before this there was no Sentry init in the app at all, so
+      `reportError` forwarded to a no-op and the AC-22 promise (the reference
+      photo exists in no blob, no column and no log line) held partly by
+      accident.
+
+      **The body is now removed two independent ways**, which is the part worth
+      keeping. `sendDefaultPii` is off and `maxRequestBodySize` is `none`, so a
+      body is never collected; `beforeSend` then scrubs `request.data`, the
+      cookies and the auth header anyway. The second is not redundant: it
+      survives an SDK default changing, an integration attaching request data on
+      its own, and someone later turning PII on for a good reason without
+      knowing that a character generate `POST` carries a photograph of someone's
+      face. The scrubber is pure and unit tested against the exact multipart
+      shape that route receives, because an untested privacy guard is a comment.
+
+      Two smaller calls came with it. Query strings are stripped from event URLs,
+      since this app mints signed asset URLs whose query carries a token. And
+      there is deliberately no Sentry feedback widget here, unlike Rough Cut: a
+      free text box on a page holding someone's face is not a control this app
+      should offer yet. The four Sentry variable names the build reads are in
+      `turbo.json`'s `build` env array, and `.env.example` gained the Sentry
+      block plus `CRON_SECRET`, which it had never documented even though the
+      sweep route hard requires it and answers 500 without it.
 - [ ] Production domain, then register b-roll as a Clerk satellite in the Clerk
       Dashboard. The domain choice is settled: b-roll gets **its own domain**, not
       a subdomain of `myfirstcut.app`, which is what made the Ruff Cut handoff

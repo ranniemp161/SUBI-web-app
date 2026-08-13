@@ -31,7 +31,9 @@ function scene(over: Partial<PlannedScene> = {}): PlannedScene {
     layoutTemplate: "chart-full",
     overlayText: null,
     chart: null,
+    chartRejectionReason: null,
     strength: 0.8,
+    included: true,
     ...over,
   };
 }

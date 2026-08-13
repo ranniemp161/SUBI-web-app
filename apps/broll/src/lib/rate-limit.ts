@@ -80,3 +80,29 @@ export async function writeRateLimit(clerkId: string): Promise<RateLimitResult> 
     failClosed: false,
   });
 }
+
+/**
+ * Per-user cap on creating and deleting scenes (spec `0005` AC-83).
+ *
+ * **Fails closed, unlike the edit path right above it, and the difference is
+ * the point.** Editing toggles two columns on a row that already exists;
+ * creating and deleting bring rows into being and destroy them. The fail open
+ * reasoning is that a Redis blip must not stop a creator excluding a scene,
+ * which is true and does not carry over to a path that can write forty rows a
+ * second into someone's project. There is still no vendor spend here, so this
+ * is about the database rather than about money.
+ *
+ * Thirty a minute is far above deliberate use — a creator adds a handful of
+ * scenes by hand across a whole review — and far below what a script wants.
+ */
+const SCENE_CREATE_LIMIT = 30;
+const SCENE_CREATE_WINDOW_SECONDS = 60;
+
+export async function sceneCreateRateLimit(clerkId: string): Promise<RateLimitResult> {
+  return rateLimit(
+    `broll-scene-create:${clerkId}`,
+    SCENE_CREATE_LIMIT,
+    SCENE_CREATE_WINDOW_SECONDS,
+    { failClosed: true }
+  );
+}
