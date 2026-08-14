@@ -3,6 +3,7 @@ import { redirect, notFound } from "next/navigation";
 import { getAuthorizedDbUser } from "@repo/server-shared/authz";
 import { formatUsd, BROLL_PLAN_RERUN_MICROS } from "@repo/billing/pricing";
 import { getBrollProject } from "@/lib/projects";
+import { getProjectCharacter } from "@/lib/characters";
 import { listBrollScenes } from "@/lib/scenes";
 import { listCharacterAssets } from "@/lib/assets";
 import { checkTranscriptFreshness } from "@/lib/staleness";
@@ -41,7 +42,7 @@ export default async function SceneStudioPage({
   // 403, so a project id is never confirmed to a stranger (AC-95).
   if (!project) notFound();
 
-  const [scenes, freshness, characterAssets] = await Promise.all([
+  const [scenes, freshness, character] = await Promise.all([
     listBrollScenes(user.id, id),
     // Advisory only, and never fatal: a linked project asks Ruff Cut whether
     // the edit has moved since this transcript was taken. It reaches the
@@ -52,8 +53,15 @@ export default async function SceneStudioPage({
       storedFingerprint: project.edlFingerprint,
       token: await getToken(),
     }),
-    listCharacterAssets(user.id, id),
+    // Which character this project draws with, if any. The committed emotions
+    // below are read from it rather than from the project, because the images
+    // belong to the character now.
+    getProjectCharacter(user.id, id),
   ]);
+
+  const characterAssets = character
+    ? await listCharacterAssets(user.id, character.id)
+    : [];
 
   return (
     <SceneStudio

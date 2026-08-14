@@ -14,6 +14,24 @@ const state = vi.hoisted(() => ({
   calls: [] as string[],
   settles: [] as unknown[][],
   reserveArgs: [] as unknown[][],
+  characterCreate: { status: "created", id: "" } as
+    | { status: "created"; id: string }
+    | { status: "cap_reached" },
+  characterCreateArgs: [] as unknown[][],
+  // The attach path (PATCH), which shares this route file.
+  writeAllowed: true,
+  projectRef: null as { characterId: string | null } | null,
+  resolution: { status: "not_found" } as
+    | { status: "ok"; character: { id: string; name: string; style: string } }
+    | { status: "not_found" }
+    | { status: "incomplete" },
+  attached: true,
+  attachArgs: [] as unknown[][],
+  // The character this project currently draws with (GET, and the AC-149
+  // refusal). Null is a project that has none yet.
+  projectCharacter: null as Record<string, unknown> | null,
+  usedBy: [] as { id: string; name: string }[],
+  regensUsed: 0,
 }));
 
 vi.mock("@clerk/nextjs/server", () => ({
@@ -42,6 +60,35 @@ vi.mock("@repo/billing", () => ({
 
 vi.mock("@/lib/projects", () => ({
   getBrollProject: vi.fn(async () => state.project),
+  getProjectCharacterRef: vi.fn(async () => state.projectRef),
+}));
+
+// Partially mocked on purpose: every query is replaced, and the pure claim
+// liveness rule (AC-149) is the real one, because a stub of it would prove the
+// route calls something rather than that a live claim actually refuses.
+vi.mock("@/lib/characters", async () => {
+  const actual =
+    await vi.importActual<typeof import("@/lib/characters")>("@/lib/characters");
+  return {
+    ...actual,
+    createBrollCharacter: vi.fn(async (...args: unknown[]) => {
+      state.calls.push("character");
+      state.characterCreateArgs.push(args);
+      return state.characterCreate;
+    }),
+    resolveCompleteCharacter: vi.fn(async () => state.resolution),
+    attachCharacterIfUnattached: vi.fn(async (...args: unknown[]) => {
+      state.calls.push("attach");
+      state.attachArgs.push(args);
+      return state.attached;
+    }),
+    getProjectCharacter: vi.fn(async () => state.projectCharacter),
+    listProjectsUsingCharacter: vi.fn(async () => state.usedBy),
+  };
+});
+
+vi.mock("@/lib/assets", () => ({
+  regenerationsUsed: vi.fn(async () => state.regensUsed),
 }));
 
 vi.mock("@/lib/rate-limit", () => ({
@@ -49,6 +96,11 @@ vi.mock("@/lib/rate-limit", () => ({
     allowed: state.allowed,
     remaining: 4,
     limit: 5,
+  })),
+  writeRateLimit: vi.fn(async () => ({
+    allowed: state.writeAllowed,
+    remaining: 119,
+    limit: 120,
   })),
 }));
 
@@ -72,7 +124,7 @@ vi.mock("@/lib/character", async () => {
   };
 });
 
-import { POST, runtime, maxDuration } from "./route";
+import { GET, PATCH, POST, runtime, maxDuration } from "./route";
 import { CharacterError, isCharacterConfigured } from "@/lib/character";
 import { isStorageConfigured } from "@/lib/storage";
 
@@ -86,6 +138,7 @@ import { isStorageConfigured } from "@/lib/storage";
  */
 
 const PROJECT_ID = "11111111-1111-1111-1111-111111111111";
+const CHARACTER_ID = "22222222-2222-2222-2222-222222222222";
 
 function photo(bytes = 1000, type = "image/png") {
   return new File([new Uint8Array(bytes)], "me.png", { type });
@@ -116,7 +169,7 @@ async function lines(response: Response): Promise<Record<string, unknown>[]> {
 beforeEach(() => {
   state.clerkId = "user_clerk";
   state.dbUser = { id: "user-db" };
-  state.project = { id: PROJECT_ID, style: "anime" };
+  state.project = { id: PROJECT_ID, name: "Fuel imports", style: "anime" };
   state.allowed = true;
   state.reserve = [];
   state.reclaimed = false;
@@ -124,6 +177,19 @@ beforeEach(() => {
   state.calls = [];
   state.settles = [];
   state.reserveArgs = [];
+  state.characterCreate = { status: "created", id: CHARACTER_ID };
+  state.characterCreateArgs = [];
+  state.writeAllowed = true;
+  state.projectRef = { characterId: null };
+  state.resolution = {
+    status: "ok",
+    character: { id: CHARACTER_ID, name: "Fuel imports", style: "3d-render" },
+  };
+  state.attached = true;
+  state.attachArgs = [];
+  state.projectCharacter = null;
+  state.usedBy = [];
+  state.regensUsed = 0;
   vi.clearAllMocks();
 });
 
@@ -201,9 +267,89 @@ describe("the gates before any money", () => {
   });
 
   it("409s a project whose style is no longer offered", async () => {
-    state.project = { id: PROJECT_ID, style: "watercolour" };
+    state.project = { id: PROJECT_ID, name: "Fuel imports", style: "watercolour" };
     expect((await post()).status).toBe(409);
     expect(state.calls).toEqual([]);
+  });
+
+  it("409s at the character cap, before any charge and any Gemini call (AC-139)", async () => {
+    // The cap is counted inside the insert, so this branch is the loser of that
+    // statement rather than a check that raced it. Hitting it must cost nothing.
+    state.characterCreate = { status: "cap_reached" };
+
+    const response = await post();
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: "CHARACTER_CAP" });
+    expect(state.calls).toEqual(["character"]);
+  });
+});
+
+describe("a paid re-run against a busy character (AC-149)", () => {
+  function character(genClaimAt: Date | null) {
+    return {
+      id: "44444444-4444-4444-4444-444444444444",
+      name: "Fuel imports",
+      style: "anime",
+      genClaimAt,
+      createdAt: new Date(),
+    };
+  }
+
+  it("409s while the project's current character is being redrawn", async () => {
+    state.projectCharacter = character(new Date());
+
+    const response = await post();
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: "CHARACTER_BUSY" });
+    // Nothing is corrupted without this gate — the redraw writes the old
+    // character and the re-run fills a new one. What it protects is the redraw
+    // the creator is watching, on a character this request would detach them
+    // from seconds later. So it must cost nothing: no character row, no hold.
+    expect(state.calls).toEqual([]);
+  });
+
+  it("allows it once the claim has aged past the stale window", async () => {
+    // Ten minutes and a second: the browser that took this claim is gone, and
+    // there is nothing to refund, so the row is free.
+    state.projectCharacter = character(new Date(Date.now() - 601_000));
+    expect((await post()).status).toBe(200);
+  });
+
+  it("allows it on a project whose character has no claim at all", async () => {
+    state.projectCharacter = character(null);
+    expect((await post()).status).toBe(200);
+  });
+
+  it("allows it on a project with no character yet", async () => {
+    state.projectCharacter = null;
+    expect((await post()).status).toBe(200);
+  });
+});
+
+describe("the character the run writes (spec `broll/0007`)", () => {
+  it("creates it before the money is reserved, so the cap costs nothing", async () => {
+    await lines(await post());
+    expect(state.calls.indexOf("character")).toBeLessThan(
+      state.calls.indexOf("reserve")
+    );
+  });
+
+  it("names it from the project and takes the project's style", async () => {
+    // Snapshotted as text. The character carries no reference back, so this is
+    // the only moment the project's name reaches it.
+    await lines(await post());
+    expect(state.characterCreateArgs[0][0]).toEqual({
+      userId: "user-db",
+      name: "Fuel imports",
+      style: "anime",
+    });
+  });
+
+  it("streams the character id as the opening line, before any turn", async () => {
+    // The browser hands this back to `commit`. Without it first, a run that
+    // died partway would leave the browser unable to name what it had bought.
+    const parsed = await lines(await post());
+    expect(parsed[0]).toEqual({ characterId: CHARACTER_ID });
   });
 });
 
@@ -220,7 +366,7 @@ describe("reserve, generate, settle (AC-14)", () => {
     const response = await post();
     expect(response.status).toBe(402);
     expect(await response.json()).toMatchObject({ code: "INSUFFICIENT_CREDITS" });
-    expect(state.calls).toEqual(["reserve"]);
+    expect(state.calls).toEqual(["character", "reserve"]);
   });
 
   it("409s a second concurrent Generate rather than charging twice (AC-15)", async () => {
@@ -232,7 +378,7 @@ describe("reserve, generate, settle (AC-14)", () => {
     const response = await post();
     expect(response.status).toBe(409);
     expect(await response.json()).toMatchObject({ code: "ALREADY_RUNNING" });
-    expect(state.calls).toEqual(["reserve", "reclaim"]);
+    expect(state.calls).toEqual(["character", "reserve", "reclaim"]);
   });
 
   it("retries once after reclaiming a hold that really was abandoned", async () => {
@@ -241,7 +387,12 @@ describe("reserve, generate, settle (AC-14)", () => {
 
     const response = await post();
     expect(response.status).toBe(200);
-    expect(state.calls.slice(0, 3)).toEqual(["reserve", "reclaim", "reserve"]);
+    expect(state.calls.slice(0, 4)).toEqual([
+      "character",
+      "reserve",
+      "reclaim",
+      "reserve",
+    ]);
   });
 
   it("streams one line per variant, then a terminal line carrying the cost", async () => {
@@ -249,10 +400,11 @@ describe("reserve, generate, settle (AC-14)", () => {
 
     const variants = parsed.filter((line) => typeof line.png === "string");
     expect(variants).toHaveLength(6);
-    // The pathname is minted server side and travels outward only (AC-70).
+    // The pathname is minted server side and travels outward only (AC-70), and
+    // it names the character rather than the project (AC-141).
     for (const variant of variants) {
       expect(variant.pathname).toMatch(
-        new RegExp(`^broll/${PROJECT_ID}/[a-z]+-1-[0-9a-f]{16}\\.png$`)
+        new RegExp(`^broll/characters/${CHARACTER_ID}/[a-z]+-1-[0-9a-f]{16}\\.png$`)
       );
     }
 
@@ -285,5 +437,182 @@ describe("reserve, generate, settle (AC-14)", () => {
     const terminal = (await lines(response)).pop();
     expect(terminal).toMatchObject({ refunded: true });
     expect(terminal?.error).toContain("not been charged");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET — what this project draws with, and who else draws with it (AC-133).
+// ---------------------------------------------------------------------------
+
+function get() {
+  return GET(new Request("http://localhost:3003/api/projects/x/character"), {
+    params: Promise.resolve({ id: PROJECT_ID }),
+  });
+}
+
+describe("GET — the character and its blast radius (AC-133)", () => {
+  const OTHER_PROJECT = "55555555-5555-5555-5555-555555555555";
+
+  beforeEach(() => {
+    state.projectCharacter = {
+      id: CHARACTER_ID,
+      name: "Fuel imports",
+      style: "anime",
+      genClaimAt: null,
+      createdAt: new Date("2026-08-14T00:00:00Z"),
+    };
+  });
+
+  it("names every project drawing with this character, this one included", async () => {
+    // The control shows the *others*; the full list is what makes the count
+    // sayable without a second request, and what the delete refusal will need.
+    state.usedBy = [
+      { id: PROJECT_ID, name: "Fuel imports" },
+      { id: OTHER_PROJECT, name: "Q3 recap" },
+    ];
+
+    const response = await get();
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      character: { id: CHARACTER_ID, name: "Fuel imports", busy: false },
+      usedBy: [
+        { id: PROJECT_ID, name: "Fuel imports" },
+        { id: OTHER_PROJECT, name: "Q3 recap" },
+      ],
+    });
+  });
+
+  it("answers the allowance from the character, not from the project (AC-131)", async () => {
+    // Reusing a face on a second project does not refill its redraws: this
+    // number is derived from the character's own rows.
+    state.regensUsed = 5;
+    expect((await (await get()).json()).regenerations).toEqual({
+      used: 5,
+      left: 7,
+      max: 12,
+    });
+  });
+
+  it("reports a live claim as busy", async () => {
+    state.projectCharacter = { ...state.projectCharacter, genClaimAt: new Date() };
+    expect((await (await get()).json()).character.busy).toBe(true);
+  });
+
+  it("answers 200 with no character for a project that has none", async () => {
+    // Not a 404: the project exists and is the caller's. Only a project that is
+    // not theirs is indistinguishable from a missing one.
+    state.projectCharacter = null;
+    const response = await get();
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      character: null,
+      usedBy: [],
+      regenerations: null,
+    });
+  });
+
+  it("404s a project that is not the caller's", async () => {
+    state.projectRef = null;
+    expect((await get()).status).toBe(404);
+  });
+
+  it("401s without a session", async () => {
+    state.clerkId = null;
+    expect((await get()).status).toBe(401);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PATCH — attaching a character the creator already owns (spec `broll/0007`
+// AC-122 to AC-124, AC-147, AC-148). It shares this file with the generate
+// route because it is the same resource, one free and one paid.
+// ---------------------------------------------------------------------------
+
+function patch(body: unknown) {
+  return PATCH(
+    new Request("http://localhost:3003/api/projects/x/character", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+    { params: Promise.resolve({ id: PROJECT_ID }) }
+  );
+}
+
+describe("PATCH — attach", () => {
+  it("attaches a complete character the caller owns, and charges nothing", async () => {
+    const response = await patch({ characterId: CHARACTER_ID });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      character: { id: CHARACTER_ID, name: "Fuel imports", style: "3d-render" },
+    });
+    expect(state.attachArgs).toEqual([["user-db", PROJECT_ID, CHARACTER_ID]]);
+    // The money calls are the same mocks the generate route uses, so an empty
+    // list here is the whole of AC-124: no reserve, no settle, no ledger row.
+    expect(state.calls).toEqual(["attach"]);
+  });
+
+  it("401s without a session", async () => {
+    state.clerkId = null;
+    expect((await patch({ characterId: CHARACTER_ID })).status).toBe(401);
+    expect(state.calls).toEqual([]);
+  });
+
+  it("422s a body with no usable character id, before any query", async () => {
+    // The column is `uuid`: an unchecked string is a database error rather than
+    // the refusal it is.
+    for (const body of [{}, { characterId: 42 }, { characterId: "../../else" }]) {
+      const response = await patch(body);
+      expect(response.status).toBe(422);
+    }
+    expect(state.calls).toEqual([]);
+  });
+
+  it("404s a project that is not the caller's", async () => {
+    state.projectRef = null;
+    expect((await patch({ characterId: CHARACTER_ID })).status).toBe(404);
+    expect(state.calls).toEqual([]);
+  });
+
+  it("409s a project that already has a character — there is no swap (AC-123)", async () => {
+    state.projectRef = { characterId: "99999999-9999-4999-8999-999999999999" };
+    const response = await patch({ characterId: CHARACTER_ID });
+
+    expect(response.status).toBe(409);
+    expect((await response.json()).code).toBe("ALREADY_ATTACHED");
+    expect(state.calls).toEqual([]);
+  });
+
+  it("404s another user's character, exactly like a missing one (AC-143)", async () => {
+    state.resolution = { status: "not_found" };
+    expect((await patch({ characterId: CHARACTER_ID })).status).toBe(404);
+    expect(state.calls).toEqual([]);
+  });
+
+  it("409s a five of six character rather than trusting the picker (AC-147)", async () => {
+    state.resolution = { status: "incomplete" };
+    const response = await patch({ characterId: CHARACTER_ID });
+
+    expect(response.status).toBe(409);
+    expect((await response.json()).code).toBe("INCOMPLETE");
+    expect(state.calls).toEqual([]);
+  });
+
+  it("409s when the atomic attach loses to a concurrent one", async () => {
+    // The read above it says the project has no character; this says another
+    // request attached one in between. The refusal is the same either way.
+    state.attached = false;
+    const response = await patch({ characterId: CHARACTER_ID });
+
+    expect(response.status).toBe(409);
+    expect((await response.json()).code).toBe("ALREADY_ATTACHED");
+  });
+
+  it("429s over the write limiter, which fails open (AC-140)", async () => {
+    state.writeAllowed = false;
+    expect((await patch({ characterId: CHARACTER_ID })).status).toBe(429);
+    expect(state.calls).toEqual([]);
   });
 });

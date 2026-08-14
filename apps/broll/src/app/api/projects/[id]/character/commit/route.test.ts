@@ -7,13 +7,16 @@ const state = vi.hoisted(() => ({
   clerkId: "user_clerk" as string | null,
   dbUser: { id: "user-db" } as { id: string } | null,
   project: null as Record<string, unknown> | null,
+  character: null as Record<string, unknown> | null,
   holdMicros: 2_000_000 as number | null,
   stored: [] as Record<string, unknown>[],
+  assetCount: 0,
   superseded: [] as string[],
   sizes: new Map<string, number | null>(),
   settles: [] as unknown[][],
   releases: [] as unknown[][],
   writes: [] as unknown[][],
+  attaches: [] as unknown[][],
   deleted: [] as string[],
   swept: [] as unknown[][],
 }));
@@ -30,9 +33,6 @@ vi.mock("@repo/billing", () => ({
   settleBrollHold: vi.fn(async (...args: unknown[]) => {
     state.settles.push(args);
   }),
-  releaseBrollClaimQuietly: vi.fn(async (...args: unknown[]) => {
-    state.releases.push(args);
-  }),
 }));
 
 vi.mock("@/lib/projects", () => ({
@@ -42,8 +42,22 @@ vi.mock("@/lib/projects", () => ({
   ),
 }));
 
+vi.mock("@/lib/characters", () => ({
+  getBrollCharacter: vi.fn(async () => state.character),
+  attachCharacterToProject: vi.fn(async (...args: unknown[]) => {
+    state.attaches.push(args);
+    return true;
+  }),
+  // A redraw's claim is on the character now, so this is where it is given back
+  // (spec `broll/0007` AC-132).
+  releaseCharacterClaimQuietly: vi.fn(async (...args: unknown[]) => {
+    state.releases.push(args);
+  }),
+}));
+
 vi.mock("@/lib/assets", () => ({
   listCharacterAssets: vi.fn(async () => state.stored),
+  countCharacterAssets: vi.fn(async () => state.assetCount),
   storeCharacterAssets: vi.fn(async (...args: unknown[]) => {
     state.writes.push(args);
     return { stored: (args[1] as unknown[]).length, superseded: state.superseded };
@@ -78,10 +92,11 @@ import { CHARACTER_EMOTIONS } from "@/lib/emotions";
  */
 
 const PROJECT_ID = "11111111-1111-1111-1111-111111111111";
-const OTHER_PROJECT_ID = "22222222-2222-2222-2222-222222222222";
+const CHARACTER_ID = "33333333-3333-3333-3333-333333333333";
+const OTHER_CHARACTER_ID = "22222222-2222-2222-2222-222222222222";
 
 function pathFor(emotion: string, attempt = 1) {
-  return `broll/${PROJECT_ID}/${emotion}-${attempt}-0123456789abcdef.png`;
+  return `broll/characters/${CHARACTER_ID}/${emotion}-${attempt}-0123456789abcdef.png`;
 }
 
 function fullSet(attempt = 1) {
@@ -93,12 +108,13 @@ function fullSet(attempt = 1) {
   }));
 }
 
-function post(body: unknown, id = PROJECT_ID) {
+/** Every commit names the character it is storing against (spec `broll/0007`). */
+function post(body: Record<string, unknown>, id = PROJECT_ID) {
   return POST(
     new Request("http://localhost:3003/api/projects/x/character/commit", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ characterId: CHARACTER_ID, ...body }),
     }),
     { params: Promise.resolve({ id }) }
   );
@@ -108,13 +124,16 @@ beforeEach(() => {
   state.clerkId = "user_clerk";
   state.dbUser = { id: "user-db" };
   state.project = { id: PROJECT_ID, style: "anime" };
+  state.character = { id: CHARACTER_ID, name: "Fuel imports", style: "anime" };
   state.holdMicros = 2_000_000;
   state.stored = [];
+  state.assetCount = 0;
   state.superseded = [];
   state.sizes = new Map();
   state.settles = [];
   state.releases = [];
   state.writes = [];
+  state.attaches = [];
   state.deleted = [];
   state.swept = [];
   vi.clearAllMocks();
@@ -132,14 +151,36 @@ describe("authorization", () => {
     state.project = null;
     expect((await post({ mode: "set", assets: fullSet() })).status).toBe(404);
   });
+
+  it("404s a character this user does not own, rather than 403 (AC-143)", async () => {
+    // Same doctrine one table over: another user's character id is
+    // indistinguishable from one that does not exist.
+    state.character = null;
+    const response = await post({ mode: "set", assets: fullSet() });
+    expect(response.status).toBe(404);
+    expect(state.writes).toHaveLength(0);
+  });
+
+  it("422s a commit that names no character at all", async () => {
+    const response = await POST(
+      new Request("http://localhost:3003/api/projects/x/character/commit", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ mode: "set", assets: fullSet() }),
+      }),
+      { params: Promise.resolve({ id: PROJECT_ID }) }
+    );
+    expect(response.status).toBe(422);
+    expect(state.writes).toHaveLength(0);
+  });
 });
 
-describe("pathname validation (AC-70)", () => {
-  it("rejects a well formed pathname belonging to another project", async () => {
+describe("pathname validation (AC-70, AC-141)", () => {
+  it("rejects a well formed pathname belonging to another character", async () => {
     // The case that actually matters: not a malformed string, but a real path
-    // that is simply not this project's.
+    // that is simply not this character's.
     const assets = fullSet();
-    assets[2].pathname = `broll/${OTHER_PROJECT_ID}/surprised-1-0123456789abcdef.png`;
+    assets[2].pathname = `broll/characters/${OTHER_CHARACTER_ID}/surprised-1-0123456789abcdef.png`;
 
     const response = await post({ mode: "set", assets });
     expect(response.status).toBe(403);
@@ -147,10 +188,13 @@ describe("pathname validation (AC-70)", () => {
   });
 
   it.each([
-    `broll/${PROJECT_ID}/../${OTHER_PROJECT_ID}/neutral-1-0123456789abcdef.png`,
-    `broll/${PROJECT_ID}/nested/neutral-1-0123456789abcdef.png`,
-    `broll/${PROJECT_ID}/neutral-1-0123456789abcdef.jpg`,
-    `projects/${PROJECT_ID}/neutral-1-0123456789abcdef.png`,
+    `broll/characters/${CHARACTER_ID}/../${OTHER_CHARACTER_ID}/neutral-1-0123456789abcdef.png`,
+    `broll/characters/${CHARACTER_ID}/nested/neutral-1-0123456789abcdef.png`,
+    `broll/characters/${CHARACTER_ID}/neutral-1-0123456789abcdef.jpg`,
+    `projects/${CHARACTER_ID}/neutral-1-0123456789abcdef.png`,
+    // The old project shaped path, refused even though the id in it is this
+    // caller's character (AC-141). The clean break is structural here.
+    `broll/${CHARACTER_ID}/neutral-1-0123456789abcdef.png`,
   ])("rejects %s and stores nothing", async (pathname) => {
     const assets = fullSet();
     assets[0].pathname = pathname;
@@ -218,6 +262,21 @@ describe("the money boundary", () => {
       PROJECT_ID,
       { status: "generated", costMicros: 804_000 },
     ]);
+
+    // The project now points at the character it just filled (AC-128).
+    expect(state.attaches).toEqual([["user-db", PROJECT_ID, CHARACTER_ID]]);
+  });
+
+  it("409s a set written over a character that already holds one", async () => {
+    // A second set over a character other projects may already draw with is
+    // what the paid re-run's fork exists to avoid.
+    state.assetCount = CHARACTER_EMOTIONS.length;
+
+    const response = await post({ mode: "set", assets: fullSet(2) });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: "NOT_FRESH" });
+    expect(state.writes).toHaveLength(0);
+    expect(state.settles).toHaveLength(0);
   });
 
   it("clamps an implausible cost figure and ignores a missing one", async () => {
@@ -258,10 +317,10 @@ describe("the money boundary", () => {
 
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ settled: false });
-    // Free (AC-64) — and the claim it took so no set run could race it is
-    // released here (AC-72).
+    // Free (AC-64) — and the claim it took so nothing else could write these
+    // six rows is released here, on the **character** (AC-72, AC-132).
     expect(state.settles).toHaveLength(0);
-    expect(state.releases).toEqual([[PROJECT_ID]]);
+    expect(state.releases).toEqual([["user-db", CHARACTER_ID]]);
     expect((state.writes[0] as unknown[])[2]).toBe("variant");
   });
 });
@@ -284,6 +343,30 @@ describe("idempotency (AC-71)", () => {
 
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ repeat: true, settled: false });
+    expect(state.writes).toHaveLength(0);
+    expect(state.settles).toHaveLength(0);
+  });
+
+  it("attaches on the repeat branch, so a died-before-attach commit repairs itself (AC-146)", async () => {
+    // The failure this closes: a first call stored the assets and settled the
+    // hold, then died before pointing the project at the character. Without the
+    // attach on this branch every retry returns early and the creator is left
+    // holding a character they paid for that no project uses.
+    state.stored = CHARACTER_EMOTIONS.map((emotion) => ({
+      emotion,
+      pathname: pathFor(emotion),
+      width: 700,
+      height: 900,
+      byteSize: 100_000,
+      attempt: 1,
+    }));
+    state.holdMicros = null;
+
+    const response = await post({ mode: "set", assets: fullSet() });
+
+    expect(response.status).toBe(200);
+    expect(state.attaches).toEqual([["user-db", PROJECT_ID, CHARACTER_ID]]);
+    // Idempotent: nothing was stored again and no money moved a second time.
     expect(state.writes).toHaveLength(0);
     expect(state.settles).toHaveLength(0);
   });
@@ -323,7 +406,7 @@ describe("replacement and orphans", () => {
     expect(state.writes).toHaveLength(1);
   });
 
-  it("sweeps unreferenced objects under the project prefix (AC-73)", async () => {
+  it("sweeps unreferenced objects under the character prefix (AC-73, AC-144)", async () => {
     state.stored = CHARACTER_EMOTIONS.map((emotion) => ({
       emotion,
       pathname: pathFor(emotion, 9),
@@ -335,8 +418,10 @@ describe("replacement and orphans", () => {
 
     await post({ mode: "set", assets: fullSet() });
 
-    const [projectId, referenced] = state.swept[0] as [string, string[]];
-    expect(projectId).toBe(PROJECT_ID);
+    // Scoped to the character, not the project: a sweep still pointed at a
+    // project prefix would list nothing at all and quietly collect nothing.
+    const [characterId, referenced] = state.swept[0] as [string, string[]];
+    expect(characterId).toBe(CHARACTER_ID);
     expect(referenced).toHaveLength(CHARACTER_EMOTIONS.length);
   });
 });

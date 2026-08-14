@@ -9,14 +9,14 @@ import { getAuthorizedDbUser } from "@repo/server-shared/authz";
 import { reportError } from "@repo/server-shared/observability";
 import {
   isCharacterAssetPathname,
-  projectIdFromAssetPathname,
+  characterIdFromAssetPathname,
 } from "@/lib/asset-path";
 import {
   ASSET_CONTENT_TYPE,
   MAX_ASSET_BYTES,
   isStorageConfigured,
 } from "@/lib/storage";
-import { getBrollProject } from "@/lib/projects";
+import { getBrollCharacter } from "@/lib/characters";
 
 /**
  * `POST /api/blob/upload` — hand the browser a presigned PUT for exactly one
@@ -35,8 +35,15 @@ import { getBrollProject } from "@/lib/projects";
  * 1. There is a signed in user with a provisioned `users` row.
  * 2. The pathname is a well formed character asset path, which is what makes
  *    traversal impossible rather than filtered.
- * 3. That path's project belongs to **this** user, checked by an owner scoped
+ * 3. That path's **character** belongs to this user, checked by an owner scoped
  *    query rather than by trusting the id in the string.
+ *
+ * Point 3 is the load bearing change of spec `broll/0007`: the pathname names a
+ * character now, so the id it yields is looked up in `broll_characters` rather
+ * than `broll_projects`. The property that had to survive is unchanged, and it
+ * is the reason the two checks are in this order — a malformed path must yield
+ * no id at all, so there is nothing to look up, and a well formed one must still
+ * be proven to belong to the caller.
  */
 
 /** A presigned PUT is short lived; the browser uses it within seconds of asking. */
@@ -108,16 +115,18 @@ export async function POST(request: Request): Promise<NextResponse> {
 
         // The id comes out of the pathname, then the pathname is validated
         // against it. Doing it in that order means a malformed path cannot
-        // yield an id at all, so there is nothing to look up.
-        const projectId = projectIdFromAssetPathname(pathname);
-        if (!projectId || !isCharacterAssetPathname(pathname, projectId)) {
+        // yield an id at all, so there is nothing to look up. An old project
+        // shaped path yields nothing here, which is what makes the clean break
+        // structural rather than a convention.
+        const characterId = characterIdFromAssetPathname(pathname);
+        if (!characterId || !isCharacterAssetPathname(pathname, characterId)) {
           throw new Error("Not authorized");
         }
 
-        // Owner scoped. Someone else's project is indistinguishable from a
+        // Owner scoped. Someone else's character is indistinguishable from a
         // missing one, so this both authorizes and avoids confirming an id.
-        const project = await getBrollProject(user.id, projectId);
-        if (!project) throw new Error("Not authorized");
+        const character = await getBrollCharacter(user.id, characterId);
+        if (!character) throw new Error("Not authorized");
 
         const token = await issueSignedToken({
           // Scoped to this one pathname, unlike the read delegation in

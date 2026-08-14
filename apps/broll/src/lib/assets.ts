@@ -1,6 +1,6 @@
 import "server-only";
 import { db } from "@repo/db";
-import { brollAssets, brollProjects } from "@repo/db/schema";
+import { brollAssets, brollCharacters } from "@repo/db/schema";
 import { and, asc, eq, sql } from "drizzle-orm";
 import type { CharacterEmotion } from "./emotions";
 
@@ -8,6 +8,11 @@ import type { CharacterEmotion } from "./emotions";
  * Every query that reaches `broll_assets`, for the same reason `projects.ts` and
  * `scenes.ts` exist: the owner scoping and the replace semantics hold in one
  * place rather than in each caller.
+ *
+ * **Scoped to the character, not the project** (spec `broll/0007` AC-119). The
+ * ownership join goes through `broll_characters.user_id` now, which is the same
+ * shape it always had, one table over. Callers that only know a project resolve
+ * it first through `getProjectCharacter` in `characters.ts`.
  *
  * The replace rules here are the ones spec `broll/0004` calls invariant 6 and
  * AC-69: a replacement is a **new pathname**, never an overwrite, and its row is
@@ -37,7 +42,7 @@ export type StoredAssetInput = {
 
 export async function listCharacterAssets(
   userId: string,
-  projectId: string
+  characterId: string
 ): Promise<CharacterAsset[]> {
   const rows = await db
     .select({
@@ -49,11 +54,14 @@ export async function listCharacterAssets(
       attempt: brollAssets.attempt,
     })
     .from(brollAssets)
-    .innerJoin(brollProjects, eq(brollAssets.brollProjectId, brollProjects.id))
+    .innerJoin(
+      brollCharacters,
+      eq(brollAssets.brollCharacterId, brollCharacters.id)
+    )
     .where(
       and(
-        eq(brollAssets.brollProjectId, projectId),
-        eq(brollProjects.userId, userId)
+        eq(brollAssets.brollCharacterId, characterId),
+        eq(brollCharacters.userId, userId)
       )
     )
     .orderBy(asc(brollAssets.emotion));
@@ -65,32 +73,61 @@ export async function listCharacterAssets(
 }
 
 /**
- * How many free regenerations this project has spent (AC-64).
+ * How many free regenerations this **character** has spent (AC-64, spec
+ * `broll/0007` AC-131).
  *
  * **Derived, never stored.** `attempt` starts at 1 on a first store, so
  * `SUM(attempt) - COUNT(*)` is exactly the number of replacements across the
- * set, and a project with no assets answers zero. A separate counter column
+ * set, and a character with no assets answers zero. A separate counter column
  * would be a second source of truth for a number the rows already carry, and the
  * two would drift the first time a row was replaced by a path that skipped it.
+ *
+ * Because it is scoped to the character, attaching that character to a second
+ * project does not refill the allowance: the rows it counts are the same rows.
  */
 export async function regenerationsUsed(
   userId: string,
-  projectId: string
+  characterId: string
 ): Promise<number> {
   const rows = await db
     .select({
       used: sql<number>`coalesce(sum(${brollAssets.attempt}), 0) - count(*)`,
     })
     .from(brollAssets)
-    .innerJoin(brollProjects, eq(brollAssets.brollProjectId, brollProjects.id))
+    .innerJoin(
+      brollCharacters,
+      eq(brollAssets.brollCharacterId, brollCharacters.id)
+    )
     .where(
       and(
-        eq(brollAssets.brollProjectId, projectId),
-        eq(brollProjects.userId, userId)
+        eq(brollAssets.brollCharacterId, characterId),
+        eq(brollCharacters.userId, userId)
       )
     );
 
   return Number(rows[0]?.used ?? 0);
+}
+
+/**
+ * How many emotions this character has committed.
+ *
+ * **Complete means "one row per emotion", counted from the rows** (spec
+ * `broll/0007` AC-125). There is deliberately no completeness column: it would
+ * be a second source of truth for something the rows already answer, exactly
+ * like the regeneration count above. The caller compares against
+ * `CHARACTER_EMOTIONS.length` rather than against a literal six, so growing the
+ * emotion set does not need a change here.
+ *
+ * Not owner scoped, because both callers have already resolved the character
+ * through `getBrollCharacter`. It answers a count, never a row.
+ */
+export async function countCharacterAssets(characterId: string): Promise<number> {
+  const rows = await db
+    .select({ n: sql<number>`count(*)` })
+    .from(brollAssets)
+    .where(eq(brollAssets.brollCharacterId, characterId));
+
+  return Number(rows[0]?.n ?? 0);
 }
 
 /**
@@ -113,7 +150,7 @@ export async function regenerationsUsed(
  * at all if the write fails (invariant 6).
  */
 export async function storeCharacterAssets(
-  projectId: string,
+  characterId: string,
   assets: readonly StoredAssetInput[],
   mode: "set" | "variant"
 ): Promise<{ stored: number; superseded: string[] }> {
@@ -122,7 +159,7 @@ export async function storeCharacterAssets(
   const values = sql.join(
     assets.map(
       (asset) => sql`(
-        ${projectId}::uuid,
+        ${characterId}::uuid,
         ${asset.emotion}::text,
         ${asset.pathname}::text,
         ${asset.width}::integer,
@@ -135,29 +172,29 @@ export async function storeCharacterAssets(
 
   // `EXCLUDED` carries the incoming row; `broll_assets.attempt` on the right of
   // the assignment is the existing one. The unique index on
-  // (broll_project_id, emotion) is what makes replace in place true here rather
+  // (broll_character_id, emotion) is what makes replace in place true here rather
   // than merely intended.
   const attempt =
     mode === "set" ? sql`1` : sql`${brollAssets.attempt} + 1`;
 
   const result = await db.execute(sql`
-    WITH incoming (broll_project_id, emotion, r2_key, width, height, byte_size) AS (
+    WITH incoming (broll_character_id, emotion, r2_key, width, height, byte_size) AS (
       VALUES ${values}
     ),
     prior AS (
       SELECT a.emotion, a.r2_key
       FROM broll_assets a
       JOIN incoming i
-        ON i.broll_project_id = a.broll_project_id AND i.emotion = a.emotion
+        ON i.broll_character_id = a.broll_character_id AND i.emotion = a.emotion
       WHERE a.r2_key <> i.r2_key
     ),
     upserted AS (
       INSERT INTO broll_assets (
-        broll_project_id, emotion, r2_key, width, height, byte_size, attempt
+        broll_character_id, emotion, r2_key, width, height, byte_size, attempt
       )
-      SELECT broll_project_id, emotion, r2_key, width, height, byte_size, 1
+      SELECT broll_character_id, emotion, r2_key, width, height, byte_size, 1
       FROM incoming
-      ON CONFLICT (broll_project_id, emotion) DO UPDATE
+      ON CONFLICT (broll_character_id, emotion) DO UPDATE
       SET r2_key = EXCLUDED.r2_key,
           width = EXCLUDED.width,
           height = EXCLUDED.height,
