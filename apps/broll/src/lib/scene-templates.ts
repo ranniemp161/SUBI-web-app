@@ -23,6 +23,30 @@ export function isLayoutTemplate(value: string): value is LayoutTemplate {
   return (LAYOUT_TEMPLATES as readonly string[]).includes(value);
 }
 
+/** The templates that actually draw a chart, and therefore show its numbers. */
+export const CHART_TEMPLATES = ["chart-full", "character-plus-chart"] as const;
+
+/**
+ * Whether this scene will draw a chart as it stands (spec `broll/0006` AC-105).
+ *
+ * **One predicate, three readers**: the row's `chart traced` marker, the chart
+ * filter chip, and the citation in the detail pane. Keyed off the current
+ * template as well as the column, because a scene restyled away from a chart
+ * template keeps its `chart` value and simply stops showing those numbers
+ * (spec `0005` AC-86). A row promising a traced chart beside a detail pane
+ * showing no citation would be worse than showing neither, and a chip that
+ * disagrees with both is the same bug wearing a third face.
+ */
+export function sceneDrawsChart(scene: {
+  layoutTemplate: string;
+  chart: unknown | null;
+}): boolean {
+  return (
+    scene.chart !== null &&
+    (CHART_TEMPLATES as readonly string[]).includes(scene.layoutTemplate)
+  );
+}
+
 /**
  * What is on screen, derived from the layout (AC-76).
  *

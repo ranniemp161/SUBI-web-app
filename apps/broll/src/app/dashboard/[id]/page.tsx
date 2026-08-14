@@ -1,17 +1,12 @@
 import { auth } from "@clerk/nextjs/server";
 import { redirect, notFound } from "next/navigation";
 import { getAuthorizedDbUser } from "@repo/server-shared/authz";
-import {
-  formatUsd,
-  BROLL_PLAN_RERUN_MICROS,
-  BROLL_CHARACTER_SET_MICROS,
-} from "@repo/billing/pricing";
+import { formatUsd, BROLL_CHARACTER_SET_MICROS } from "@repo/billing/pricing";
 import { getBrollProject } from "@/lib/projects";
 import { listBrollScenes } from "@/lib/scenes";
 import { listCharacterAssets, regenerationsUsed } from "@/lib/assets";
 import { presignAssetReads } from "@/lib/storage";
 import { checkTranscriptFreshness } from "@/lib/staleness";
-import { PlanPanel } from "./plan-panel";
 import { CharacterPanel, type ReviewAsset } from "./character-panel";
 import Link from "next/link";
 
@@ -77,6 +72,10 @@ export default async function ProjectPage({
     (n, s) => n + (s.words?.length ?? 0),
     0
   );
+
+  // The studio card's whole summary, from the query this page already ran.
+  const sceneCount = scenes.length;
+  const includedCount = scenes.filter((scene) => scene.included).length;
 
   return (
     <div className="max-w-[900px] mx-auto px-8 py-12">
@@ -160,50 +159,44 @@ export default async function ProjectPage({
         setPrice={formatUsd(BROLL_CHARACTER_SET_MICROS)}
       />
 
-      <PlanPanel
-        projectId={project.id}
-        initialScenes={scenes}
-        planRuns={project.planRuns}
-        // Formatted here because the price env override is server side only.
-        rerunPrice={formatUsd(BROLL_PLAN_RERUN_MICROS)}
-        outputWidth={project.outputWidth}
-        outputHeight={project.outputHeight}
-        // Carried as a rational, never a decimal: 30000/1001 is not 29.97, and
-        // the difference accumulates into visible drift over a clip.
-        fps={{ numerator: project.outputFpsNum, denominator: project.outputFpsDen }}
-        // What this project has actually generated, which is what gates the
-        // character templates and fills the emotion picker (AC-75, AC-77).
-        committedEmotions={characterAssets.map((asset) => asset.emotion)}
-        // The lines a hand added scene may sit on. The index is what the route
-        // resolves the timing from, so it must be the position in the stored
-        // document rather than anything computed for display (AC-79).
-        transcriptChoices={transcript.segments.map((segment, index) => ({
-          index,
-          startMs: Math.max(0, Math.round(segment.start * 1000)),
-          text: segment.text,
-        }))}
-      />
-
-      <h2 className="mt-10 text-sm font-semibold uppercase tracking-wide" style={{ color: "var(--broll-muted)" }}>
-        Parsed segments
-      </h2>
-
-      <ul className="mt-4 grid gap-2">
-        {transcript.segments.map((segment, i) => (
-          <li
-            key={`${segment.start}-${i}`}
-            className="broll-glass rounded-lg px-4 py-3 flex gap-4"
-          >
-            <span
-              className="broll-tabular text-sm shrink-0 pt-0.5"
-              style={{ color: "var(--broll-accent)" }}
+      {/* The plan lives on its own screen now (AC-94). This card states where
+          the plan stands and opens it; the review itself needs the width and
+          the two panes that this page cannot give it. */}
+      <section className="broll-glass mt-10 rounded-lg px-5 py-4">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h2
+              className="text-sm font-semibold uppercase tracking-wide"
+              style={{ color: "var(--broll-muted)" }}
             >
-              {clock(segment.start)}
-            </span>
-            <span className="text-sm leading-relaxed">{segment.text}</span>
-          </li>
-        ))}
-      </ul>
+              Scene Studio
+            </h2>
+            <p className="mt-1 text-sm">
+              {sceneCount === 0 ? (
+                "No scenes planned yet."
+              ) : (
+                <>
+                  <span className="broll-tabular">{sceneCount}</span> scene
+                  {sceneCount === 1 ? "" : "s"} planned,{" "}
+                  <span className="broll-tabular">{includedCount}</span> included in the
+                  export.
+                </>
+              )}
+            </p>
+          </div>
+
+          <Link
+            href={`/dashboard/${project.id}/scenes`}
+            className="rounded-lg px-4 py-2 text-sm font-semibold"
+            style={{
+              background: "var(--broll-accent)",
+              color: "var(--broll-accent-foreground)",
+            }}
+          >
+            {sceneCount === 0 ? "Plan scenes" : "Open Scene Studio"}
+          </Link>
+        </div>
+      </section>
     </div>
   );
 }

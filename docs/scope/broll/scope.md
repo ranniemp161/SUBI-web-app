@@ -35,7 +35,8 @@ any, and mark a feature `done` when you decide it is._
 | 5 | One template end to end | Phase 4 | in-progress |
 | 6 | Remaining templates + Scene Studio | Phase 5 | in-progress |
 | 7 | Batch export, zip, credits | Phase 6 | in-progress |
-| 9 | Scene Studio screen design | Phase 7 | planned |
+| 9 | Scene Studio screen design | Phase 7 | in-progress |
+| 10 | Blocking and edge states | Phase 7 | planned |
 | 8 | Production deploy and error reporting | Deploy | in-progress |
 
 **The next slice is the live verification of Phases 2 and 3.** Features 3 and 4
@@ -786,7 +787,7 @@ through the Wallet without leaving the workflow broken.
 
 ## Phase 7
 
-### 9. Scene Studio screen design · planned · Alpha · Journey
+### 9. Scene Studio screen design · in-progress · Alpha · Journey
 
 Enrolled by `/scope` on 2026-08-13, from the engineer looking at the screen and
 not liking it. That is a legitimate way for a feature to arrive, and this one was
@@ -814,7 +815,68 @@ at a glance which are strong, which are excluded and which were downgraded to
 text, open one and change it, and reach export, all without scrolling past
 anything that is not helping them decide.
 
-- [ ] Design it (spec): /architect scene studio layout
+- [x] Design it (spec) [0006](../../specs/broll/0006-scene-studio-layout/index.md)
+- [x] Build it: /develop scene studio layout. All six of spec 0006's Journey phases
+      landed 2026-08-14. Lint, typecheck and the full repo suite are green (456 tests,
+      unchanged: this is a recomposition, and every module it moved kept its own
+      tests), and `next build` compiles `/dashboard/[id]/scenes` as a route. New code
+      in [apps/broll/src/app/dashboard/[id]/scenes/](../../../apps/broll/src/app/dashboard/%5Bid%5D/scenes/)
+      plus [scene-strength.ts](../../../apps/broll/src/lib/scene-strength.ts) and
+      [render/to-renderable.ts](../../../apps/broll/src/lib/render/to-renderable.ts).
+      No migration and no new API route, exactly as AC-113 requires.
+
+      **Nothing here has been watched running.** The whole feature is "does this read
+      well", which is the one question a unit test cannot answer and `/check verify`
+      can. Treat every claim below as "built and typechecking", not as "seen".
+
+      **`plan-panel.tsx` and `batch-export.tsx` are gone as files while all of their
+      behaviour survives**, so the diff reads much larger than the change is. The
+      stream reader, the price confirm, the re-run warning, the one at a time render
+      loop, the retry set and the zip builder were all moved, not rewritten.
+
+      **One real behaviour change is hiding in the recomposition, and it is the
+      point.** The single scene render button used to construct its own `Worker`
+      beside a batch that owned another, so pressing it during "Render all" put two
+      encoders on one laptop — which is precisely what the batch was built to avoid.
+      Both entry points now enqueue into one `use-render-queue` hook owned by the
+      shell, so one encode at a time is a property of there being one queue rather
+      than of nobody pressing two buttons (AC-117).
+  - [x] **The scan.** The route at `/dashboard/[id]/scenes`, the two pane shell, the
+        bar, the row (timecode, source line, strength meter, markers, still, include
+        toggle), the filter chips, the project page card, and the parsed segments list
+        retired (AC-94 to AC-100, AC-105, AC-112, AC-113). The row still is a canvas
+        that draws **once per change of its inputs** and never starts a frame loop, so
+        spec 0005's "at most one preview animates" stopped being a module level
+        handshake anyone has to maintain and became a fact about the component tree.
+        The 55 percent dim on an excluded row is gone: every state is now a word, and
+        an excluded row reads as clearly as an included one (AC-99).
+  - [x] **The single scene.** Selection with its URL parameter and its independence
+        from the filter, the detail pane in its order, the existing controls moved in,
+        the keyboard loop, and the provenance block including the manual scene case
+        (AC-101 to AC-104, AC-107). Selection is **derived during render** rather than
+        corrected by an effect, which is both what AC-103 asks for and what this
+        repo's `react-hooks/set-state-in-effect` rule permits; the URL is kept in step
+        with `history.replaceState`, because a server round trip per arrow key press
+        would make a twenty scene pass unusable.
+  - [x] **Add and export.** Add a scene from the bar into the detail pane with a
+        searchable picker, the render queue lifted into the shell so one encode runs at
+        a time, per row render state, and the zip (AC-106, AC-108, AC-109, AC-117).
+        The picker searches the words **and** the timecode: on project `0620` the old
+        control was a select holding 254 options, which is a scroll through the whole
+        transcript to find one sentence.
+  - [x] **The other paths.** The zero state, the locked list during a re-run, the
+        freshness marker, the empty filter, the narrow window, and reduced motion
+        (AC-110, AC-111, AC-114, AC-115, AC-116). A debounced caption is **settled**
+        before a plan run starts rather than dropped, through a flush the shell holds
+        a ref to — so the creator's last keystroke is saved instead of discarded to
+        protect the run. And a re-run while clips are encoding is refused with a
+        sentence saying why, not a disabled button that teaches nothing.
+- [ ] Verify it: /check verify scene studio layout, against
+      [verify.md](../../specs/broll/0006-scene-studio-layout/verify.md), written by
+      `/develop` on 2026-08-14. **Close spec `0005`'s open boxes in the same pass** —
+      its verify.md has every screen box unticked, and driving this screen once is the
+      whole reason feature 9 was put ahead of them. Only the Re-run plan steps spend
+      anything; everything else is free.
 
 **Three things this feature owns, and one it must not touch.**
 
@@ -862,6 +924,33 @@ revisiting.
 works: open a planned project, scan, judge, change one scene, export. A thin
 slice through the layers buys nothing here, because every layer under this screen
 is already built.
+
+### 10. Blocking and edge states · planned · from spec 0006
+
+Enrolled by `/architect` on 2026-08-13, out of spec
+[0006](../../specs/broll/0006-scene-studio-layout/index.md)'s follow-ups. The UI
+brief's B8 lists three refusals this app owes and none of them has a home: an
+unsupported browser (no WebCodecs, detected at load and refused **before** any
+credit is spent), running out of credits mid flow with a path to top up in the
+Wallet app and back, and the small screen message, since this is a canvas review
+UI that does not work on a phone.
+
+Part of it exists already and is worth not rebuilding: the capability probe runs
+on mount in `render-scene-button.tsx`, and `capability.ts` probes a candidate
+profile list at the real output size. What is missing is the screen level
+refusal, the credits path, and the mobile message. Spec `0006` AC-110 stops
+deliberately at a narrow desktop window and leaves the genuine mobile refusal
+here.
+
+**Intent**: Refuse honestly and early, in the three cases where continuing would
+waste a creator's money or their time.
+
+**Done when**: a browser without WebCodecs is told so at load with a specific
+reason rather than a generic error, a creator who runs out mid flow can top up
+and come back to where they were, and a phone gets a plain message instead of a
+broken canvas.
+
+- [ ] Design it (spec): /architect blocking and edge states
 
 ## Deploy
 
