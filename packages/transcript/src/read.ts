@@ -13,6 +13,7 @@
  * entirely rather than defaulting it, and word timings are never interpolated
  * from a cue's span. What was not measured is absent.
  */
+import { z } from "zod";
 import {
   MAX_DOCUMENT_BYTES,
   MAX_SEGMENT_COUNT,
@@ -54,6 +55,13 @@ function assertWithinByteCap(text: string): void {
   }
 }
 
+/** Zod's issue list as one readable sentence, the wording every reader reports. */
+function describeIssues(error: z.ZodError): string {
+  return error.issues
+    .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
+    .join("; ");
+}
+
 function assertWithinSegmentCap(count: number): void {
   if (count > MAX_SEGMENT_COUNT) {
     throw new TranscriptParseError(
@@ -86,9 +94,7 @@ export function parseTranscriptDocument(text: string): TranscriptDocument {
   const result = transcriptDocumentSchema.safeParse(raw);
   if (!result.success) {
     throw new TranscriptParseError(
-      `Transcript is not a valid document: ${result.error.issues
-        .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
-        .join("; ")}`
+      `Transcript is not a valid document: ${describeIssues(result.error)}`
     );
   }
   return result.data;
