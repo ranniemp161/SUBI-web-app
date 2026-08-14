@@ -222,8 +222,13 @@ machine of its own, over the selection:
 - `selected` to `another selected`, by click, by arrow key, or by creating a manual
   scene (the new one wins).
 - `selected` to `fallback selected`, when the current id disappears under a re-run or
-  a delete. The fallback is the first scene in the current filter, and it rewrites
-  the URL rather than leaving a dangling parameter (AC-103).
+  a delete. The fallback is the first scene in plan order **across the whole
+  project**, never the filtered subset, and it rewrites the URL rather than leaving a
+  dangling parameter (AC-103). _Corrected 2026-08-14: this line originally said "the
+  first scene in the current filter", which contradicts AC-103, the value sourcing
+  table and the invariant that selection is independent of the filter. Three
+  statements said whole project and one said filter, so the one was the typo. The
+  build follows AC-103._
 - `selected` to `add form`, and back to `the created scene`, or back to the previous
   selection on cancel.
 - Any state to `locked`, while a plan run is in flight, and back when it settles

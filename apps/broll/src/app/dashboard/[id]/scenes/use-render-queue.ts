@@ -68,6 +68,8 @@ export interface RenderQueue {
   currentId: string | null;
   readyCount: number;
   failedIds: string[];
+  /** Why the last zip could not be built, or null. Shown by the bar. */
+  zipError: string | null;
   /** Refused, not doubled, for a scene already queued or rendering (AC-117). */
   enqueue: (jobs: RenderJob[]) => void;
   /** Stops after the scene in flight, exactly as the batch always has. */
@@ -90,6 +92,7 @@ export function useRenderQueue({
   const [states, setStates] = useState<Record<string, ScenePhase>>({});
   const [running, setRunning] = useState(false);
   const [currentId, setCurrentId] = useState<string | null>(null);
+  const [zipError, setZipError] = useState<string | null>(null);
 
   const queueRef = useRef<RenderJob[]>([]);
   // `currentId` is read inside `enqueue`, which must not be rebuilt every time
@@ -229,20 +232,34 @@ export function useRenderQueue({
       .filter((entry): entry is ZipEntry => Boolean(entry));
     if (ordered.length === 0) return;
 
-    const archive = buildZip(ordered);
-    // `archive.buffer` rather than the view: TypeScript's BlobPart does not
-    // accept a Uint8Array over a generic ArrayBufferLike, and the view spans
-    // the whole buffer here anyway.
-    saveBlob(
-      new Blob([archive.buffer as ArrayBuffer], { type: "application/zip" }),
-      "b-roll-clips.zip"
-    );
+    setZipError(null);
+    try {
+      const archive = buildZip(ordered);
+      // `archive.buffer` rather than the view: TypeScript's BlobPart does not
+      // accept a Uint8Array over a generic ArrayBufferLike, and the view spans
+      // the whole buffer here anyway.
+      saveBlob(
+        new Blob([archive.buffer as ArrayBuffer], { type: "application/zip" }),
+        "b-roll-clips.zip"
+      );
+    } catch (error) {
+      // `buildZip` refuses an archive past the 4 GB the format can address, and
+      // it carries the sentence to show. Without this the button did nothing at
+      // all and said nothing about why, which reads as a broken download rather
+      // than as a batch that has to be split.
+      setZipError(
+        error instanceof Error
+          ? error.message
+          : "Couldn't build the zip. Try rendering the scenes in smaller groups."
+      );
+    }
   }, []);
 
   const reset = useCallback(() => {
     queueRef.current = [];
     clipsRef.current = new Map();
     setStates({});
+    setZipError(null);
   }, []);
 
   const entries = Object.entries(states);
@@ -255,6 +272,7 @@ export function useRenderQueue({
     failedIds: entries
       .filter(([, state]) => state.phase === "failed")
       .map(([id]) => id),
+    zipError,
     enqueue,
     cancel,
     downloadZip,
@@ -275,5 +293,10 @@ function saveBlob(blob: Blob, filename: string): void {
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
-  URL.revokeObjectURL(url);
+  // Revoked on a later task, not synchronously after the click. Several
+  // browsers begin reading the object URL after the current task returns, and
+  // revoking in the same one races that read: the download then fails or
+  // arrives empty, and it does so by size and by timing rather than reliably,
+  // which is the worst way for an export bug to present.
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }

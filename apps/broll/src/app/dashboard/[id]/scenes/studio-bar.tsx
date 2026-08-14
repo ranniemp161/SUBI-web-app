@@ -39,6 +39,7 @@ export function StudioBar({
   atManualCap,
   stale,
   adding,
+  zipError,
   onPlan,
   onAddScene,
   onRenderAll,
@@ -65,6 +66,8 @@ export function StudioBar({
   /** The Ruff Cut edit has moved since this transcript was taken (AC-114). */
   stale: boolean;
   adding: boolean;
+  /** Why the last zip could not be built, or null (from the render queue). */
+  zipError: string | null;
   onPlan: () => void;
   onAddScene: () => void;
   onRenderAll: () => void;
@@ -85,7 +88,14 @@ export function StudioBar({
       return;
     }
     setRefusal(null);
-    if (isRerun && sceneCount > 0) {
+    // Gated on `isRerun` alone, which is `plan_runs > 0`: the same fact the
+    // server charges on. It used to also require `sceneCount > 0`, and those
+    // two come apart in a real case — a creator who adds a scene by hand before
+    // ever planning has scenes and no prior run, so the confirm was skipped and
+    // the button below still quoted them a price for a run the server treats as
+    // the free first one. A money label has to key on the thing that decides
+    // the money.
+    if (isRerun) {
       setConfirming(true);
       return;
     }
@@ -140,7 +150,9 @@ export function StudioBar({
               color: "var(--broll-accent-foreground)",
             }}
           >
-            {planning ? "Planning…" : sceneCount > 0 ? `Re-run plan ${rerunPrice}` : "Plan scenes"}
+            {/* The price shows exactly when a price is charged, which is
+                `plan_runs > 0` and not "this project has scenes". */}
+            {planning ? "Planning…" : isRerun ? `Re-run plan ${rerunPrice}` : "Plan scenes"}
           </button>
 
           <button
@@ -204,24 +216,40 @@ export function StudioBar({
         </p>
       )}
 
+      {/* The archive refused itself, and the creator gets told rather than
+          watching a download button do nothing. */}
+      {zipError && (
+        <p className="px-6 pb-2 text-xs" role="alert" style={{ color: "#ff6b6b" }}>
+          {zipError}
+        </p>
+      )}
+
       {confirming && (
         <div className="broll-glow mx-6 mb-3 rounded-lg px-4 py-3">
           <p className="text-sm">
-            Re-running costs <strong>{rerunPrice}</strong> and replaces the {plannerCount}{" "}
-            planned scene{plannerCount === 1 ? "" : "s"}.
+            Re-running costs <strong>{rerunPrice}</strong>
+            {/* A re-run whose previous run produced nothing has nothing to
+                replace, and saying "replaces the 0 planned scenes" would read
+                as a bug in the sentence rather than as the truth about the
+                project. */}
+            {plannerCount > 0
+              ? ` and replaces the ${plannerCount} planned scene${plannerCount === 1 ? "" : "s"}.`
+              : ". There are no planned scenes to replace."}
             {/* Named, not implied: a creator deciding whether to spend needs to
                 know what the money buys and what it costs them (AC-89). */}
-            {touchedCount > 0 ? (
-              <>
-                {" "}
-                <strong>
-                  {touchedCount} of them {touchedCount === 1 ? "has" : "have"} edits you made
-                </strong>
-                , and those edits will be lost.
-              </>
-            ) : (
-              " You haven't edited any of them yet."
-            )}{" "}
+            {plannerCount > 0 &&
+              (touchedCount > 0 ? (
+                <>
+                  {" "}
+                  <strong>
+                    {touchedCount} of them {touchedCount === 1 ? "has" : "have"} edits you
+                    made
+                  </strong>
+                  , and those edits will be lost.
+                </>
+              ) : (
+                " You haven't edited any of them yet."
+              ))}{" "}
             {manualCount > 0
               ? `The ${manualCount} scene${manualCount === 1 ? "" : "s"} you added by hand ${manualCount === 1 ? "is" : "are"} kept.`
               : "Scenes you add by hand are always kept."}

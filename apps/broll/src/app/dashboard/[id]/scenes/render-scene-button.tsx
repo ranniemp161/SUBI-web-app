@@ -50,12 +50,28 @@ export function RenderSceneButton({
 
   useEffect(() => {
     let active = true;
-    checkRenderCapability(width, height).then((result) => {
-      if (!active) return;
-      setCapability(
-        result.supported ? { phase: "ready" } : { phase: "unsupported", reason: result.reason }
-      );
-    });
+    checkRenderCapability(width, height)
+      .then((result) => {
+        if (!active) return;
+        setCapability(
+          result.supported ? { phase: "ready" } : { phase: "unsupported", reason: result.reason }
+        );
+      })
+      .catch(() => {
+        // A probe that throws rather than answering leaves this stuck in
+        // `checking` forever, which is a button that is disabled with no
+        // explanation. A browser we could not question is one we cannot claim
+        // can encode, so it is reported as unsupported: AC-29 wants the refusal
+        // to arrive before any spend, and an honest "we could not tell" is that
+        // refusal.
+        if (active) {
+          setCapability({
+            phase: "unsupported",
+            reason:
+              "Couldn't check whether this browser can encode video, so rendering is unavailable here. Try Chrome or Edge on a desktop.",
+          });
+        }
+      });
     return () => {
       active = false;
     };
