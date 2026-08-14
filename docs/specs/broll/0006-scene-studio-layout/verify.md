@@ -142,17 +142,20 @@ than twice is the whole reason this feature was put in front of them.
 
 ### Auth
 
-- [ ] Signed out, visit `/dashboard/<id>/scenes` → redirected to sign in → AC-95
+- [x] Signed out, visit `/dashboard/<id>/scenes` → redirected to sign in → AC-95
+      (2026-08-14: `307` to `/sign-in?redirect_url=...%2Fdashboard%2Fxxx%2Fscenes`)
 - [ ] Signed in as another user, visit a project id you do not own → **404, never
       403** → AC-95
 
 ## Commands
 
-- [ ] `npm run lint && npm run typecheck && npm run test` → all green → the repo gates
-- [ ] `npm run build -w @repo/broll` → compiles, and `/dashboard/[id]/scenes` appears
-      in the route table → AC-94
-- [ ] `git log --oneline -- packages/db/drizzle | head -1` → the newest migration is
+- [x] `npm run lint && npm run typecheck && npm run test` → all green → the repo gates
+      (2026-08-14: 8 turbo tasks successful, broll 33 test files)
+- [x] `npm run build -w @repo/broll` → compiles, and `/dashboard/[id]/scenes` appears
+      in the route table → AC-94 (2026-08-14: present as `ƒ /dashboard/[id]/scenes`)
+- [x] `git log --oneline -- packages/db/drizzle | head -1` → the newest migration is
       still `0017`. This feature adds no column and no migration → AC-113
+      (2026-08-14: newest file is `0017_red_next_avengers.sql`)
 - [ ] `grep -rn "chart\." apps/broll/src/app/api/projects/\[id\]/scenes/` → the PATCH
       schema still names four fields and rejects any body carrying another. Chart
       values and timings are not writable → AC-113
@@ -182,8 +185,10 @@ if the source is wrong.
 - [ ] Character cutout: open a project whose character set is not yet generated → the
       character template rows draw their text alone rather than staying blank, and
       they redraw once the set lands
-- [ ] Render state: confirm the rows never read from `broll_scenes.render_status`
+- [x] Render state: confirm the rows never read from `broll_scenes.render_status`
       (`grep -rn "render_status\|renderStatus" apps/broll/src` returns only the schema)
+      (2026-08-14: only `packages/db/src/schema.ts` and one explanatory comment in
+      `use-render-queue.ts`; no read anywhere)
 - [ ] Filter counts: confirm each chip's count equals the number of rows it lists
 - [ ] Order: confirm two scenes sharing a `start_ms` stay in a stable order, tied by
       scene id, and that the order matches the server's
@@ -193,8 +198,10 @@ if the source is wrong.
       it says two, counted from `user_edited_at`. Then exclude a third **without**
       editing anything else → the count stays two, because `included` is not a proxy
       for an edit
-- [ ] Manual cap: confirm the bar's cap message uses
-      `MAX_MANUAL_SCENES_PER_PROJECT`, not a literal
+- [x] Manual cap: confirm the bar's cap message uses
+      `MAX_MANUAL_SCENES_PER_PROJECT`, not a literal (2026-08-14: defined as `40` in
+      `scene-limits.ts`, interpolated into the message in the scenes POST route and
+      read by the insert's own subquery; no literal anywhere)
 - [ ] Freshness: confirm the studio's marker and the project page's warning come from
       the same `checkTranscriptFreshness` result and never disagree
 - [ ] Detail preview aspect: open a project whose output is not 16:9 → the preview and
