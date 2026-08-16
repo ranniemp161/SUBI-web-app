@@ -27,6 +27,36 @@ export const LAYOUT_TEMPLATES = [
 
 export type LayoutTemplate = (typeof LAYOUT_TEMPLATES)[number];
 
+/**
+ * The templates the **planner is allowed to propose**, which is not the same
+ * list as the templates that exist.
+ *
+ * `character-plus-chart` and `split-compare` are planned but have no drawer, so
+ * a scene on one of them can never be rendered or exported. Offering them to the
+ * model spent a scene slot on something the creator cannot make: on the
+ * reference project that was one scene of twelve, permanently stuck showing "no
+ * renderer yet". The model does not pick what it is not offered, which is a
+ * cheaper fix than two renderers and is undone by deleting one line here the day
+ * those renderers land.
+ *
+ * **Deliberately a literal rather than an import of `RENDERABLE_TEMPLATES`.**
+ * That constant lives beside the `switch` in `render/renderable.ts`, which pulls
+ * in every template drawer; importing it here would drag canvas drawing code
+ * into the planner's server bundle to read one array of strings. The two lists
+ * are kept in step by an assertion in `scene-schema.test.ts` instead, which
+ * fails the moment a renderer is added or removed without updating this.
+ *
+ * `LAYOUT_TEMPLATES` stays the full set: `visual_type` derives from it for all
+ * six, the PATCH route validates against it, and rows planned before this
+ * existed may still hold either of the two.
+ */
+export const PLANNABLE_TEMPLATES = [
+  "character-left",
+  "character-center",
+  "chart-full",
+  "text-card",
+] as const;
+
 /** What is actually on screen. Mirrors `broll_scenes.visual_type`. */
 export const VISUAL_TYPES = ["character", "infographic", "text"] as const;
 
@@ -115,7 +145,9 @@ export const modelSceneSchema = z.object({
     .enum(CHARACTER_EMOTIONS)
     .nullable()
     .describe("Which character variant to composite. Null on a chart only or text only scene."),
-  layout_template: z.enum(LAYOUT_TEMPLATES).describe("Which layout to composite into."),
+  layout_template: z
+    .enum(PLANNABLE_TEMPLATES)
+    .describe("Which layout to composite into."),
   overlay_text: z
     .string()
     .nullable()

@@ -1,5 +1,6 @@
 import type { DrawableImage, Render2DContext } from "./context";
 import { fitCharacter, typeScale, wrapText } from "./layout";
+import { BRAND, TYPEFACE, drawBackdrop } from "./theme";
 
 /**
  * The `character-center` template: character centred, full bleed
@@ -23,10 +24,10 @@ import { fitCharacter, typeScale, wrapText } from "./layout";
  */
 
 export const CHARACTER_CENTER_THEME = {
-  background: "#0b0f19",
-  text: "#f4f6fb",
+  background: BRAND.background,
+  text: BRAND.foreground,
   /** The scrim behind the words, so they read against any cutout. */
-  scrim: "#0b0f19",
+  scrim: BRAND.background,
   scrimAlpha: 0.72,
   /** Share of frame height the scrim covers, measured from the bottom. */
   scrimHeightRatio: 0.3,
@@ -74,8 +75,7 @@ export function drawCharacterCenterFrame(
   const { width, height, elapsedMs } = frame;
   const theme = CHARACTER_CENTER_THEME;
 
-  ctx.fillStyle = theme.background;
-  ctx.fillRect(0, 0, width, height);
+  drawBackdrop(ctx, frame);
 
   const arrived = centerCharacterEntrance(elapsedMs);
 
@@ -113,7 +113,7 @@ function drawCenteredText(
   const maxWidth = frame.width - margin * 2;
 
   ctx.save();
-  ctx.font = `700 ${size}px sans-serif`;
+  ctx.font = `700 ${size}px ${TYPEFACE}`;
   const lines = wrapText(ctx, text.trim(), maxWidth);
   if (lines.length === 0) {
     ctx.restore();

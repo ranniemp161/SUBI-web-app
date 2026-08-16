@@ -39,6 +39,7 @@ any, and mark a feature `done` when you decide it is._
 | 11 | Character reuse across projects | Phase 7 | in-progress |
 | 12 | Visual pass and the Renders view | Phase 7 | in-progress |
 | 13 | Vertical output, and the empty transcript guard | Phase 7 | in-progress |
+| 14 | The clip's own design, and the cutout download | Phase 7 | in-progress |
 | 10 | Blocking and edge states | Phase 7 | planned |
 | 8 | Production deploy and error reporting | Deploy | in-progress |
 
@@ -1365,6 +1366,72 @@ after it exists, and the form says so. The columns would allow it and rendering
 is client side and free, so the cost is a re-render rather than money; what stops
 it being obviously right is that a plan's scenes were composed against one shape.
 Worth deciding rather than inheriting from build order.
+
+### 14. The clip's own design, and the cutout download · in-progress
+
+Enrolled 2026-08-17. The trigger was noticing that feature 12 restyled the
+**app** while the thing a creator publishes — the MP4 — had never been designed
+at all. Both template files said so themselves: "the visual design is a plain
+default and is not ratified", "deliberately plain and is not specified
+anywhere". `design-prompt.md` gave one line of composition per template and
+Phase 0 explicitly deferred aesthetic judgement to a real timeline; nobody came
+back to it.
+
+**Intent**: Make the output look like it belongs to this ecosystem, and stop the
+cutout step being an unexplained multi-megabyte stall in front of a paid run.
+
+**Done when**: a rendered clip uses only ecosystem colour, and a creator's first
+character run explains what it is doing while it downloads.
+
+- [x] Build it, 2026-08-17.
+  - [x] **One palette for the output.**
+        [render/theme.ts](../../../apps/broll/src/lib/render/theme.ts) holds the
+        brief's §A palette, a series ramp built from Key Yellow and Interactive
+        Blue and their shades rather than a third hue, and the 40px grid as a
+        ratio so a 9:16 clip gets the same visual density as 16:9. Every
+        template drew on an invented navy `#0b0f19` with a periwinkle `#5b8cff`
+        figure — three separate violations of the brief's one prohibition, "do
+        not introduce new hues". A test now asserts no template theme contains a
+        colour outside the palette, because that rule cannot survive on prose.
+
+        The grid's line weight is deliberately not 1px: a one pixel line at 8%
+        white is exactly what H.264 turns into shimmer rather than a grid.
+  - [x] **The cutout download, halved and explained.** `isnet_fp16` instead of
+        the full model, the GPU when `navigator.gpu` exists — which is also what
+        moves inference off the main thread, since the library gates its worker
+        behind WebGPU — and the library's own `progress` callback surfaced in
+        the status line. `isnet_quint8` is smaller still and deliberately unused:
+        its artefacts land on the cutout edge, the one thing this product is
+        judged on at high zoom. `segmentation.ts` had no tests at all, which was
+        a known hole; the pure config now has nine.
+  - [x] **The planner stops proposing what it cannot draw.**
+        `PLANNABLE_TEMPLATES` is the subset with a renderer, so
+        `character-plus-chart` and `split-compare` are no longer offered to the
+        model. On the reference project that was one scene of twelve permanently
+        stuck on "no renderer yet". Kept as a literal rather than an import, so
+        the planner's server bundle does not pull in canvas drawing code to read
+        an array of strings; a test asserts the two lists match.
+- [ ] **Brand typography, blocked on assets rather than on work.** Templates now
+      draw with a named stack instead of bare `sans-serif`, but not with Space
+      Grotesk and DM Sans, and the reason is worth keeping: the app loads both
+      through `next/font/google`, which self hosts into the build with no stable
+      public URL, and a render **worker** resolves fonts against `self.fonts`,
+      which nothing populates. Naming the brand face would render correctly in
+      the on page preview and silently fall back in the exported file — preview
+      and export disagreeing is the exact thing `renderable.ts` exists to
+      prevent. To finish: serve both woff2 files from `public/fonts/`, register
+      them with `FontFace` on the page **and** in the worker, await `ready`
+      before the first draw, and change `TYPEFACE`.
+- [ ] Verify it: /check verify the clip's design. This is the one feature on this
+      scope where a unit test can say almost nothing — every question is "does
+      the clip look right", which needs a real render watched at full size.
+
+**Still on a third party CDN, and now cheaper rather than fixed.** `@imgly`
+fetches its weights from `staticimgly.com` on every cold browser. `publicPath`
+can point at self hosted files; what stops it is that the weights are tens of
+megabytes, which is a hosting decision rather than a code one. Halving the
+download and explaining it buys time; it does not remove the dependency, and
+spec `0001` still does not record it as an accepted one.
 
 ### 10. Blocking and edge states · planned · from spec 0006
 

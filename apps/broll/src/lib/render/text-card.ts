@@ -1,5 +1,6 @@
 import type { Render2DContext } from "./context";
 import { typeScale, wrapText } from "./layout";
+import { BRAND, TYPEFACE, drawBackdrop } from "./theme";
 
 /**
  * The `text-card` template: large text only (`design-prompt.md`).
@@ -15,10 +16,10 @@ import { typeScale, wrapText } from "./layout";
  */
 
 export const TEXT_CARD_THEME = {
-  background: "#0b0f19",
-  text: "#f4f6fb",
+  background: BRAND.background,
+  text: BRAND.foreground,
   /** A quiet rule above the words, so the frame is not one floating block. */
-  rule: "#5b8cff",
+  rule: BRAND.accent,
   ruleWidthRatio: 0.06,
   ruleThicknessRatio: 0.006,
   marginRatio: 0.1,
@@ -83,7 +84,7 @@ export function fitTextSize(
   // this cannot loop on a pathological string.
   for (let step = 0; step <= 12; step += 1) {
     size = max - ((max - min) * step) / 12;
-    ctx.font = `700 ${size}px sans-serif`;
+    ctx.font = `700 ${size}px ${TYPEFACE}`;
     lines = wrapText(ctx, text, box.width);
     if (lines.length * size * theme.lineHeightRatio <= box.height) break;
   }
@@ -100,8 +101,7 @@ export function drawTextCardFrame(
   const { width, height, elapsedMs } = frame;
   const theme = TEXT_CARD_THEME;
 
-  ctx.fillStyle = theme.background;
-  ctx.fillRect(0, 0, width, height);
+  drawBackdrop(ctx, frame);
 
   const text = scene.text?.trim();
   if (!text) return;
@@ -134,7 +134,7 @@ export function drawTextCardFrame(
   }
 
   ctx.fillStyle = theme.text;
-  ctx.font = `700 ${size}px sans-serif`;
+  ctx.font = `700 ${size}px ${TYPEFACE}`;
   ctx.textAlign = "left";
   ctx.textBaseline = "middle";
 

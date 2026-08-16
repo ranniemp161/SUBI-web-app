@@ -1,6 +1,7 @@
 import { formatChartValue } from "./chart-label";
 import type { Render2DContext } from "./context";
 import { typeScale } from "./layout";
+import { BRAND, SERIES, TYPEFACE, drawBackdrop } from "./theme";
 
 /**
  * The `chart-full` template: the chart fills the frame (`design-prompt.md`).
@@ -28,14 +29,16 @@ import { typeScale } from "./layout";
 
 /** Every visual constant in one object, so restyling touches nothing else. */
 export const CHART_FULL_THEME = {
-  background: "#0b0f19",
-  bar: "#5b8cff",
-  barMuted: "#2a3a63",
-  title: "#f4f6fb",
-  valueLabel: "#f4f6fb",
-  categoryLabel: "#94a3c4",
-  /** The palette pie slices cycle through, in order. */
-  slices: ["#5b8cff", "#8b6bff", "#3fc4a5", "#f2a65a", "#e5688f", "#4fa3e3"],
+  background: BRAND.background,
+  /** The figure is Key Yellow: it is the one thing on screen worth looking at. */
+  bar: BRAND.accent,
+  /** The unfilled remainder of a bar — a divider tone, not a second series. */
+  barMuted: BRAND.surfaceAlt,
+  title: BRAND.foreground,
+  valueLabel: BRAND.foreground,
+  categoryLabel: BRAND.muted,
+  /** The palette pie slices cycle through, in order. See `SERIES`. */
+  slices: SERIES,
   /** Fraction of the frame's shorter edge used as the outer margin. */
   marginRatio: 0.08,
   /** Fraction of a bar slot taken by the gap between bars. */
@@ -179,8 +182,7 @@ export function drawChartFullFrame(
 
   // Background first, every frame: the encoder gets a fully painted frame and
   // never inherits whatever the previous one left behind.
-  ctx.fillStyle = theme.background;
-  ctx.fillRect(0, 0, width, height);
+  drawBackdrop(ctx, frame);
 
   const values = scene.values.filter((value) => Number.isFinite(value));
   if (values.length === 0) {
@@ -218,7 +220,7 @@ export function drawChartFullFrame(
 function drawTitle(ctx: Chart2DContext, title: string, layout: Layout): void {
   const size = layout.scale * CHART_FULL_THEME.titleSizeRatio;
   ctx.fillStyle = CHART_FULL_THEME.title;
-  ctx.font = `600 ${size}px sans-serif`;
+  ctx.font = `600 ${size}px ${TYPEFACE}`;
   ctx.textAlign = "left";
   ctx.textBaseline = "top";
   ctx.fillText(title, layout.margin, layout.margin);
@@ -247,14 +249,14 @@ function drawBigNumber(
   const centerY = layout.height / 2;
 
   ctx.fillStyle = theme.valueLabel;
-  ctx.font = `700 ${numberSize}px sans-serif`;
+  ctx.font = `700 ${numberSize}px ${TYPEFACE}`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillText(formatChartValue(shown, scene.unit), centerX, centerY);
 
   const caption = scene.labels[0] ?? scene.title;
   ctx.fillStyle = theme.categoryLabel;
-  ctx.font = `400 ${captionSize}px sans-serif`;
+  ctx.font = `400 ${captionSize}px ${TYPEFACE}`;
   ctx.textBaseline = "top";
   ctx.fillText(caption, centerX, centerY + numberSize * 0.6);
 }
@@ -309,7 +311,7 @@ function drawBars(
     // The value label, with its unit. This is AC-34 reaching the pixels: the
     // number is never drawn without the unit the speaker attached to it.
     ctx.fillStyle = theme.valueLabel;
-    ctx.font = `600 ${valueSize}px sans-serif`;
+    ctx.font = `600 ${valueSize}px ${TYPEFACE}`;
     ctx.textAlign = "center";
     ctx.textBaseline = "bottom";
     ctx.fillText(formatChartValue(value, scene.unit), x + barWidth / 2, y - valueSize * 0.25);
@@ -371,7 +373,7 @@ function drawLine(
     if (index > reach) return;
     const point = pointAt(index);
     ctx.fillStyle = theme.valueLabel;
-    ctx.font = `600 ${valueSize}px sans-serif`;
+    ctx.font = `600 ${valueSize}px ${TYPEFACE}`;
     ctx.textAlign = "center";
     ctx.textBaseline = "bottom";
     ctx.fillText(formatChartValue(value, scene.unit), point.x, point.y - valueSize * 0.4);
@@ -433,7 +435,7 @@ function drawPie(
 
     const labelRadius = radius * 1.12;
     ctx.fillStyle = theme.valueLabel;
-    ctx.font = `600 ${valueSize}px sans-serif`;
+    ctx.font = `600 ${valueSize}px ${TYPEFACE}`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText(
@@ -454,7 +456,7 @@ function drawCategory(
 ): void {
   if (!label) return;
   ctx.fillStyle = CHART_FULL_THEME.categoryLabel;
-  ctx.font = `400 ${size}px sans-serif`;
+  ctx.font = `400 ${size}px ${TYPEFACE}`;
   ctx.textAlign = "center";
   ctx.textBaseline = "top";
   ctx.fillText(label, x, baseline + size * 0.5);

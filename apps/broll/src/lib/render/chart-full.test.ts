@@ -297,7 +297,13 @@ describe("every shape", () => {
   it("still paints a valid frame when the chart has nothing to plot", () => {
     for (const scene of SHAPES) {
       const ctx = draw({ ...scene, values: [] });
-      expect(ctx.calls).toHaveLength(1);
+    // The frame is fully painted rather than left transparent, and carries
+    // nothing but the backdrop. Asserted as a property rather than a call count:
+    // the ground is a black fill plus the brand grid, so counting calls made this
+    // test a check on how many grid lines a 1920x1080 frame happens to have.
+      expect(texts(ctx)).toHaveLength(0);
+      expect(bars(ctx)).toHaveLength(0);
+      expect(ctx.calls[0]).toMatchObject({ op: "fillRect", x: 0, y: 0, width: 1920, height: 1080 });
       expect(ctx.calls[0]).toMatchObject({ op: "fillRect", style: CHART_FULL_THEME.background });
     }
   });

@@ -160,7 +160,16 @@ export function CharacterPanel({
   const storeTurn = useCallback(
     async (line: Required<Pick<TurnLine, "emotion" | "pathname" | "png">>) => {
       const generated = base64ToPngBlob(line.png);
-      const cut = await removeCharacterBackground(generated);
+      // The first cutout of a session downloads the segmentation model, which is
+      // tens of megabytes and used to be an unexplained pause right after the
+      // creator paid. The library reports that progress and nothing was
+      // listening; now the status line says what is happening. Reported only
+      // while it is genuinely fetching, so a fast warm run does not flicker.
+      const cut = await removeCharacterBackground(generated, ({ key, current, total }) => {
+        if (!key.startsWith("fetch") || total <= 0) return;
+        const percent = Math.min(100, Math.round((current / total) * 100));
+        setStatus(`Preparing the cutout tool… ${percent}%`);
+      });
       const trimmed = await trimTransparent(cut);
 
       await putPresignedWithRetry(line.pathname, trimmed.blob, getToken);

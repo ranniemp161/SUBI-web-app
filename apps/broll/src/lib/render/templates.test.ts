@@ -124,7 +124,13 @@ describe("character-center", () => {
 
   it("paints a valid frame with neither", () => {
     const ctx = draw({ text: null, image: null });
-    expect(ctx.calls).toHaveLength(1);
+    // The frame is fully painted rather than left transparent, and carries
+    // nothing but the backdrop. Asserted as a property rather than a call count:
+    // the ground is a black fill plus the brand grid, so counting calls made this
+    // test a check on how many grid lines a 1920x1080 frame happens to have.
+    expect(images(ctx)).toHaveLength(0);
+    expect(texts(ctx)).toHaveLength(0);
+    expect(ctx.calls[0]).toMatchObject({ op: "fillRect", x: 0, y: 0, width: 1920, height: 1080 });
   });
 
   it("is a pure function of time", () => {
@@ -181,7 +187,9 @@ describe("text-card", () => {
 
   it("paints a valid frame for empty or missing text", () => {
     for (const text of [null, "", "   "] as const) {
-      expect(draw({ text }).calls).toHaveLength(1);
+      const ctx = draw({ text });
+      expect(texts(ctx)).toHaveLength(0);
+      expect(ctx.calls[0]).toMatchObject({ op: "fillRect", x: 0, y: 0, width: 1920, height: 1080 });
     }
   });
 

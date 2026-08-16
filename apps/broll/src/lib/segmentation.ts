@@ -91,7 +91,10 @@ export function probeSegmentation(): Promise<ProbeResult> {
 
     try {
       const { removeBackground } = await import("@imgly/background-removal");
-      await removeBackground(await stubImage(), { output: { format: "image/png" } });
+      // The same configuration the real run uses. Probing on different settings
+      // would prove the browser can do something it is never asked to do — a
+      // GPU probe passing and a CPU run then failing is the shape of that bug.
+      await removeBackground(await stubImage(), segmentationConfig());
       return { ok: true };
     } catch (error) {
       // Deliberately not reported to Sentry: an unsupported browser is an
@@ -114,12 +117,71 @@ export function resetSegmentationProbe(): void {
 }
 
 /**
+ * How the background remover is configured, in one place for both callers.
+ *
+ * **Three settings, each fixing something measured rather than guessed.**
+ *
+ * `model: "isnet_fp16"` halves the download. The default `isnet` is the full
+ * precision model, and this step was pulling roughly 84 MB of weights plus 11 MB
+ * of onnxruntime WASM from a third party CDN on every cold browser — in front of
+ * a $2.00 charge, with no explanation on screen. `isnet_quint8` is smaller still
+ * and is deliberately **not** used: it is 8 bit quantised and the artefacts land
+ * on the cutout edge, which is the exact thing this product is judged on at high
+ * zoom. Half precision is visually indistinguishable here; quarter is a gamble
+ * on the one pixel that matters.
+ *
+ * `device` asks for the GPU when the browser has WebGPU. That is not only a
+ * speed win: the library's worker path is gated behind it
+ * (`proxyToWorker = useWebGPU && config.proxyToWorker`), so on CPU this
+ * inference runs on the **main thread** — which is how it once starved the page
+ * badly enough that Clerk's `UserButton` missed its ten second mount budget.
+ * WASM threads cannot rescue that, because they need `SharedArrayBuffer` and
+ * therefore cross origin isolation headers this app does not send.
+ *
+ * `navigator.gpu` is checked rather than assumed: asking for a GPU that is not
+ * there is a failure, and falling back to the previous behaviour is correct.
+ */
+export function segmentationConfig(onProgress?: SegmentationProgress) {
+  const hasWebGpu =
+    typeof navigator !== "undefined" && "gpu" in navigator && navigator.gpu != null;
+
+  return {
+    model: "isnet_fp16" as const,
+    device: hasWebGpu ? ("gpu" as const) : ("cpu" as const),
+    output: { format: "image/png" as const },
+    ...(onProgress
+      ? {
+          progress: (key: string, current: number, total: number) => {
+            onProgress({ key, current, total });
+          },
+        }
+      : {}),
+  };
+}
+
+/** What the library reports while it fetches weights and runs inference. */
+export type SegmentationProgress = (update: {
+  /** The library's own phase key, e.g. which asset is downloading. */
+  key: string;
+  current: number;
+  total: number;
+}) => void;
+
+/**
  * Remove the background from one generated character, keeping PNG throughout
  * (AC-19). No JPEG intermediate exists anywhere between Gemini and storage,
  * because JPEG ringing lands exactly on the character edge that segmentation
  * depends on.
+ *
+ * `onProgress` exists because the first call of a session downloads a model
+ * measured in tens of megabytes, and a creator who has just paid watches a
+ * still screen for it. The library reports that progress and nothing was
+ * listening.
  */
-export async function removeCharacterBackground(png: Blob): Promise<Blob> {
+export async function removeCharacterBackground(
+  png: Blob,
+  onProgress?: SegmentationProgress
+): Promise<Blob> {
   const { removeBackground } = await import("@imgly/background-removal");
-  return removeBackground(png, { output: { format: "image/png" } });
+  return removeBackground(png, segmentationConfig(onProgress));
 }

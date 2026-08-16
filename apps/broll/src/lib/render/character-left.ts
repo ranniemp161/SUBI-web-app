@@ -1,5 +1,6 @@
 import type { DrawableImage, Render2DContext } from "./context";
 import { fitCharacter, isPortrait, typeScale, wrapText } from "./layout";
+import { BRAND, TYPEFACE, drawBackdrop } from "./theme";
 
 /**
  * The `character-left` template: character 40% left, text right
@@ -32,8 +33,8 @@ import { fitCharacter, isPortrait, typeScale, wrapText } from "./layout";
 
 /** Every visual constant in one object, so restyling touches nothing else. */
 export const CHARACTER_LEFT_THEME = {
-  background: "#0b0f19",
-  text: "#f4f6fb",
+  background: BRAND.background,
+  text: BRAND.foreground,
   /** Share of the frame width the character column occupies. */
   characterColumnRatio: 0.4,
   marginRatio: 0.07,
@@ -104,8 +105,7 @@ export function drawCharacterLeftFrame(
 
   // Background first, every frame: the encoder reuses one canvas and must never
   // inherit the previous frame's pixels.
-  ctx.fillStyle = theme.background;
-  ctx.fillRect(0, 0, width, height);
+  drawBackdrop(ctx, frame);
 
   const margin = Math.min(width, height) * theme.marginRatio;
   const portrait = isPortrait(frame);
@@ -194,7 +194,7 @@ function drawOverlayText(
   ctx.save();
   ctx.globalAlpha = arrived;
   ctx.fillStyle = theme.text;
-  ctx.font = `700 ${size}px sans-serif`;
+  ctx.font = `700 ${size}px ${TYPEFACE}`;
   ctx.textAlign = "left";
   ctx.textBaseline = "middle";
 
