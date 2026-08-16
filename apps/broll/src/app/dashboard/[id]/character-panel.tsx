@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { uploadPresigned } from "@vercel/blob/client";
 import { CHARACTER_EMOTIONS, type CharacterEmotion } from "@/lib/emotions";
 import {
@@ -42,6 +43,13 @@ export type ReviewAsset = {
 };
 
 type TurnLine = {
+  /**
+   * The opening line of both streams: the character this run is writing.
+   *
+   * Handed straight back to `commit`, which re-validates it against the signed
+   * in user rather than trusting it. The browser never invents one.
+   */
+  characterId?: string;
   emotion?: CharacterEmotion;
   pathname?: string;
   png?: string;
@@ -70,18 +78,25 @@ const EMOTION_LABELS: Record<CharacterEmotion, string> = {
   excited: "Excited",
 };
 
+/** A sibling project that draws with the same character (spec `broll/0007` AC-133). */
+type UsingProject = { id: string; name: string };
+
 export function CharacterPanel({
   projectId,
+  characterName,
   initialAssets,
   initialRegenerationsUsed,
   setPrice,
 }: {
   projectId: string;
+  /** The character this project draws with, so the re-run copy can name it. */
+  characterName: string | null;
   initialAssets: ReviewAsset[];
   initialRegenerationsUsed: number;
   /** Formatted server side: the price env override is not public. */
   setPrice: string;
 }) {
+  const router = useRouter();
   const [assets, setAssets] = useState<ReviewAsset[]>(initialAssets);
   const [regenerationsUsed, setRegenerationsUsed] = useState(initialRegenerationsUsed);
   const [photo, setPhoto] = useState<File | null>(null);
@@ -92,6 +107,10 @@ export function CharacterPanel({
   const [error, setError] = useState<string | null>(null);
   const [onDark, setOnDark] = useState(true);
   const [confirmingRerun, setConfirmingRerun] = useState(false);
+  // The other projects a redraw would change. Empty until the read below
+  // answers, which is the honest starting state: silence, never a claim that
+  // nothing else uses this face.
+  const [alsoUsedBy, setAlsoUsedBy] = useState<UsingProject[]>([]);
 
   // Every object URL this component mints, so none leaks. Six 1K PNGs held past
   // their use is real memory, and a regeneration mints more.
@@ -175,6 +194,40 @@ export function CharacterPanel({
     [showLocally]
   );
 
+  /**
+   * Which other projects a redraw would change (AC-133).
+   *
+   * **Read from this project's own character endpoint**, not by fetching every
+   * character the creator owns and filtering in the browser: the question is
+   * about one character, and the answer has to stay right as the characters page
+   * grows. Only the *other* projects are kept, because "this project" is not
+   * news to somebody standing on it.
+   */
+  const refreshUsage = useCallback(async () => {
+    setAlsoUsedBy(await fetchOtherProjectsUsing(projectId));
+  }, [projectId]);
+
+  // Asked once, and only when there is a character to ask about: a project with
+  // no face has no blast radius to warn about and should not pay for the query.
+  // The work sits in a function declared inside the effect rather than in the
+  // `refreshUsage` callback above, because the lint rule that keeps this repo's
+  // canvas loops honest reads a `useCallback` that sets state as a state write
+  // during the effect, which this is not — the write happens a round trip later.
+  useEffect(() => {
+    if (!characterName) return;
+    let cancelled = false;
+
+    async function load() {
+      const others = await fetchOtherProjectsUsing(projectId);
+      if (!cancelled) setAlsoUsedBy(others);
+    }
+    void load();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [characterName, projectId]);
+
   /** Replace the local previews with freshly signed urls for what is stored. */
   const refreshAssets = useCallback(async () => {
     const response = await fetch(`/api/projects/${projectId}/character/urls`);
@@ -227,7 +280,16 @@ export function CharacterPanel({
         first: null,
       };
 
+      // Filled by the stream's opening line, before any turn arrives. A holder
+      // for the same reason `committed` is an array: it is written inside a
+      // callback TypeScript's flow analysis cannot see through.
+      const run: { characterId: string | null } = { characterId: null };
+
       const terminal = await readCharacterStream(response, (line) => {
+        if (line.characterId) {
+          run.characterId = line.characterId;
+          return;
+        }
         if (line.emotion && line.pathname && line.png) {
           const turn = { emotion: line.emotion, pathname: line.pathname, png: line.png };
           work = work
@@ -264,7 +326,11 @@ export function CharacterPanel({
         );
         return;
       }
-      if (!terminal?.done || committed.length !== CHARACTER_EMOTIONS.length) {
+      if (
+        !terminal?.done ||
+        committed.length !== CHARACTER_EMOTIONS.length ||
+        !run.characterId
+      ) {
         setError(
           "The connection dropped before the set finished. Nothing was charged — reload and try again."
         );
@@ -277,6 +343,7 @@ export function CharacterPanel({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           mode: "set",
+          characterId: run.characterId,
           assets: committed,
           costMicros: terminal.costMicros,
         }),
@@ -289,17 +356,34 @@ export function CharacterPanel({
       }
 
       // A paid re-run refills the allowance, which is the point of resetting
-      // `attempt` server side (AC-65).
+      // `attempt` server side (AC-65). The allowance is the new character's, and
+      // it has never been redrawn.
       setRegenerationsUsed(0);
       setPhoto(null);
       await refreshAssets();
+      // This project now points at a **different** character (AC-129), so the
+      // usage list and the name in the server rendered copy are both about the
+      // old one until they are re-read.
+      await refreshUsage();
+      router.refresh();
       setStatus(null);
     } catch {
       setError("The character run failed. Try again.");
     } finally {
       setBusy(null);
     }
-  }, [busy, probing, photo, probe, ensureProbe, projectId, storeTurn, refreshAssets]);
+  }, [
+    busy,
+    probing,
+    photo,
+    probe,
+    ensureProbe,
+    projectId,
+    storeTurn,
+    refreshAssets,
+    refreshUsage,
+    router,
+  ]);
 
   const regenerate = useCallback(
     async (emotion: CharacterEmotion) => {
@@ -334,8 +418,13 @@ export function CharacterPanel({
         let stored: CommittedAsset | null = null;
         let work = Promise.resolve();
         let failure: unknown = null;
+        const run: { characterId: string | null } = { characterId: null };
 
         const terminal = await readCharacterStream(response, (line) => {
+          if (line.characterId) {
+            run.characterId = line.characterId;
+            return;
+          }
           if (line.emotion && line.pathname && line.png) {
             const turn = { emotion: line.emotion, pathname: line.pathname, png: line.png };
             work = work
@@ -354,7 +443,7 @@ export function CharacterPanel({
           setError(terminal.error);
           return;
         }
-        if (failure || !stored) {
+        if (failure || !stored || !run.characterId) {
           setError("The redraw could not be stored. Your previous image is untouched.");
           return;
         }
@@ -362,7 +451,11 @@ export function CharacterPanel({
         const commit = await fetch(`/api/projects/${projectId}/character/commit`, {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ mode: "variant", assets: [stored] }),
+          body: JSON.stringify({
+            mode: "variant",
+            characterId: run.characterId,
+            assets: [stored],
+          }),
         });
 
         if (!commit.ok) {
@@ -496,6 +589,23 @@ export function CharacterPanel({
         </p>
       )}
 
+      {/* Named before a redraw, not after it (AC-133). A regeneration changes
+          this face everywhere it is used, including projects the creator
+          considers finished, and this list is the only thing standing between
+          that and a surprise. */}
+      {hasSet && alsoUsedBy.length > 0 && (
+        <p className="broll-glow mt-4 rounded-lg px-4 py-3 text-sm" role="status">
+          This character is also used by{" "}
+          {alsoUsedBy.map((project, index) => (
+            <span key={project.id}>
+              {index > 0 && (index === alsoUsedBy.length - 1 ? " and " : ", ")}
+              <strong>{project.name}</strong>
+            </span>
+          ))}
+          . Redrawing a variant changes it there too.
+        </p>
+      )}
+
       {assets.length > 0 && (
         <>
           <ul className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
@@ -553,8 +663,14 @@ export function CharacterPanel({
             ))}
           </ul>
 
+          {/* The allowance belongs to the character, not to this project
+              (AC-131): the same face reused on a second project arrives with
+              the redraws it has left, never a fresh twelve. Saying "for this
+              project" would be a promise the row cannot keep. */}
           <p className="mt-3 text-sm" style={{ color: "var(--broll-muted)" }}>
-            {regenerationsLeft} of {MAX_REGENERATIONS} redraws left. Redraws are free.
+            {regenerationsLeft} of {MAX_REGENERATIONS} redraws left for this
+            character. Redraws are free, and the allowance follows the character
+            wherever it is used.
           </p>
         </>
       )}
@@ -563,10 +679,21 @@ export function CharacterPanel({
         <div className="mt-4">
           {confirmingRerun ? (
             <div className="broll-glow rounded-lg px-4 py-3">
+              {/* A re-run makes a **new** character rather than overwriting
+                  this one (AC-129), so the copy says what actually happens: the
+                  old face survives, and any other project keeps drawing with
+                  it. Overwriting in place was the alternative and was declined,
+                  because it would mean this button behaves differently
+                  depending on state the creator cannot see. */}
               <p className="text-sm">
-                Generating again costs <strong>{setPrice}</strong> and replaces all six
-                variants with a new character drawn from a new photo. It also gives you a
-                fresh set of {MAX_REGENERATIONS} redraws.
+                Generating again costs <strong>{setPrice}</strong> and draws a new
+                character from a new photo. This project switches to it, with a fresh
+                set of {MAX_REGENERATIONS} redraws.{" "}
+                {characterName ? <strong>{characterName}</strong> : "The current character"}{" "}
+                is kept
+                {alsoUsedBy.length > 0
+                  ? `, and the ${alsoUsedBy.length === 1 ? "project" : "projects"} using it stay${alsoUsedBy.length === 1 ? "s" : ""} on it.`
+                  : ", so you can come back to it or delete it."}
               </p>
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <label className="broll-glass cursor-pointer rounded-lg px-3 py-1.5 text-sm">
@@ -622,6 +749,21 @@ export function CharacterPanel({
       )}
     </section>
   );
+}
+
+/**
+ * The other projects drawing with this project's character (AC-133).
+ *
+ * One helper for both callers, the mount read and the read after a paid re-run,
+ * so neither can forget to drop this project from the list. A failed read
+ * answers empty: the warning is an addition to what the screen says, and a
+ * network blip must not stand between a creator and their redraw button.
+ */
+async function fetchOtherProjectsUsing(projectId: string): Promise<UsingProject[]> {
+  const response = await fetch(`/api/projects/${projectId}/character`);
+  if (!response.ok) return [];
+  const body = (await response.json()) as { usedBy?: UsingProject[] };
+  return (body.usedBy ?? []).filter((project) => project.id !== projectId);
 }
 
 /**

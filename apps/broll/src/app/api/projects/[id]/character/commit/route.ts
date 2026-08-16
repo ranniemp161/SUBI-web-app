@@ -2,13 +2,19 @@ import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import { getAuthorizedDbUser } from "@repo/server-shared/authz";
 import { reportError } from "@repo/server-shared/observability";
-import { settleBrollHold, releaseBrollClaimQuietly } from "@repo/billing";
+import { settleBrollHold } from "@repo/billing";
 import { BROLL_CHARACTER_SET_COST_MICROS } from "@repo/billing/pricing";
 import { getBrollProject, getBrollGenerationState } from "@/lib/projects";
+import {
+  attachCharacterToProject,
+  getBrollCharacter,
+  releaseCharacterClaimQuietly,
+} from "@/lib/characters";
 import { isCharacterAssetPathname } from "@/lib/asset-path";
 import { assetByteSize, deleteAssetQuietly, sweepOrphanedAssets } from "@/lib/storage";
 import { CHARACTER_EMOTIONS, isCharacterEmotion } from "@/lib/emotions";
 import {
+  countCharacterAssets,
   listCharacterAssets,
   storeCharacterAssets,
   type StoredAssetInput,
@@ -24,15 +30,24 @@ import {
  * server side sizing and the row write for no gain.
  *
  * **This is where a client supplied string would otherwise become a stored
- * key.** Every pathname is re-validated against `broll/{projectId}/` for a
- * project this caller was proven to own, even though the generate route minted
- * it and the upload route already checked it. Two checks for one property is
- * deliberate (AC-70): a stored `r2_key` pointing at another user's object is a
+ * key.** Every pathname is re-validated against `broll/characters/{characterId}/`
+ * for a character this caller was proven to own, even though the generate route
+ * minted it and the upload route already checked it. Two checks for one property
+ * is deliberate (AC-70): a stored `r2_key` pointing at another user's object is a
  * cross user read that no amount of query scoping would catch afterwards.
+ *
+ * **Pointing the project at its character is its own idempotent statement, and
+ * it runs on the repeat branch too** (spec `broll/0007` AC-146). The Neon HTTP
+ * driver gives every statement its own transaction, so there is no wider one to
+ * wrap the store, the settle and the attach in. A commit that stored the assets
+ * and settled the hold and then died would otherwise leave a paid for character
+ * with no project pointing at it, and every retry would take the early return
+ * and never fix it.
  */
 
 type CommitBody = {
   mode?: unknown;
+  characterId?: unknown;
   assets?: unknown;
   costMicros?: unknown;
 };
@@ -116,6 +131,24 @@ export async function POST(
       return NextResponse.json({ error: "Malformed asset list." }, { status: 422 });
     }
 
+    // The character these assets belong to, re-validated rather than trusted.
+    // Owner scoped, so somebody else's character id is indistinguishable from a
+    // missing one, and every pathname below is then checked against this id —
+    // which is what makes a mismatched commit impossible.
+    const characterId =
+      typeof body.characterId === "string" ? body.characterId : null;
+    if (!characterId) {
+      return NextResponse.json(
+        { error: "Commit needs the character it is storing against." },
+        { status: 422 }
+      );
+    }
+
+    const character = await getBrollCharacter(user.id, characterId);
+    if (!character) {
+      return NextResponse.json({ error: "Character not found." }, { status: 404 });
+    }
+
     // A set is six or it is none (invariant 3). A scene naming a variant that was
     // never generated cannot be composited, so a five of six commit is refused
     // rather than stored.
@@ -138,15 +171,15 @@ export async function POST(
     }
 
     for (const asset of incoming) {
-      if (!isCharacterAssetPathname(asset.pathname, id)) {
+      if (!isCharacterAssetPathname(asset.pathname, characterId)) {
         return NextResponse.json(
-          { error: "That storage path does not belong to this project." },
+          { error: "That storage path does not belong to this character." },
           { status: 403 }
         );
       }
     }
 
-    const stored = await listCharacterAssets(user.id, id);
+    const stored = await listCharacterAssets(user.id, characterId);
 
     // **Idempotent** (AC-71). A retry after a lost response names pathnames that
     // are already stored, and answering 409 there would make a completed
@@ -158,7 +191,27 @@ export async function POST(
       )
     );
     if (alreadyStored) {
+      // **The attach runs here too, and that is the whole of AC-146.** A first
+      // call that stored the assets and settled the hold and then died before
+      // attaching leaves the project pointing at nothing; without this line
+      // every retry would return early and never repair it, leaving a paid for
+      // character no project uses. Idempotent, so a retry that has nothing to
+      // fix changes no row.
+      await attachCharacterToProject(user.id, id, characterId);
       return NextResponse.json({ assets: stored, settled: false, repeat: true });
+    }
+
+    // A `set` commit fills a character that holds nothing yet. Anything else is
+    // a second set being written over a character other projects may already be
+    // drawing with, which is what the paid re-run's fork exists to avoid.
+    if (mode === "set" && (await countCharacterAssets(characterId)) > 0) {
+      return NextResponse.json(
+        {
+          error: "That character already has a set. Generate a new one instead.",
+          code: "NOT_FRESH",
+        },
+        { status: 409 }
+      );
     }
 
     // A `set` commit with no hold left is a run whose claim aged out and was
@@ -210,9 +263,15 @@ export async function POST(
     // The row is written **first**, then the superseded object is deleted
     // (invariant 6). The other order leaves an emotion with no image at all if
     // the write fails.
-    const { superseded } = await storeCharacterAssets(id, rows, mode);
+    const { superseded } = await storeCharacterAssets(characterId, rows, mode);
 
     if (mode === "set") {
+      // Point the project at the character it just filled, in the same request
+      // that settles the hold (AC-128). Its own statement, and the repeat branch
+      // above runs it too, so no ordering here can strand a paid for character
+      // with no project pointing at it (AC-146).
+      await attachCharacterToProject(user.id, id, characterId);
+
       // Only the call that flips `hold_micros` to NULL moves money, so a racing
       // second settle is a no-op rather than a second charge. A `set` commit
       // that finds no hold has already been settled — which the idempotency
@@ -222,28 +281,36 @@ export async function POST(
         costMicros: clampCost(body.costMicros),
       });
     } else {
-      // A regeneration held the claim from the moment it started, so that no
-      // full set run could race it for the same row (AC-72). This is where it
-      // lets go. No money moves: the hold it took was zero.
-      await releaseBrollClaimQuietly(id);
+      // A regeneration held the claim on the **character** from the moment it
+      // started, so that no other writer could take the same row while it ran
+      // (AC-72, AC-132). This is where it lets go. No money moves: a redraw is
+      // free, and the claim never touched a balance.
+      await releaseCharacterClaimQuietly(user.id, characterId);
     }
 
     for (const pathname of superseded) await deleteAssetQuietly(pathname);
 
-    const assets = await listCharacterAssets(user.id, id);
+    const assets = await listCharacterAssets(user.id, characterId);
 
     // No object outlives its run unreferenced (AC-73, invariant 9). A run that
     // uploaded some images and was abandoned leaves objects no row points at, and
     // on a plan whose failure mode is a thirty day lockout that is not a
     // tidiness problem. Best effort: a sweep that fails must not fail a commit
     // whose assets are already stored, and the scheduled sweep catches the rest.
+    //
+    // Scoped to the character, because that is what the prefix names now
+    // (AC-144). Sweeping the project prefix would list nothing at all and
+    // quietly collect nothing.
     try {
       await sweepOrphanedAssets(
-        id,
+        characterId,
         assets.map((asset) => asset.pathname)
       );
     } catch (error) {
-      reportError("Orphan sweep failed after commit", error, { projectId: id });
+      reportError("Orphan sweep failed after commit", error, {
+        projectId: id,
+        characterId,
+      });
     }
 
     return NextResponse.json({ assets, settled: mode === "set" });

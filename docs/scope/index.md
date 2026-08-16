@@ -12,7 +12,7 @@ through every layer, working).
 | `_root` (ecosystem wide) | [_root/scope.md](_root/scope.md) | Beta | 1 done, 2 in-progress, 1 planned, 3 existing, 2 deferred, 1 open question |
 | `apps/rough-cut` | [rough-cut/scope.md](rough-cut/scope.md) | Beta | 3 done, 2 in-progress, 13 existing, 5 deferred |
 | `apps/founders-frame` | [founders-frame/scope.md](founders-frame/scope.md) | Alpha | 1 done, 1 planned, 2 existing |
-| `apps/broll` | [broll/scope.md](broll/scope.md) | Beta | 2 done, 6 in-progress (all built, none verified), 1 planned |
+| `apps/broll` | [broll/scope.md](broll/scope.md) | Beta | 2 done, 6 in-progress (all built, none verified), 2 planned |
 | `apps/wallet` | tracked under `_root` | see `_root` | the Wallet app **is** the ecosystem wide billing feature |
 
 ## Notes

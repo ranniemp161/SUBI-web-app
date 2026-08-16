@@ -3,11 +3,14 @@ import { redirect, notFound } from "next/navigation";
 import { getAuthorizedDbUser } from "@repo/server-shared/authz";
 import { formatUsd, BROLL_CHARACTER_SET_MICROS } from "@repo/billing/pricing";
 import { getBrollProject } from "@/lib/projects";
+import { getProjectCharacter, listPickableCharacters } from "@/lib/characters";
+import type { PickerCharacter } from "@/lib/character-picker";
 import { listBrollScenes } from "@/lib/scenes";
 import { listCharacterAssets, regenerationsUsed } from "@/lib/assets";
 import { presignAssetReads } from "@/lib/storage";
 import { checkTranscriptFreshness } from "@/lib/staleness";
 import { CharacterPanel, type ReviewAsset } from "./character-panel";
+import { CharacterReuse } from "./character-reuse";
 import Link from "next/link";
 
 /** `2:35`, or `1:02:35` once past an hour. Timecodes render tabular so a column of them lines up. */
@@ -38,7 +41,7 @@ export default async function ProjectPage({
   // 403, so a project id is never confirmed to a stranger (AC-38).
   if (!project) notFound();
 
-  const [scenes, freshness, characterAssets, regensUsed] = await Promise.all([
+  const [scenes, freshness, character] = await Promise.all([
     listBrollScenes(user.id, id),
     // Advisory only, and never fatal: a linked project asks Ruff Cut whether
     // the edit has moved since this transcript was taken (AC-49).
@@ -47,16 +50,31 @@ export default async function ProjectPage({
       storedFingerprint: project.edlFingerprint,
       token: await getToken(),
     }),
-    listCharacterAssets(user.id, id),
-    regenerationsUsed(user.id, id),
+    // The images belong to a character now, so this page reads them through the
+    // one the project points at. Null means the project has none yet, which is
+    // the state the review gate already handled as "no assets".
+    getProjectCharacter(user.id, id),
   ]);
+
+  const [characterAssets, regensUsed] = character
+    ? await Promise.all([
+        listCharacterAssets(user.id, character.id),
+        regenerationsUsed(user.id, character.id),
+      ])
+    : [[], 0];
+
+  // Offered only while this project has no character, which is what makes "no
+  // swap in this feature" true of the screen as well as of the route (spec
+  // `broll/0007` AC-123). The two lists are therefore never both non empty.
+  const reusable = character ? [] : await listPickableCharacters(user.id);
 
   // Signed here rather than fetched by the browser, so the first paint of the
   // review gate needs no round trip. The urls point at the blob host, so the
   // images still load directly and no Function sits in the data path (AC-17).
-  const signed = await presignAssetReads(
-    characterAssets.map((asset) => asset.pathname)
-  ).catch(() => []);
+  const signed = await presignAssetReads([
+    ...characterAssets.map((asset) => asset.pathname),
+    ...reusable.map((entry) => entry.neutralPathname),
+  ]).catch(() => []);
   const signedFor = new Map(signed.map((entry) => [entry.pathname, entry.url]));
 
   const reviewAssets: ReviewAsset[] = characterAssets.map((asset) => ({
@@ -65,6 +83,13 @@ export default async function ProjectPage({
     height: asset.height,
     attempt: asset.attempt,
     url: signedFor.get(asset.pathname) ?? null,
+  }));
+
+  const pickable: PickerCharacter[] = reusable.map((entry) => ({
+    id: entry.id,
+    name: entry.name,
+    style: entry.style,
+    thumbnailUrl: signedFor.get(entry.neutralPathname) ?? null,
   }));
 
   const { transcript } = project;
@@ -151,8 +176,22 @@ export default async function ProjectPage({
         </p>
       )}
 
+      {/* Above the generate path on purpose: reusing a character is free and
+          instant, and a creator who owns one should see that before they are
+          asked for a photograph and two dollars. */}
+      {pickable.length > 0 && (
+        <CharacterReuse
+          projectId={project.id}
+          projectStyle={project.style}
+          characters={pickable}
+        />
+      )}
+
       <CharacterPanel
         projectId={project.id}
+        // Named so the paid re-run can say which character it is leaving
+        // behind rather than "the current one" (spec `broll/0007` AC-129).
+        characterName={character?.name ?? null}
         initialAssets={reviewAssets}
         initialRegenerationsUsed={regensUsed}
         // Formatted here because the price env override is server side only.

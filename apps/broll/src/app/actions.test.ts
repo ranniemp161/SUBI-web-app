@@ -9,6 +9,11 @@ const state = vi.hoisted(() => ({
   created: null as Record<string, unknown> | null,
   fetchImpl: null as ((url: string, init?: RequestInit) => Promise<Response>) | null,
   lastFetch: null as { url: string; init?: RequestInit } | null,
+  resolution: { status: "ok", character: { id: "", name: "", style: "3d-render" } } as
+    | { status: "ok"; character: { id: string; name: string; style: string } }
+    | { status: "not_found" }
+    | { status: "incomplete" },
+  resolveArgs: [] as unknown[][],
 }));
 
 vi.mock("@clerk/nextjs/server", () => ({
@@ -26,6 +31,16 @@ vi.mock("@/lib/projects", () => ({
   createBrollProject: vi.fn(async (input: Record<string, unknown>) => {
     state.created = input;
     return "broll-project-1";
+  }),
+}));
+
+// Mocked rather than run: it is `server-only` and reaches the database, and
+// what these tests are about is which style and which character id the action
+// hands to `createBrollProject`, not how the character was read.
+vi.mock("@/lib/characters", () => ({
+  resolveCompleteCharacter: vi.fn(async (...args: unknown[]) => {
+    state.resolveArgs.push(args);
+    return state.resolution;
   }),
 }));
 
@@ -156,6 +171,7 @@ function response(status: number, body = ""): Response {
 }
 
 const VALID_REF = "b3f1c2d4-1111-4222-8333-444455556666";
+const CHARACTER_ID = "cccccccc-1111-4222-8333-444455556666";
 
 beforeEach(() => {
   state.clerkId = "clerk_user_1";
@@ -164,6 +180,11 @@ beforeEach(() => {
   state.created = null;
   state.lastFetch = null;
   state.fetchImpl = null;
+  state.resolveArgs = [];
+  state.resolution = {
+    status: "ok",
+    character: { id: CHARACTER_ID, name: "Rannie, anime", style: "3d-render" },
+  };
   vi.clearAllMocks();
   vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
     state.lastFetch = { url: String(url), init };
@@ -225,7 +246,11 @@ describe("createProjectFromUpload — input validation", () => {
       format: "srt",
       text: SRT,
     });
-    expect(result.error).toBe("Unknown character style");
+    // The same sentence both intake paths answer with. The style check moved
+    // out of the upload schema when the character path landed, because a
+    // project created against an existing character is not asked for a style at
+    // all, so one message now covers both actions.
+    expect(result.error).toBe("Unknown character style.");
   });
 
   it("rejects a format that is not srt, vtt or json", async () => {
@@ -340,6 +365,125 @@ describe("createProjectFromUpload — the happy paths", () => {
       })
     );
     expect(state.created?.sourceProjectId).toBe("rough-cut-project-9");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Starting a project on a character the creator already owns (spec
+// `broll/0007` AC-122, AC-124, AC-125, AC-147).
+// ---------------------------------------------------------------------------
+
+describe("creating a project on an existing character", () => {
+  it("copies the character's style and ignores the style that was sent", async () => {
+    // The style input is not merely unused, it is overruled: the six images
+    // exist in exactly one style, and a project claiming another one would be
+    // wrong from its first row.
+    await redirectTargetOf(() =>
+      createProjectFromUpload({
+        name: "Launch",
+        style: "anime",
+        characterId: CHARACTER_ID,
+        format: "srt",
+        text: SRT,
+      })
+    );
+    expect(state.created?.style).toBe("3d-render");
+    expect(state.created?.characterId).toBe(CHARACTER_ID);
+  });
+
+  it("resolves the character against the signed-in user, not the form", async () => {
+    await redirectTargetOf(() =>
+      createProjectFromUpload({
+        name: "Launch",
+        style: "anime",
+        characterId: CHARACTER_ID,
+        format: "srt",
+        text: SRT,
+      })
+    );
+    expect(state.resolveArgs[0]).toEqual(["user-1", CHARACTER_ID]);
+  });
+
+  it("creates no project when the character is not this user's", async () => {
+    state.resolution = { status: "not_found" };
+    const result = await createProjectFromUpload({
+      name: "Launch",
+      style: "anime",
+      characterId: CHARACTER_ID,
+      format: "srt",
+      text: SRT,
+    });
+    expect(result.error).toBe("That character could not be found.");
+    expect(state.created).toBeNull();
+  });
+
+  it("refuses a character that is not finished, rather than trusting the picker", async () => {
+    // The picker only lists complete characters. That is a display rule, and a
+    // display rule is not a check (AC-147).
+    state.resolution = { status: "incomplete" };
+    const result = await createProjectFromUpload({
+      name: "Launch",
+      style: "anime",
+      characterId: CHARACTER_ID,
+      format: "srt",
+      text: SRT,
+    });
+    expect(result.error).toBe("That character isn't finished, so it can't be used yet.");
+    expect(state.created).toBeNull();
+  });
+
+  it("never queries for a character id that is not a uuid", async () => {
+    // The column is `uuid`, so an unchecked string reaches the driver as an
+    // error rather than as the refusal it is.
+    const result = await createProjectFromUpload({
+      name: "Launch",
+      style: "anime",
+      characterId: "../../someone-else",
+      format: "srt",
+      text: SRT,
+    });
+    expect(result.error).toBe("That character could not be found.");
+    expect(state.resolveArgs).toEqual([]);
+    expect(state.created).toBeNull();
+  });
+
+  it("leaves characterId null when none was picked", async () => {
+    await redirectTargetOf(() =>
+      createProjectFromUpload({
+        name: "Launch",
+        style: "anime",
+        format: "srt",
+        text: SRT,
+      })
+    );
+    expect(state.created?.characterId).toBeNull();
+    expect(state.resolveArgs).toEqual([]);
+  });
+
+  it("carries the character through the Ruff Cut import too", async () => {
+    state.fetchImpl = async () => response(200, handoffJson());
+    await redirectTargetOf(() =>
+      importFromRoughCut({
+        reference: VALID_REF,
+        name: "Launch",
+        style: "anime",
+        characterId: CHARACTER_ID,
+      })
+    );
+    expect(state.created?.style).toBe("3d-render");
+    expect(state.created?.characterId).toBe(CHARACTER_ID);
+  });
+
+  it("makes no Ruff Cut request when the character is refused", async () => {
+    state.resolution = { status: "incomplete" };
+    const result = await importFromRoughCut({
+      reference: VALID_REF,
+      name: "Launch",
+      style: "anime",
+      characterId: CHARACTER_ID,
+    });
+    expect(result.error).toBeTruthy();
+    expect(state.lastFetch).toBeNull();
   });
 });
 

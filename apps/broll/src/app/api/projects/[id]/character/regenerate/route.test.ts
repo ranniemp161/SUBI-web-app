@@ -7,6 +7,7 @@ const state = vi.hoisted(() => ({
   clerkId: "user_clerk" as string | null,
   dbUser: { id: "user-db" } as { id: string } | null,
   project: null as Record<string, unknown> | null,
+  character: null as Record<string, unknown> | null,
   allowed: true,
   used: 0,
   assets: [] as Record<string, unknown>[],
@@ -25,19 +26,22 @@ vi.mock("@repo/server-shared/authz", () => ({
   getAuthorizedDbUser: vi.fn(async () => state.dbUser),
 }));
 
-vi.mock("@repo/billing", () => ({
-  claimBrollGeneration: vi.fn(async () => {
+vi.mock("@/lib/projects", () => ({
+  getBrollProject: vi.fn(async () => state.project),
+}));
+
+// The claim lives here now, not in `@repo/billing`: it is on the character
+// rather than on the project, and it moves no money (spec `broll/0007` AC-132).
+vi.mock("@/lib/characters", () => ({
+  getProjectCharacter: vi.fn(async () => state.character),
+  claimCharacterGeneration: vi.fn(async () => {
     state.calls.push("claim");
     return state.claim;
   }),
-  releaseBrollClaimQuietly: vi.fn(async (...args: unknown[]) => {
+  releaseCharacterClaimQuietly: vi.fn(async (...args: unknown[]) => {
     state.calls.push("release");
     state.releases.push(args);
   }),
-}));
-
-vi.mock("@/lib/projects", () => ({
-  getBrollProject: vi.fn(async () => state.project),
 }));
 
 vi.mock("@/lib/assets", () => ({
@@ -68,6 +72,7 @@ vi.mock("@/lib/character", async () => {
 
 import { POST } from "./route";
 import { CharacterError, isCharacterConfigured } from "@/lib/character";
+import { claimCharacterGeneration } from "@/lib/characters";
 import { isStorageConfigured } from "@/lib/storage";
 
 /**
@@ -81,9 +86,10 @@ import { isStorageConfigured } from "@/lib/storage";
  */
 
 const PROJECT_ID = "11111111-1111-1111-1111-111111111111";
+const CHARACTER_ID = "33333333-3333-3333-3333-333333333333";
 
 function pathFor(emotion: string, attempt = 1) {
-  return `broll/${PROJECT_ID}/${emotion}-${attempt}-0123456789abcdef.png`;
+  return `broll/characters/${CHARACTER_ID}/${emotion}-${attempt}-0123456789abcdef.png`;
 }
 
 function asset(emotion: string, attempt = 1) {
@@ -121,6 +127,7 @@ beforeEach(() => {
   state.clerkId = "user_clerk";
   state.dbUser = { id: "user-db" };
   state.project = { id: PROJECT_ID, style: "anime" };
+  state.character = { id: CHARACTER_ID, name: "Fuel imports", style: "anime" };
   state.allowed = true;
   state.used = 0;
   state.assets = [asset("neutral"), asset("happy")];
@@ -170,7 +177,15 @@ describe("the gates", () => {
     expect(state.calls).toEqual([]);
   });
 
-  it("404s a project with no set to redraw from", async () => {
+  it("404s a project with no character attached at all", async () => {
+    // A project can genuinely have none: one created before its character was
+    // generated, or one detached from its character on purpose.
+    state.character = null;
+    expect((await post()).status).toBe(404);
+    expect(state.calls).toEqual([]);
+  });
+
+  it("404s a character with no set to redraw from", async () => {
     // Every regeneration anchors on the stored `neutral`, and the original
     // photograph is deliberately gone, so with no set there is nothing to
     // anchor on.
@@ -198,8 +213,8 @@ describe("the cap (AC-64)", () => {
   });
 });
 
-describe("the claim (AC-72)", () => {
-  it("refuses while a set run holds it, and makes no Gemini call", async () => {
+describe("the claim (AC-72, AC-132)", () => {
+  it("refuses while another writer holds it, and makes no Gemini call", async () => {
     state.claim = "already_held";
 
     const response = await post();
@@ -210,17 +225,28 @@ describe("the claim (AC-72)", () => {
     expect(state.calls).toEqual(["claim"]);
   });
 
+  it("claims the character, not the project (AC-132)", async () => {
+    // The whole reason the claim moved. Two projects can share one character, so
+    // a project scoped claim lets two redraws of the same emotion pass each
+    // other and the loser's image disappears with no error.
+    await lines(await post());
+    expect(vi.mocked(claimCharacterGeneration).mock.calls[0]).toEqual([
+      "user-db",
+      CHARACTER_ID,
+    ]);
+  });
+
   it("takes the claim before reading the anchor or calling Gemini", async () => {
     await lines(await post());
     expect(state.calls.indexOf("claim")).toBeLessThan(state.calls.indexOf("gemini"));
   });
 
-  it("gives the claim back when the redraw fails, so the project is not stranded", async () => {
+  it("gives the claim back when the redraw fails, so the character is not stranded", async () => {
     state.regenError = new CharacterError("failed", "The image service failed twice.");
 
     const terminal = (await lines(await post())).pop();
     expect(terminal).toMatchObject({ error: expect.stringContaining("failed twice") });
-    expect(state.releases).toEqual([[PROJECT_ID]]);
+    expect(state.releases).toEqual([["user-db", CHARACTER_ID]]);
   });
 });
 
@@ -244,7 +270,7 @@ describe("the anchor and the new pathname", () => {
     // A new path every attempt: Vercel's CDN caches blobs for up to a month, so
     // an overwrite would serve back the very cutout the user rejected (AC-69).
     expect(variant?.pathname).toMatch(
-      new RegExp(`^broll/${PROJECT_ID}/happy-4-[0-9a-f]{16}\\.png$`)
+      new RegExp(`^broll/characters/${CHARACTER_ID}/happy-4-[0-9a-f]{16}\\.png$`)
     );
     expect(variant?.pathname).not.toBe(pathFor("happy", 3));
   });
@@ -253,7 +279,7 @@ describe("the anchor and the new pathname", () => {
     state.assets = [asset("neutral")];
     const variant = (await lines(await post("excited"))).find((line) => line.png);
     expect(variant?.pathname).toMatch(
-      new RegExp(`^broll/${PROJECT_ID}/excited-1-[0-9a-f]{16}\\.png$`)
+      new RegExp(`^broll/characters/${CHARACTER_ID}/excited-1-[0-9a-f]{16}\\.png$`)
     );
   });
 });

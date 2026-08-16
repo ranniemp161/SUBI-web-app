@@ -36,6 +36,7 @@ any, and mark a feature `done` when you decide it is._
 | 6 | Remaining templates + Scene Studio | Phase 5 | in-progress |
 | 7 | Batch export, zip, credits | Phase 6 | in-progress |
 | 9 | Scene Studio screen design | Phase 7 | in-progress |
+| 11 | Character reuse across projects | Phase 7 | in-progress |
 | 10 | Blocking and edge states | Phase 7 | planned |
 | 8 | Production deploy and error reporting | Deploy | in-progress |
 
@@ -924,6 +925,175 @@ revisiting.
 works: open a planned project, scan, judge, change one scene, export. A thin
 slice through the layers buys nothing here, because every layer under this screen
 is already built.
+
+### 11. Character reuse across projects · in-progress
+
+Enrolled by `/scope` on 2026-08-14, from the engineer noticing what the character
+pipeline costs a returning creator. Today a character set belongs to exactly one
+project and dies with it, so somebody who liked their character pays $2.00 again
+on the next video for a face they already approved and already reviewed. That is
+the kind of charge a user notices, and nothing in the plan covered it.
+
+**Intent**: Let a creator use a character they already generated on a new
+project, without paying for it twice and without reviewing it again.
+
+**Done when**: starting a new project, a creator can pick a character set they
+already own instead of uploading a photo, the scenes draw with it immediately,
+and **no credit is charged for the reuse**. Generating a brand new set still
+costs the full price.
+
+- [x] Design it (spec)
+      [0007](../../specs/broll/0007-character-reuse/index.md), 2026-08-14. A
+      character becomes a row the **user** owns: a new `broll_characters` table,
+      the six images hanging off it instead of off a project, and projects
+      pointing at one. Reuse is attaching, and it is free. The storage path and
+      the rule that authorizes every read and write move from the project to the
+      character, which is the part worth the most care and the reason the whole
+      first slice is one thread rather than an incremental add.
+
+      **The design found one thing the enrollment notes did not list.**
+      `claimBrollGeneration` claims the *project*, which serializes writers
+      correctly only while a character belongs to one project. Once two share
+      one, two regenerations of the same emotion race and the loser's image
+      vanishes with no error, which is the exact failure AC-72 was written to
+      prevent. So `broll_characters` carries its own `gen_claim_at` and a
+      regeneration claims the character.
+
+      Cross checked on a second model, which found nine things, seven of them
+      real gaps now closed. The serious one was in a route the design was barely
+      touching: `commit` returns early when the assets are already stored, and
+      that early return sits **before** the new write that points the project at
+      its character. A commit that stored and settled and then died would have
+      left a paid for character with no project pointing at it, and every retry
+      would have returned early without fixing it.
+- [ ] Build it: /develop character reuse
+  - [x] The ownership move, end to end: migration `0018`, the
+        `broll/characters/` storage path and the upload route's authorization,
+        the new `characters.ts` query module, and generate plus commit creating
+        and filling a character (AC-118 to AC-120, AC-127, AC-128, AC-131,
+        AC-139, AC-141 to AC-146). Landed 2026-08-14, code in
+        [packages/db/drizzle/0018_character_reuse.sql](../../../packages/db/drizzle/0018_character_reuse.sql),
+        [apps/broll/src/lib/characters.ts](../../../apps/broll/src/lib/characters.ts),
+        `asset-path.ts`, `assets.ts`, `storage.ts`, the three character routes,
+        the blob upload route, the sweep cron, and both project pages. The
+        migration is applied to the dev branch and confirmed live; the 18 old
+        asset rows and 19 stored objects are gone, which is about $6.00 of
+        character sets the engineer agreed on 2026-08-14 to re-pay for rather
+        than carry two pathname shapes through the security check.
+
+        Task 3 of the spec's build plan is deliberately partial: rename,
+        delete, the usage query and the claim pair are left for tasks 6 and 7,
+        where their callers land. Four unused functions on the one path whose
+        risk is a cross user read is worse than writing them beside their
+        callers.
+  - [x] Reuse: the picker at project setup and on a project with no character,
+        the optional `characterId` on both server actions, the style copy on
+        both paths, and attach (AC-121 to AC-126, AC-147, AC-148). Landed
+        2026-08-14, code in
+        [apps/broll/src/lib/characters.ts](../../../apps/broll/src/lib/characters.ts),
+        [character-picker.ts](../../../apps/broll/src/lib/character-picker.ts),
+        [ids.ts](../../../apps/broll/src/lib/ids.ts), the
+        [character PATCH route](../../../apps/broll/src/app/api/projects/%5Bid%5D/character/route.ts),
+        [actions.ts](../../../apps/broll/src/app/actions.ts),
+        [dashboard/new/](../../../apps/broll/src/app/dashboard/new/) and
+        [character-reuse.tsx](../../../apps/broll/src/app/dashboard/%5Bid%5D/character-reuse.tsx).
+        B-roll went from 475 tests to 492; `next build` compiles both screens.
+
+        **Reuse is now free in the code, and nobody has watched it happen.**
+        The queries were driven against the live dev branch with seeded rows
+        (five of six stays hidden, the attach copies the style, a second attach
+        refuses), but the branch holds no real character, because migration
+        `0018` deleted them all and generating one costs $2.00. So the first
+        real reuse is the first thing `/check verify` should buy.
+  - [x] Regeneration on a shared character: the claim on the character, the
+        affected projects named before it runs, and the paid re-run forking
+        rather than replacing (AC-129, AC-132, AC-133, AC-149). Landed
+        2026-08-14, code in
+        [characters.ts](../../../apps/broll/src/lib/characters.ts) (the claim
+        pair, the ten minute liveness rule and the usage query), the
+        [character route](../../../apps/broll/src/app/api/projects/%5Bid%5D/character/route.ts)
+        (a new `GET`, and the AC-149 refusal), the regenerate and commit routes,
+        and
+        [character-panel.tsx](../../../apps/broll/src/app/dashboard/%5Bid%5D/character-panel.tsx).
+        B-roll went from 492 tests to 506.
+
+        **The old claim pair was deleted from `@repo/billing`, not left beside
+        the new one.** `claimBrollGeneration` and `releaseBrollClaim` claimed the
+        *project* with a zero hold; they belonged in that package because
+        `broll_projects.gen_claim_at` moves with `hold_micros`. The character
+        claim touches no balance, so it lives beside the rows it protects, and
+        the two are not allowed to coexist: a second unused claim implementation
+        on a money path is the drift `@repo/billing` exists to end. Two lines of
+        [packages/billing/AGENTS.md](../../../packages/billing/AGENTS.md) still
+        describe the deleted pair, which `/sync` owns.
+
+        **AC-129 turned out to need no new write, only honest copy.** Every run
+        already creates a character before turn 1 and the commit already
+        repoints only this project, so a paid re-run forks by construction. The
+        confirm panel was the part that was wrong: it promised the run "replaces
+        all six variants", which is the old model and the opposite of what
+        happens now. It now names the character being left behind, and says
+        which projects stay on it.
+
+        **The claim and the usage query were driven against the live dev
+        branch**, because no unit test proves an interval predicate runs on
+        Postgres: claim, refusal, release, an eleven minute old claim taken over,
+        another user refused, and the usage list answering one project and never
+        a stranger's. Every seeded row was deleted afterwards. **Nobody has
+        watched any of this in a browser**, which is `/check verify`'s box.
+  - [ ] The characters page: list with thumbnails, usage and allowance, rename,
+        delete with the in use refusal, and detach (AC-134 to AC-137, AC-140)
+  - [ ] The faceless project: character scenes that say what they need, render
+        and export refusing with that reason, and empty characters swept
+        (AC-130, AC-138)
+- [ ] Verify it: /check verify character reuse
+- [ ] Test it: /test character reuse
+
+**Done, and it cost about $6.00. Applied 2026-08-14.** Migration `0018` is a
+clean break: it deletes every existing `broll_assets` row, because there is no
+column to move them to and carrying a second accepted pathname shape through the
+security check costs far more than $2.00. The warning that used to sit here said
+to run it before the four owed verifications, or expect to pay twice. It ran
+after three sets had already been generated: 18 asset rows and 19 stored objects
+were deleted on the dev branch, which is three sets at $2.00 that features 3 and
+4's verifications will have to buy again. The engineer took that call knowingly
+at the start of the build, which is what phase 0 of the spec's migration plan
+exists to force. Nothing else was lost, and the four verification boxes are
+unaffected apart from the price.
+
+**Priced at zero on purpose, decided 2026-08-14.** The $2.00 buys a reusable
+character rather than one project's worth of images, which is a better thing to
+sell than a discount nobody can explain. That decision is the engineer's, made
+at enrollment; the spec inherits it rather than reopening it, and it belongs in
+the same conversation as the wider pricing review that is still open with the
+client.
+
+**This is not a small change, and three specific things are why.** None of them
+blocks it. They are written down so the spec starts from evidence rather than
+rediscovering them.
+
+- **The schema binds a character to one project.**
+  `broll_assets.broll_project_id` is `NOT NULL` and cascades on delete, and
+  `broll_assets_project_emotion_uq` is unique on (project, emotion). A reusable
+  set has to become something the **user** owns that projects point at, which is
+  a shared schema change and therefore a `packages/db` migration.
+- **The storage path embeds the project id**, `broll/<projectId>/<emotion>-<attempt>-<random>.png`,
+  minted by `asset-path.ts`. So either the assets are copied per project or the
+  path scheme changes, and the copy option quietly doubles storage on a Blob
+  quota the scope already flags as tight.
+- **That path is the authorization.** `isCharacterAssetPathname(pathname, projectId)`
+  is what proves a signed read or a presigned upload belongs to the caller, and
+  `apps/broll/AGENTS.md` calls it the whole security of the upload route. Any
+  new scheme has to carry that same property, and it is the part worth a cross
+  model critic rather than speed.
+
+**Why it sits here rather than in Phase 2.** It genuinely belongs to the
+character pipeline, but it runs late on purpose: the four owed verifications for
+features 3 and 4 come first, so the flow gets designed by someone who has just
+paid for character sets by hand and knows what the reuse step should feel like.
+It is placed ahead of feature 10 for the same reason it is worth doing at all,
+and it makes every later test project cheaper, since verification stops costing
+$2.00 a time.
 
 ### 10. Blocking and edge states · planned · from spec 0006
 

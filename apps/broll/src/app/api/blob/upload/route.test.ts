@@ -3,10 +3,20 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 vi.mock("server-only", () => ({}));
 vi.mock("@repo/server-shared/observability", () => ({ reportError: vi.fn() }));
 
+const CHARACTER_ID = "33333333-3333-3333-3333-333333333333";
+const OTHER_CHARACTER_ID = "44444444-4444-4444-4444-444444444444";
+const ASSET_PATH = `broll/characters/${CHARACTER_ID}/neutral-1-0123456789abcdef.png`;
+
+// The literal id is repeated rather than referenced: `vi.hoisted` runs before
+// the consts above are initialised, so naming one here is a temporal dead zone
+// error rather than a tidier test.
 const state = vi.hoisted(() => ({
   clerkId: "user_clerk" as string | null,
   dbUser: { id: "user-db" } as { id: string } | null,
-  project: { id: "p" } as Record<string, unknown> | null,
+  character: { id: "33333333-3333-3333-3333-333333333333" } as Record<
+    string,
+    unknown
+  > | null,
   configured: true,
 }));
 
@@ -16,8 +26,8 @@ vi.mock("@clerk/nextjs/server", () => ({
 vi.mock("@repo/server-shared/authz", () => ({
   getAuthorizedDbUser: vi.fn(async () => state.dbUser),
 }));
-vi.mock("@/lib/projects", () => ({
-  getBrollProject: vi.fn(async () => state.project),
+vi.mock("@/lib/characters", () => ({
+  getBrollCharacter: vi.fn(async () => state.character),
 }));
 vi.mock("@vercel/blob", () => ({ issueSignedToken: vi.fn(async () => "signed-token") }));
 vi.mock("@vercel/blob/client", () => ({
@@ -28,6 +38,8 @@ vi.mock("@vercel/blob/client", () => ({
 }));
 
 import { handleUploadPresigned } from "@vercel/blob/client";
+import { issueSignedToken } from "@vercel/blob";
+import { getBrollCharacter } from "@/lib/characters";
 import { POST } from "./route";
 
 /**
@@ -49,7 +61,7 @@ function presignRequest() {
     body: JSON.stringify({
       type: "blob.generate-presigned-url",
       payload: {
-        pathname: "broll/p/neutral-1-0123456789abcdef.png",
+        pathname: ASSET_PATH,
         multipart: false,
         clientPayload: null,
       },
@@ -60,7 +72,7 @@ function presignRequest() {
 beforeEach(() => {
   state.clerkId = "user_clerk";
   state.dbUser = { id: "user-db" };
-  state.project = { id: "p" };
+  state.character = { id: CHARACTER_ID };
   state.configured = true;
   process.env.BLOB_READ_WRITE_TOKEN = "test-token-not-a-credential";
   vi.clearAllMocks();
@@ -117,6 +129,98 @@ describe("the webhook key the SDK demands and never uses", () => {
 
     expect(response.status).toBe(400);
     expect(handleUploadPresigned).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The authorization inside `getSignedToken`, which `apps/broll/AGENTS.md` calls
+ * the whole security of this route.
+ *
+ * The SDK is mocked, so the callback the route hands it is never invoked by the
+ * request itself. These tests pull it back out of the mock and call it directly,
+ * which is the only way to exercise it at all. Without this block the one thing
+ * that stops this being an anonymous write endpoint into the store has no test.
+ *
+ * Spec `broll/0007` moved this check one level over, from the project in the
+ * pathname to the character in it, which is exactly the kind of change that
+ * looks safe and is not (AC-142).
+ */
+describe("the authorization inside getSignedToken (AC-142)", () => {
+  async function signedTokenFor(pathname: string) {
+    await POST(presignRequest());
+    const passed = vi.mocked(handleUploadPresigned).mock.calls[0][0];
+    // The SDK passes the client payload and the multipart flag alongside the
+    // pathname. Neither is read by this route: the pathname is the whole of its
+    // authorization, which is the property these tests are here to pin.
+    return passed.getSignedToken(pathname, null, false);
+  }
+
+  it("signs a well formed path whose character belongs to the caller", async () => {
+    const result = await signedTokenFor(ASSET_PATH);
+    expect(result).toMatchObject({ token: "signed-token" });
+  });
+
+  it("scopes the signature to that one pathname, never the whole store", async () => {
+    // Unlike the read delegation in `storage.ts`, this flow does involve the
+    // client, so a wildcard here would be a signing key for every object.
+    await signedTokenFor(ASSET_PATH);
+    expect(vi.mocked(issueSignedToken).mock.calls[0][0]).toMatchObject({
+      pathname: ASSET_PATH,
+      operations: ["put"],
+    });
+  });
+
+  it("refuses a path naming a character the caller does not own", async () => {
+    // The owner scoped read answers null for someone else's character exactly
+    // as it does for a missing one, so this is the cross user write refused.
+    state.character = null;
+    await expect(
+      signedTokenFor(
+        `broll/characters/${OTHER_CHARACTER_ID}/neutral-1-0123456789abcdef.png`
+      )
+    ).rejects.toThrow("Not authorized");
+    expect(issueSignedToken).not.toHaveBeenCalled();
+  });
+
+  it("refuses without ever looking up an id when the path is malformed", async () => {
+    // The order is load bearing: a malformed path must yield no id at all, so
+    // there is nothing to look up. Traversal is impossible by construction here
+    // rather than filtered.
+    for (const pathname of [
+      `broll/characters/${CHARACTER_ID}/../${OTHER_CHARACTER_ID}/neutral-1-0123456789abcdef.png`,
+      `broll/characters/${CHARACTER_ID}/nested/neutral-1-0123456789abcdef.png`,
+      `broll/characters/${CHARACTER_ID}/neutral-1-0123456789abcdef.jpg`,
+      "broll/characters/",
+      "not-a-path",
+      "",
+    ]) {
+      vi.mocked(getBrollCharacter).mockClear();
+      await expect(signedTokenFor(pathname)).rejects.toThrow("Not authorized");
+      expect(getBrollCharacter).not.toHaveBeenCalled();
+      vi.mocked(handleUploadPresigned).mockClear();
+    }
+  });
+
+  it("refuses the old project shaped path, yielding no id to look up (AC-141)", async () => {
+    // `broll/<id>/<emotion>-…` was a valid pathname before spec `broll/0007`.
+    // It must now fail at the shape check, before any lookup, so the id in it
+    // is never checked against the wrong table.
+    await expect(
+      signedTokenFor(`broll/${CHARACTER_ID}/neutral-1-0123456789abcdef.png`)
+    ).rejects.toThrow("Not authorized");
+    expect(getBrollCharacter).not.toHaveBeenCalled();
+  });
+
+  it("refuses without a session, before any pathname is even parsed", async () => {
+    state.clerkId = null;
+    await expect(signedTokenFor(ASSET_PATH)).rejects.toThrow("Not authorized");
+    expect(getBrollCharacter).not.toHaveBeenCalled();
+  });
+
+  it("refuses a signed in user with no provisioned row", async () => {
+    state.dbUser = null;
+    await expect(signedTokenFor(ASSET_PATH)).rejects.toThrow("Not authorized");
+    expect(getBrollCharacter).not.toHaveBeenCalled();
   });
 });
 

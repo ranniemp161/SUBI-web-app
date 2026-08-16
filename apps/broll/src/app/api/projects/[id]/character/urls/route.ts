@@ -2,7 +2,7 @@ import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import { getAuthorizedDbUser } from "@repo/server-shared/authz";
 import { reportError } from "@repo/server-shared/observability";
-import { getBrollProject } from "@/lib/projects";
+import { getProjectCharacter } from "@/lib/characters";
 import { listCharacterAssets } from "@/lib/assets";
 import { presignAssetReads, isStorageConfigured } from "@/lib/storage";
 
@@ -40,9 +40,13 @@ export async function GET(
       );
     }
 
-    const project = await getBrollProject(user.id, id);
-    if (!project) {
-      return NextResponse.json({ error: "Project not found." }, { status: 404 });
+    // One owner scoped statement resolves the project and its character
+    // together. A project that is not yours, one that does not exist, and one
+    // with no character yet all answer the same way, which is what keeps a
+    // project id from being confirmed to a stranger (AC-143).
+    const character = await getProjectCharacter(user.id, id);
+    if (!character) {
+      return NextResponse.json({ assets: [] });
     }
 
     if (!isStorageConfigured()) {
@@ -52,7 +56,7 @@ export async function GET(
       );
     }
 
-    const assets = await listCharacterAssets(user.id, id);
+    const assets = await listCharacterAssets(user.id, character.id);
     const signed = await presignAssetReads(assets.map((asset) => asset.pathname));
     const urlFor = new Map(signed.map((entry) => [entry.pathname, entry]));
 

@@ -1,66 +1,90 @@
 import { describe, expect, it } from "vitest";
 import {
   characterAssetPathname,
+  characterAssetPrefix,
+  characterIdFromAssetPathname,
   isCharacterAssetPathname,
-  projectAssetPrefix,
-  projectIdFromAssetPathname,
 } from "@/lib/asset-path";
 
-const PROJECT = "3f7c1e2a-0b44-4d19-9a6e-8c5b21d0f7aa";
+const CHARACTER = "3f7c1e2a-0b44-4d19-9a6e-8c5b21d0f7aa";
 const OTHER = "9d2b4c8e-1a33-4f70-8b21-6e9c04a5d1bb";
 const RANDOM = "0123456789abcdef";
 
+/**
+ * A path in the shape spec `broll/0004` used, where the segment after `broll/`
+ * was a **project** id rather than a character id.
+ *
+ * It appears throughout this file as an explicit rejection case, which spec
+ * `broll/0007`'s migration risks call for by name: the two shapes are both
+ * `broll/<something>/<emotion>-…` and a reviewer skimming the regular
+ * expressions can read one for the other. Nothing accepts it any more, and the
+ * `0018` migration deleted every row that referenced one.
+ */
+const OLD_PROJECT_SHAPED = `broll/${CHARACTER}/neutral-1-${RANDOM}.png`;
+
 describe("characterAssetPathname", () => {
-  it("mints under the project's prefix, with emotion, attempt and randomness", () => {
-    expect(characterAssetPathname(PROJECT, "neutral", 1, RANDOM)).toBe(
-      `broll/${PROJECT}/neutral-1-${RANDOM}.png`
+  it("mints under the character's prefix, with emotion, attempt and randomness", () => {
+    expect(characterAssetPathname(CHARACTER, "neutral", 1, RANDOM)).toBe(
+      `broll/characters/${CHARACTER}/neutral-1-${RANDOM}.png`
     );
   });
 
   it("gives a regeneration a new path rather than reusing the old one (AC-69)", () => {
     // Overwriting in place would serve the superseded cutout back from the CDN
     // cache for up to a minute, to the very user who just rejected it.
-    const first = characterAssetPathname(PROJECT, "happy", 1);
-    const second = characterAssetPathname(PROJECT, "happy", 2);
+    const first = characterAssetPathname(CHARACTER, "happy", 1);
+    const second = characterAssetPathname(CHARACTER, "happy", 2);
     expect(first).not.toBe(second);
   });
 
   it("produces a path it will itself accept", () => {
     for (const emotion of ["neutral", "happy", "surprised", "thoughtful", "skeptical", "excited"]) {
-      const pathname = characterAssetPathname(PROJECT, emotion, 3);
-      expect(isCharacterAssetPathname(pathname, PROJECT)).toBe(true);
+      const pathname = characterAssetPathname(CHARACTER, emotion, 3);
+      expect(isCharacterAssetPathname(pathname, CHARACTER)).toBe(true);
     }
   });
 
   it("uses real randomness when none is injected", () => {
-    const a = characterAssetPathname(PROJECT, "neutral", 1);
-    const b = characterAssetPathname(PROJECT, "neutral", 1);
+    const a = characterAssetPathname(CHARACTER, "neutral", 1);
+    const b = characterAssetPathname(CHARACTER, "neutral", 1);
     expect(a).not.toBe(b);
   });
 });
 
-describe("isCharacterAssetPathname (AC-70)", () => {
-  it("accepts this project's own asset", () => {
+describe("isCharacterAssetPathname (AC-70, AC-141)", () => {
+  it("accepts this character's own asset", () => {
     expect(
-      isCharacterAssetPathname(`broll/${PROJECT}/neutral-1-${RANDOM}.png`, PROJECT)
+      isCharacterAssetPathname(
+        `broll/characters/${CHARACTER}/neutral-1-${RANDOM}.png`,
+        CHARACTER
+      )
     ).toBe(true);
   });
 
-  it("rejects a well formed path belonging to another project", () => {
+  it("rejects a well formed path belonging to another character", () => {
     // The case that matters: a real, valid pathname, just not this caller's.
     // Accepting it would let broll_assets.r2_key point at someone else's object.
     expect(
-      isCharacterAssetPathname(`broll/${OTHER}/neutral-1-${RANDOM}.png`, PROJECT)
+      isCharacterAssetPathname(
+        `broll/characters/${OTHER}/neutral-1-${RANDOM}.png`,
+        CHARACTER
+      )
     ).toBe(false);
   });
 
-  it("rejects traversal out of the project prefix", () => {
+  it("rejects the old project shaped path (AC-141)", () => {
+    // Spec `broll/0007` is a clean break: a path in the old shape matches
+    // nothing and is never accepted, even when the id in it is this caller's.
+    expect(isCharacterAssetPathname(OLD_PROJECT_SHAPED, CHARACTER)).toBe(false);
+  });
+
+  it("rejects traversal out of the character prefix", () => {
     for (const pathname of [
-      `broll/${PROJECT}/../${OTHER}/neutral-1-${RANDOM}.png`,
-      `broll/${PROJECT}/../../etc/passwd.png`,
-      `broll/${PROJECT}/sub/neutral-1-${RANDOM}.png`,
+      `broll/characters/${CHARACTER}/../${OTHER}/neutral-1-${RANDOM}.png`,
+      `broll/characters/${CHARACTER}/../../etc/passwd.png`,
+      `broll/characters/${CHARACTER}/sub/neutral-1-${RANDOM}.png`,
     ]) {
-      expect(isCharacterAssetPathname(pathname, PROJECT)).toBe(false);
+      expect(isCharacterAssetPathname(pathname, CHARACTER)).toBe(false);
     }
   });
 
@@ -75,20 +99,29 @@ describe("isCharacterAssetPathname (AC-70)", () => {
       `neutral-1-${RANDOM}`,
       "",
     ]) {
-      expect(isCharacterAssetPathname(`broll/${PROJECT}/${tail}`, PROJECT)).toBe(false);
+      expect(
+        isCharacterAssetPathname(`broll/characters/${CHARACTER}/${tail}`, CHARACTER)
+      ).toBe(false);
     }
   });
 
   it("rejects a path outside the broll namespace entirely", () => {
-    expect(isCharacterAssetPathname(`projects/${PROJECT}/audio.png`, PROJECT)).toBe(false);
-    expect(isCharacterAssetPathname(`${PROJECT}/neutral-1-${RANDOM}.png`, PROJECT)).toBe(false);
+    expect(isCharacterAssetPathname(`projects/${CHARACTER}/audio.png`, CHARACTER)).toBe(
+      false
+    );
+    expect(
+      isCharacterAssetPathname(`${CHARACTER}/neutral-1-${RANDOM}.png`, CHARACTER)
+    ).toBe(false);
   });
 
-  it("rejects a prefix that only looks like this project's", () => {
-    // `startsWith` on a prefix without its trailing slash would let a project
+  it("rejects a prefix that only looks like this character's", () => {
+    // `startsWith` on a prefix without its trailing slash would let a character
     // whose id extends this one's slip through.
     expect(
-      isCharacterAssetPathname(`broll/${PROJECT}extra/neutral-1-${RANDOM}.png`, PROJECT)
+      isCharacterAssetPathname(
+        `broll/characters/${CHARACTER}extra/neutral-1-${RANDOM}.png`,
+        CHARACTER
+      )
     ).toBe(false);
   });
 
@@ -96,39 +129,53 @@ describe("isCharacterAssetPathname (AC-70)", () => {
     // A seventh emotion must not invalidate paths already stored, which is why
     // the shape is matched rather than membership in CHARACTER_EMOTIONS.
     expect(
-      isCharacterAssetPathname(`broll/${PROJECT}/curious-1-${RANDOM}.png`, PROJECT)
+      isCharacterAssetPathname(
+        `broll/characters/${CHARACTER}/curious-1-${RANDOM}.png`,
+        CHARACTER
+      )
     ).toBe(true);
   });
 });
 
-describe("projectIdFromAssetPathname", () => {
+describe("characterIdFromAssetPathname", () => {
   it("recovers the id from a well formed path", () => {
-    expect(projectIdFromAssetPathname(`broll/${PROJECT}/neutral-1-${RANDOM}.png`)).toBe(
-      PROJECT
-    );
+    expect(
+      characterIdFromAssetPathname(
+        `broll/characters/${CHARACTER}/neutral-1-${RANDOM}.png`
+      )
+    ).toBe(CHARACTER);
+  });
+
+  it("yields no id at all from an old project shaped path (AC-141)", () => {
+    // The upload route looks the returned id up in `broll_characters`. If this
+    // returned the segment after `broll/` for an old shaped path, that id would
+    // be a **project** id being checked against the wrong table — which is
+    // exactly the confusion the literal `characters/` segment prevents.
+    expect(characterIdFromAssetPathname(OLD_PROJECT_SHAPED)).toBeNull();
   });
 
   it("returns null for anything it would not accept, so no id can be mined from a bad path", () => {
     for (const pathname of [
-      `broll/${PROJECT}/../../secrets.png`,
-      `broll/${PROJECT}/neutral-1-${RANDOM}.jpg`,
-      `broll/${PROJECT}/`,
+      `broll/characters/${CHARACTER}/../../secrets.png`,
+      `broll/characters/${CHARACTER}/neutral-1-${RANDOM}.jpg`,
+      `broll/characters/${CHARACTER}/`,
+      "broll/characters/",
       "broll/",
       "",
       "not-a-path",
     ]) {
-      expect(projectIdFromAssetPathname(pathname)).toBeNull();
+      expect(characterIdFromAssetPathname(pathname)).toBeNull();
     }
   });
 
   it("round trips with the minter", () => {
-    const pathname = characterAssetPathname(PROJECT, "skeptical", 4);
-    expect(projectIdFromAssetPathname(pathname)).toBe(PROJECT);
+    const pathname = characterAssetPathname(CHARACTER, "skeptical", 4);
+    expect(characterIdFromAssetPathname(pathname)).toBe(CHARACTER);
   });
 });
 
-describe("projectAssetPrefix", () => {
+describe("characterAssetPrefix", () => {
   it("ends with a slash so a sibling id cannot match by prefix", () => {
-    expect(projectAssetPrefix(PROJECT)).toBe(`broll/${PROJECT}/`);
+    expect(characterAssetPrefix(CHARACTER)).toBe(`broll/characters/${CHARACTER}/`);
   });
 });

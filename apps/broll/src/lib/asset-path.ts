@@ -1,6 +1,6 @@
 /**
  * Where a character asset lives in the blob store, and the only place that
- * decides it (spec `broll/0004` AC-70).
+ * decides it (spec `broll/0004` AC-70, spec `broll/0007` AC-141).
  *
  * Pure and dependency free on purpose, the same reason `styles.ts` and
  * `emotions.ts` are, and the same precedent `apps/rough-cut/src/lib/blob-path.ts`
@@ -14,11 +14,19 @@
  * for one property is deliberate: without them a client supplied string would
  * become a stored key, and a stored key pointing at another user's object is a
  * cross user read that no amount of query scoping would catch.
+ *
+ * **The path names a character, not a project** (spec `broll/0007`). The images
+ * belong to a reusable character that several projects may point at, so the
+ * prefix and the ownership question moved one level over with them. The old
+ * project shaped path, `broll/<projectId>/<emotion>-…`, matches nothing here and
+ * is never accepted: `asset-path.test.ts` keeps one as an explicit rejection
+ * case, because the two shapes look alike enough to be confused by a reader
+ * skimming the regular expressions.
  */
 
-/** Every object for one project lives under this prefix, and nothing else does. */
-export function projectAssetPrefix(projectId: string): string {
-  return `broll/${projectId}/`;
+/** Every object for one character lives under this prefix, and nothing else does. */
+export function characterAssetPrefix(characterId: string): string {
+  return `broll/characters/${characterId}/`;
 }
 
 /**
@@ -38,7 +46,7 @@ export function projectAssetPrefix(projectId: string): string {
 const ASSET_TAIL = /^[a-z]+-[0-9]+-[0-9a-f]{16}\.png$/;
 
 /**
- * 64 bits of randomness, so knowing a project id does not yield a key.
+ * 64 bits of randomness, so knowing a character id does not yield a key.
  *
  * The store is private and every read is a signed URL, so this is defence in
  * depth rather than the only lock. It exists because `broll_assets.r2_key` is
@@ -66,42 +74,46 @@ function randomSuffix(): string {
  * global crypto.
  */
 export function characterAssetPathname(
-  projectId: string,
+  characterId: string,
   emotion: string,
   attempt: number,
   random: string = randomSuffix()
 ): string {
-  return `${projectAssetPrefix(projectId)}${emotion}-${attempt}-${random}.png`;
+  return `${characterAssetPrefix(characterId)}${emotion}-${attempt}-${random}.png`;
 }
 
 /**
- * True only if `pathname` is a character asset belonging to `projectId`.
+ * True only if `pathname` is a character asset belonging to `characterId`.
  *
- * `projectId` must already be a project the caller was proven to own (the routes
- * resolve it through `getBrollProject`, which scopes by `user_id`). Given that,
- * a true here means the object is this user's to write or to reference.
+ * `characterId` must already be a character the caller was proven to own (the
+ * routes resolve it through `getBrollCharacter`, which scopes by `user_id`).
+ * Given that, a true here means the object is this user's to write or to
+ * reference.
  */
 export function isCharacterAssetPathname(
   pathname: string,
-  projectId: string
+  characterId: string
 ): boolean {
-  const prefix = projectAssetPrefix(projectId);
+  const prefix = characterAssetPrefix(characterId);
   if (!pathname.startsWith(prefix)) return false;
   return ASSET_TAIL.test(pathname.slice(prefix.length));
 }
 
 /**
- * Recover the owning project id from a pathname, so a route handed only a
- * pathname (the presigned upload callback) can look the project up and check
+ * Recover the owning character id from a pathname, so a route handed only a
+ * pathname (the presigned upload callback) can look the character up and check
  * ownership before it signs anything.
  *
  * Returns null unless the whole pathname is a well formed character asset path,
  * so a caller can never get an id back out of a string this module would reject.
+ * The `characters/` segment is matched literally, which is what makes an old
+ * project shaped path yield no id at all rather than yielding a project id that
+ * would then be looked up in the wrong table.
  */
-export function projectIdFromAssetPathname(pathname: string): string | null {
-  const match = pathname.match(/^broll\/([^/]+)\/(.+)$/);
+export function characterIdFromAssetPathname(pathname: string): string | null {
+  const match = pathname.match(/^broll\/characters\/([^/]+)\/(.+)$/);
   if (!match) return null;
-  const [, projectId, tail] = match;
+  const [, characterId, tail] = match;
   if (!ASSET_TAIL.test(tail)) return null;
-  return projectId;
+  return characterId;
 }
