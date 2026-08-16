@@ -206,6 +206,12 @@ export type SceneEditContext = {
  * answers 404, which one statement cannot distinguish — both return zero rows.
  * A plan re-run landing between the two is the benign case and the one the spec
  * names: the write hits nothing and the route answers 404, which is the truth.
+ *
+ * **The emotions come from the project's character, not from the project.**
+ * Spec `broll/0007` moved an asset's owner one table over, so the subquery
+ * matches on `broll_characters.id` through `broll_projects.broll_character_id`.
+ * A project with no character attached yields an empty array, which is the same
+ * answer it gave before and is what the route reads as "no character set".
  */
 export async function getSceneEditContext(
   userId: string,
@@ -219,7 +225,7 @@ export async function getSceneEditContext(
       (s.chart IS NOT NULL) AS has_chart,
       coalesce(
         (SELECT array_agg(a.emotion) FROM broll_assets a
-          WHERE a.broll_project_id = s.broll_project_id),
+          WHERE a.broll_character_id = p.broll_character_id),
         ARRAY[]::text[]
       ) AS emotions
     FROM broll_scenes s
