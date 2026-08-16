@@ -6,51 +6,39 @@ import { brollProjects } from "@repo/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { WALLET_URL } from "@/lib/env";
 import { formatUsd } from "@repo/billing/pricing";
+import { Badge, Card } from "@/components/ui";
 import Link from "next/link";
 
-/**
- * The project list. Proves the whole spine is wired: Clerk session -> the
- * shared `users` row -> the shared database -> this app's own tables.
- *
- * NOTE the explicit column list. `broll_projects.transcript` holds a document
- * of up to 5 MB and a list never displays it, so selecting it here would move
- * tens of megabytes per page over the HTTP driver (spec broll/0002, AC-39).
- * Nothing in the database enforces that; it is a convention, so it is stated
- * where it has to hold.
- */
+function formatRuntime(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = Math.round(seconds % 60);
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
 export default async function Dashboard() {
-  // proxy.ts already rejected an anonymous request, so a missing session here
-  // is a belt-and-braces case rather than the normal path.
   const { userId: clerkId } = await auth();
   if (!clerkId) redirect("/sign-in");
 
-  // Also provisions the `users` row lazily, covering the window where Clerk
-  // granted a session before the user.created webhook landed.
-  //
-  // NEVER `return null` from either branch. A page component that returns null
-  // falls through to Next's not-found boundary, so a signed-in user in a real,
-  // recoverable state gets a bare 404 with nothing to act on. That is exactly
-  // what happened the first time this page was opened with a session.
   const user = await getAuthorizedDbUser(clerkId);
   if (!user) {
     return (
       <div className="max-w-[1200px] mx-auto px-8 py-24">
-        <div className="broll-glow rounded-xl p-12 max-w-xl">
+        <Card variant="glow" className="p-12 max-w-xl">
           <h1
             className="text-xl font-bold"
             style={{ fontFamily: "var(--font-space-grotesk)" }}
           >
             Finishing your account setup
           </h1>
-          <p className="mt-3 text-sm" style={{ color: "var(--broll-muted)" }}>
+          <p className="mt-3 text-sm text-zinc-400">
             You are signed in, but this account has no record yet. That happens
             when the email on your profile is not both your primary address and
             verified, which is the one thing membership is allowed to follow.
           </p>
-          <p className="mt-3 text-sm" style={{ color: "var(--broll-muted)" }}>
+          <p className="mt-3 text-sm text-zinc-400">
             Verify your primary email address, then reload this page.
           </p>
-        </div>
+        </Card>
       </div>
     );
   }
@@ -70,62 +58,103 @@ export default async function Dashboard() {
     .limit(12);
 
   return (
-    <div className="max-w-[1200px] mx-auto px-8 py-12">
-      <div className="flex items-baseline justify-between">
-        <div className="flex items-center gap-4">
+    <div className="max-w-[1400px] w-full mx-auto px-6 sm:px-8 py-10">
+      <div className="flex flex-wrap items-center justify-between gap-4 pb-6 border-b border-white/[0.08]">
+        <div>
           <h1
-            className="text-2xl font-bold tracking-tight"
+            className="text-2xl sm:text-3xl font-bold tracking-tight text-white"
             style={{ fontFamily: "var(--font-space-grotesk)" }}
           >
             Your projects
           </h1>
+          <p className="mt-1 text-xs text-zinc-400">
+            Each project turns a timed transcript and a photo into timecode-named B-roll clips.
+          </p>
+        </div>
+
+        <div className="flex items-center gap-4">
+          <a
+            href={`${WALLET_URL}/dashboard`}
+            className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#141518] border border-white/10 text-zinc-300 hover:text-white transition-colors broll-tabular"
+          >
+            Balance <strong className="text-white">{formatUsd(user.balanceMicros)}</strong> · Top up →
+          </a>
+
           <Link
             href="/dashboard/new"
-            className="px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
+            className="px-4 py-2 rounded-lg text-xs font-bold transition-all shadow-md"
             style={{
               background: "var(--broll-accent)",
               color: "var(--broll-accent-foreground)",
             }}
           >
-            New project
+            + New project
           </Link>
         </div>
-        <a
-          href={`${WALLET_URL}/dashboard`}
-          className="text-sm broll-tabular"
-          style={{ color: "var(--broll-muted)" }}
-        >
-          Balance {formatUsd(user.balanceMicros)} · Top up →
-        </a>
       </div>
 
       {projects.length === 0 ? (
-        <div className="broll-glow rounded-xl mt-8 p-12 text-center">
-          <p className="text-lg font-semibold">No projects yet</p>
-          <p className="mt-2 text-sm" style={{ color: "var(--broll-muted)" }}>
+        <Card variant="glow" className="mt-10 p-12 text-center max-w-xl mx-auto">
+          <div className="w-12 h-12 rounded-xl mx-auto mb-4 flex items-center justify-center bg-[var(--broll-accent)]/10 text-[var(--broll-accent)]">
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+          </div>
+          <h2 className="text-lg font-bold text-white mb-2" style={{ fontFamily: "var(--font-space-grotesk)" }}>
+            No projects yet
+          </h2>
+          <p className="text-xs text-zinc-400 leading-relaxed mb-6">
             A project starts with a timed transcript, either exported from Ruff
-            Cut or uploaded as an SRT or VTT file.
+            Cut or uploaded as an SRT, VTT, or JSON file.
           </p>
-        </div>
+          <Link
+            href="/dashboard/new"
+            className="inline-block px-5 py-2.5 rounded-lg text-xs font-bold transition-all shadow-lg"
+            style={{
+              background: "var(--broll-accent)",
+              color: "var(--broll-accent-foreground)",
+            }}
+          >
+            Create your first project
+          </Link>
+        </Card>
       ) : (
-        <ul className="mt-8 grid gap-4">
+        <div className="mt-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {projects.map((p) => (
-            <li key={p.id}>
-              <Link
-                href={`/dashboard/${p.id}`}
-                className="broll-glass rounded-xl p-5 flex items-center justify-between"
-              >
-                <span className="font-semibold">{p.name}</span>
-                <span
-                  className="text-sm broll-tabular"
-                  style={{ color: "var(--broll-muted)" }}
-                >
-                  {Math.round(p.durationMs / 1000)}s · {p.style}
+            <Link
+              key={p.id}
+              href={`/dashboard/${p.id}`}
+              className="rounded-xl p-5 bg-[#111215] border border-white/[0.08] hover:border-white/20 transition-all group flex flex-col justify-between"
+            >
+              <div>
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <h3 className="font-bold text-base text-white group-hover:text-[var(--broll-accent)] transition-colors truncate">
+                    {p.name}
+                  </h3>
+                  <Badge variant="neutral" size="sm" className="shrink-0">
+                    {p.style}
+                  </Badge>
+                </div>
+
+                <div className="flex items-center gap-3 text-xs text-zinc-400 broll-tabular">
+                  <span>Runtime <strong className="text-zinc-200">{formatRuntime(p.durationMs / 1000)}</strong></span>
+                </div>
+              </div>
+
+              <div className="mt-6 pt-3 border-t border-white/5 flex items-center justify-between text-xs">
+                <span className="text-[11px] text-zinc-500">
+                  {new Date(p.createdAt).toLocaleDateString(undefined, {
+                    month: "short",
+                    day: "numeric",
+                  })}
                 </span>
-              </Link>
-            </li>
+                <span className="font-semibold text-xs text-[var(--broll-accent)] group-hover:underline">
+                  Open studio →
+                </span>
+              </div>
+            </Link>
           ))}
-        </ul>
+        </div>
       )}
     </div>
   );

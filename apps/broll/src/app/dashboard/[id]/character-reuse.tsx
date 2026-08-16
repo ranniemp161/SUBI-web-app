@@ -7,16 +7,6 @@ import { styleLabel, type PickerCharacter } from "@/lib/character-picker";
 /**
  * Attach a character this creator already owns to a project that has none
  * (spec `broll/0007` AC-123, AC-124, AC-148).
- *
- * **Offered only while the project has no character**, which is why this
- * component is rendered conditionally by the page rather than deciding for
- * itself: there is no swap in this feature, so a project that already has a
- * face keeps it until it is detached.
- *
- * **The style overwrite is stated before the attach, not after it.** The creator
- * chose a style when they created this project, and reusing a character replaces
- * it, because the six images exist in exactly one style. Telling them afterwards
- * would be telling them about a change they can no longer weigh.
  */
 export function CharacterReuse({
   projectId,
@@ -48,9 +38,6 @@ export function CharacterReuse({
         return;
       }
 
-      // The whole page is server rendered from the project's character, so a
-      // refresh is what shows the six variants, the redraw controls and the
-      // scenes that can suddenly draw again.
       setPicked(null);
       router.refresh();
     } catch {
@@ -61,66 +48,68 @@ export function CharacterReuse({
   }
 
   return (
-    <section className="mt-12">
+    <section className="mb-8 rounded-xl p-5 bg-[#111215] border border-white/[0.08]">
       <h2
-        className="text-sm font-semibold uppercase tracking-wide"
-        style={{ color: "var(--broll-muted)" }}
+        className="text-sm font-bold tracking-tight text-white"
+        style={{ fontFamily: "var(--font-space-grotesk)" }}
       >
         Reuse a character
       </h2>
-      <p className="mt-2 text-sm" style={{ color: "var(--broll-muted)" }}>
+      <p className="mt-1 text-xs text-zinc-400">
         You already paid for these, so using one here is free and needs no photo
         and no review.
       </p>
 
       <ul
-        className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3"
+        className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4 md:grid-cols-6"
         aria-busy={busy}
       >
-        {characters.map((character) => (
-          <li key={character.id}>
-            <button
-              type="button"
-              onClick={() => setPicked(character)}
-              disabled={busy}
-              aria-pressed={picked?.id === character.id}
-              className="broll-glass w-full rounded-lg p-3 text-left text-sm disabled:opacity-60"
-              style={{
-                border:
-                  picked?.id === character.id
-                    ? "1px solid var(--broll-accent)"
-                    : "1px solid rgba(255,255,255,0.08)",
-              }}
-            >
-              <span
-                className="flex aspect-3/4 items-center justify-center overflow-hidden rounded"
-                style={{ background: "var(--broll-background)" }}
+        {characters.map((character) => {
+          const isPicked = picked?.id === character.id;
+          return (
+            <li key={character.id}>
+              <button
+                type="button"
+                onClick={() => setPicked(character)}
+                disabled={busy}
+                aria-pressed={isPicked}
+                className={`w-full rounded-xl p-2.5 text-left text-xs transition-all flex flex-col justify-between ${
+                  isPicked
+                    ? "bg-[#16171c] border-2 border-[var(--broll-accent)] shadow-[0_0_15px_rgba(255,252,0,0.2)]"
+                    : "bg-[#141518] border border-white/[0.08] hover:border-white/20"
+                } disabled:opacity-60`}
               >
-                {character.thumbnailUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element -- a presigned blob URL, loaded straight from the store; the optimizer would put a Function back in the image path (AC-17)
-                  <img
-                    src={character.thumbnailUrl}
-                    alt={character.name}
-                    className="max-h-full max-w-full object-contain"
-                  />
-                ) : (
-                  <span className="text-xs" style={{ color: "var(--broll-muted)" }}>
-                    No preview
-                  </span>
-                )}
-              </span>
-              <span className="mt-2 block truncate font-medium">{character.name}</span>
-              <span className="text-xs" style={{ color: "var(--broll-muted)" }}>
-                {styleLabel(character.style)}
-              </span>
-            </button>
-          </li>
-        ))}
+                <span
+                  className="w-full aspect-[3/4] flex items-center justify-center overflow-hidden rounded-lg bg-[#09090b]"
+                >
+                  {character.thumbnailUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element -- presigned blob URL
+                    <img
+                      src={character.thumbnailUrl}
+                      alt={character.name}
+                      className="max-h-full max-w-full object-contain"
+                    />
+                  ) : (
+                    <span className="text-[10px] text-zinc-500">
+                      No preview
+                    </span>
+                  )}
+                </span>
+                <span className="mt-2 block truncate font-semibold text-white">
+                  {character.name}
+                </span>
+                <span className="text-[10px] text-zinc-400">
+                  {styleLabel(character.style)} · free
+                </span>
+              </button>
+            </li>
+          );
+        })}
       </ul>
 
       {picked && (
-        <div className="broll-glow mt-4 rounded-lg px-4 py-3">
-          <p className="text-sm">
+        <div className="broll-glow mt-4 rounded-xl p-4">
+          <p className="text-xs leading-relaxed text-zinc-200">
             {picked.style === projectStyle ? (
               <>
                 <strong>{picked.name}</strong> was drawn in{" "}
@@ -136,12 +125,12 @@ export function CharacterReuse({
               </>
             )}
           </p>
-          <div className="mt-3 flex flex-wrap items-center gap-2">
+          <div className="mt-3 flex flex-wrap items-center gap-2.5">
             <button
               type="button"
               onClick={() => void attach(picked)}
               disabled={busy}
-              className="rounded-lg px-3 py-1.5 text-sm font-semibold disabled:opacity-60"
+              className="rounded-lg px-3.5 py-1.5 text-xs font-bold disabled:opacity-60 transition-colors"
               style={{
                 background: "var(--broll-accent)",
                 color: "var(--broll-accent-foreground)",
@@ -153,8 +142,7 @@ export function CharacterReuse({
               type="button"
               onClick={() => setPicked(null)}
               disabled={busy}
-              className="rounded-lg px-3 py-1.5 text-sm"
-              style={{ color: "var(--broll-muted)" }}
+              className="rounded-lg px-3.5 py-1.5 text-xs text-zinc-400 hover:text-white"
             >
               Cancel
             </button>
@@ -163,7 +151,7 @@ export function CharacterReuse({
       )}
 
       {error && (
-        <p className="mt-4 text-sm" role="alert" style={{ color: "#ff6b6b" }}>
+        <p className="mt-4 text-xs" role="alert" style={{ color: "#ff6b6b" }}>
           {error}
         </p>
       )}

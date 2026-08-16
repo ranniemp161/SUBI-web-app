@@ -11,6 +11,7 @@ import { getBrollProject, getProjectCharacterRef } from "@/lib/projects";
 import {
   attachCharacterIfUnattached,
   createBrollCharacter,
+  detachCharacterFromProject,
   getProjectCharacter,
   isCharacterClaimLive,
   listProjectsUsingCharacter,
@@ -427,8 +428,13 @@ export async function GET(
  * a character has that character's style and the six images exist in exactly one
  * of them. The control says so before it sends this.
  *
- * Detaching (`characterId: null`) is not accepted yet: it arrives with the
- * characters page, where the scenes that lose their face are handled too.
+ * **Detaching is `characterId: null`** (AC-137), and it is the one branch here
+ * that reaches no character at all: it clears the project's reference, moves no
+ * money and deletes nothing. The project keeps its character scenes and they say
+ * what they need, so attaching another character makes them renderable again
+ * with no re-plan. The `style` column is deliberately left as it was — it
+ * records what the existing scenes were planned against, and blanking it would
+ * lose that with nothing to put in its place.
  */
 export async function PATCH(
   request: Request,
@@ -464,6 +470,24 @@ export async function PATCH(
     const body = (await request.json().catch(() => ({}))) as {
       characterId?: unknown;
     };
+
+    // Explicit null is the detach (AC-137), and it is distinguished from a
+    // missing field on purpose: `{}` is a malformed request, `{characterId:
+    // null}` is an intention.
+    if (body.characterId === null) {
+      const detached = await detachCharacterFromProject(user.id, id);
+      if (!detached) {
+        // Either the project is not this caller's or it had no character. Both
+        // answer the same way: there is nothing to detach, and a 404 never
+        // confirms a project id to a stranger.
+        return NextResponse.json(
+          { error: "This project has no character to detach." },
+          { status: 404 }
+        );
+      }
+      return NextResponse.json({ character: null });
+    }
+
     // Validated as a uuid before it reaches a query: the column is `uuid`, so a
     // malformed string would come back as a database error rather than as the
     // 422 it is.

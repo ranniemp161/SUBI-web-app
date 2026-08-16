@@ -346,3 +346,51 @@ describe("idleDrift", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Portrait. This template does not change composition with orientation, but its
+// type sizes used to be shares of the frame HEIGHT, which is the long edge in a
+// 9:16 frame — so the single big number was set at 0.26 * 1920 = 499px inside a
+// 1080px wide frame and simply ran off it.
+// ---------------------------------------------------------------------------
+
+const PORTRAIT = { width: 1080, height: 1920, elapsedMs: 5_000 };
+
+describe("chart-full in a portrait frame", () => {
+  const sizeOf = (font: string) => Number(font.match(/(\d+(?:\.\d+)?)px/)?.[1]);
+
+  it("keeps the big number inside the frame", () => {
+    const scene: ChartFullScene = {
+      type: "number",
+      title: "Revenue",
+      values: [1234],
+      labels: [],
+      unit: "%",
+    };
+    const drawn = texts(draw(scene, PORTRAIT));
+    const biggest = Math.max(...drawn.map((t) => sizeOf(t.font)));
+
+    // The measure that matters is the drawn glyphs, not the point size: the
+    // recorder charges half an em per character, the same rule the wrapping
+    // paths are exercised under.
+    for (const call of drawn) {
+      expect(call.text.length * sizeOf(call.font) * 0.5).toBeLessThanOrEqual(1080);
+    }
+    expect(biggest).toBeCloseTo(1080 * CHART_FULL_THEME.bigNumberSizeRatio, 0);
+  });
+
+  it("sizes type off the short edge in both orientations", () => {
+    const scene: ChartFullScene = {
+      type: "bar",
+      title: "Quarterly",
+      values: [3, 5, 9],
+      labels: ["Q1", "Q2", "Q3"],
+      unit: null,
+    };
+    const titleIn = (frame: typeof FRAME) => sizeOf(texts(draw(scene, frame))[0].font);
+
+    // 1920x1080 and 1080x1920 share a short edge, so the type is identical and
+    // only the composition differs. That is the whole point of the change.
+    expect(titleIn(PORTRAIT)).toBeCloseTo(titleIn(FRAME), 0);
+  });
+});

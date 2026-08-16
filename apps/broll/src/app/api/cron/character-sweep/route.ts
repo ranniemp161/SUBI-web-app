@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { list, del } from "@vercel/blob";
 import { db } from "@repo/db";
 import { brollAssets } from "@repo/db/schema";
+import { sql } from "drizzle-orm";
 import { reportError } from "@repo/server-shared/observability";
 import { isStorageConfigured } from "@/lib/storage";
 
@@ -116,11 +117,61 @@ export async function GET(request: Request): Promise<NextResponse> {
     );
   }
 
-  if (deleted > 0 || failed > 0) {
+  // The row half of the same problem (spec `broll/0007` AC-130). The two are
+  // deliberately separate passes over separate stores: above collects objects
+  // with no row, this collects rows with no objects, and neither can stand in
+  // for the other.
+  let charactersDeleted = 0;
+  try {
+    charactersDeleted = await sweepEmptyCharacters();
+  } catch (error) {
+    reportError("Character sweep failed to collect empty characters", error);
+  }
+
+  if (deleted > 0 || failed > 0 || charactersDeleted > 0) {
     console.log(
-      `[broll-character-sweep] scanned=${scanned} deleted=${deleted} failed=${failed}`
+      `[broll-character-sweep] scanned=${scanned} deleted=${deleted} failed=${failed} charactersDeleted=${charactersDeleted}`
     );
   }
 
-  return NextResponse.json({ scanned, deleted, failed });
+  return NextResponse.json({ scanned, deleted, failed, charactersDeleted });
+}
+
+/**
+ * Delete character rows that never received an image (AC-130).
+ *
+ * **These exist because the generate route creates the character before turn 1**
+ * — every pathname the run mints names it, so the row has to exist first — and
+ * creates it *before* reserving the money, so a user at the cap is refused
+ * before any charge. A run that dies in that gap leaves a row with no assets,
+ * counting against `MAX_CHARACTERS_PER_USER` forever and cluttering the picker
+ * that the characters page shows.
+ *
+ * **Three guards, and each one is load bearing:**
+ *
+ * - *No assets.* The whole definition of empty. A character with even one stored
+ *   image is a partial set someone may still commit, and is not ours to delete.
+ * - *Old enough.* The same hour as the object sweep above, and for the same
+ *   reason: a character created seconds ago legitimately has no assets yet,
+ *   because the browser uploads all six and commits once at the end. An hour is
+ *   far past the ten minute claim window that bounds a live run.
+ * - *No project pointing at it.* Belt and braces, since a project attaching to a
+ *   character with no images should be impossible — `resolveCompleteCharacter`
+ *   refuses an incomplete one. If it ever happened, deleting the row would null
+ *   that project's reference silently, which is precisely the failure the
+ *   characters page's delete refusal exists to prevent.
+ */
+async function sweepEmptyCharacters(): Promise<number> {
+  const cutoff = new Date(Date.now() - ORPHAN_MIN_AGE_MS);
+
+  const result = await db.execute(sql`
+    DELETE FROM broll_characters c
+    WHERE c.created_at < ${cutoff.toISOString()}
+      AND NOT EXISTS (SELECT 1 FROM broll_assets a WHERE a.broll_character_id = c.id)
+      AND NOT EXISTS (SELECT 1 FROM broll_projects p WHERE p.broll_character_id = c.id)
+    RETURNING c.id
+  `);
+
+  const rows = (result as unknown as { rows: { id?: string }[] }).rows ?? [];
+  return rows.length;
 }

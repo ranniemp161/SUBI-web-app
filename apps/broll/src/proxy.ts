@@ -30,6 +30,16 @@ export default clerkMiddleware(async (auth, request) => {
       // An API route gets JSON rather than a redirect to a sign-in page: the
       // caller is code, and a 302 to HTML is a confusing failure for it.
       if (request.nextUrl.pathname.startsWith("/api/")) {
+        // **Logged, because a response from here leaves no other trace.** Next
+        // prints a request line for anything a route handler answers, but a
+        // rejection at this layer is silent: sixty of them in a row produced
+        // sixty 401s at the caller and not one line in the dev log. That gap
+        // cost a long investigation. A character upload got one of these
+        // mid run, and from the outside it looked like the request had
+        // vanished rather than been refused.
+        console.warn(
+          `[proxy] refused an unauthenticated API request: ${request.method} ${request.nextUrl.pathname}`
+        );
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
       }
       await auth.protect();

@@ -16,9 +16,11 @@
 :root {
   --broll-background: #000000;
   --broll-surface: #0c0c0e;
-  --broll-surface-alt: #2c2c2c;
+  --broll-surface-alt: #1a1a1e;
+  --broll-surface-card: #121316;
   --broll-foreground: #ffffff;
-  --broll-muted: #aaaaaa;
+  --broll-muted: #8e8e93;
+  --broll-muted-light: #b0b0b8;
 
   /* Key Yellow: brand, primary actions, active state. Text on it is near-black
      because white on yellow fails contrast. */
@@ -33,22 +35,78 @@
 /* Borders do the work, not drop shadows. Panels sit on near-black and separate
    with a 1px hairline plus a 2% white fill, never elevation shadow. */
 .broll-glass {
-  background: rgba(255, 255, 255, 0.02);
+  background: rgba(255, 255, 255, 0.025);
   backdrop-filter: blur(16px);
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
+.broll-glass-card {
+  background: #111215;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.broll-glass-card:hover {
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
 /* The one focal element on a screen. */
 .broll-glow {
-  background: rgba(255, 255, 255, 0.02);
+  background: rgba(255, 255, 255, 0.03);
   backdrop-filter: blur(16px);
   border: 1px solid var(--broll-accent);
-  box-shadow: 0 0 40px -10px rgba(255, 252, 0, 0.2);
+  box-shadow: 0 0 35px -10px rgba(255, 252, 0, 0.2);
 }
 
 /* Timecodes and numeric data align in columns. */
 .broll-tabular {
   font-variant-numeric: tabular-nums;
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+/* Custom checkbox */
+.broll-checkbox {
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  border: 1.5px solid rgba(255, 255, 255, 0.25);
+  background: rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  transition: all 0.15s ease;
+}
+
+.broll-checkbox:checked {
+  background: var(--broll-accent);
+  border-color: var(--broll-accent);
+}
+
+.broll-checkbox:checked::after {
+  content: "";
+  display: block;
+  width: 4px;
+  height: 8px;
+  border: solid #111111;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg) translate(-0.5px, -1px);
 }
 
 :focus-visible {

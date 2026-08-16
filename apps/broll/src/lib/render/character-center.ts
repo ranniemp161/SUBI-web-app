@@ -1,5 +1,5 @@
 import type { DrawableImage, Render2DContext } from "./context";
-import { fitCharacter, wrapText } from "./layout";
+import { fitCharacter, typeScale, wrapText } from "./layout";
 
 /**
  * The `character-center` template: character centred, full bleed
@@ -106,7 +106,9 @@ function drawCenteredText(
   if (arrived <= 0) return;
 
   const margin = Math.min(frame.width, frame.height) * theme.marginRatio;
-  const size = frame.height * theme.textSizeRatio;
+  // Short edge, so the ratio means the same thing in both orientations. Equal
+  // to the height at 1920x1080, so landscape output is byte for byte unchanged.
+  const size = typeScale(frame) * theme.textSizeRatio;
   const lineHeight = size * theme.lineHeightRatio;
   const maxWidth = frame.width - margin * 2;
 

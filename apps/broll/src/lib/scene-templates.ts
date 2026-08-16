@@ -109,3 +109,65 @@ export function canUseTemplate(
 ): boolean {
   return templateOptionsFor(input).includes(template);
 }
+
+/**
+ * Why this scene cannot be rendered right now, or null if it can (spec
+ * `broll/0007` AC-138).
+ *
+ * **The input is `committedEmotions`, and that choice is the whole feature.**
+ * The obvious alternative is to ask whether the cutout bitmap is in hand, and it
+ * is wrong: bitmaps are decoded asynchronously and the map starts empty, so
+ * every character scene would announce that it needs a character for the first
+ * moment of every page load and then silently take it back. `committedEmotions`
+ * comes from the server, off `broll_assets` for the attached character, and it
+ * is already a prop on the studio shell — so it is settled before the first
+ * paint and says something true about the project rather than about the network.
+ *
+ * **Derived, never stored.** Attaching a character makes every blocked scene
+ * renderable again with no re-plan and no write, because there was never a
+ * column recording the block — which is exactly what AC-138 asks for.
+ *
+ * This does **not** replace the missing-cutout fallback inside the templates
+ * themselves. A character template handed no image still draws its text rather
+ * than failing, and that stays: it covers a bitmap that failed to decode, which
+ * is a different thing from a project that has no character at all.
+ */
+export type SceneBlocker = {
+  /** For the UI to branch on without matching prose. */
+  code: "no_character" | "missing_emotion" | "no_emotion_chosen";
+  /** Shown to the creator, on the row and in the detail pane. */
+  reason: string;
+};
+
+export function sceneBlocker(
+  scene: { layoutTemplate: string; emotion: string | null },
+  project: { committedEmotions: readonly string[] }
+): SceneBlocker | null {
+  // Only character templates can be blocked this way. A text card and a chart
+  // need nothing from the character set, which is what makes them the templates
+  // a faceless project can still cut b-roll with.
+  if (!isCharacterTemplate(scene.layoutTemplate)) return null;
+
+  if (project.committedEmotions.length === 0) {
+    return {
+      code: "no_character",
+      reason: "This scene draws a character, and the project has none attached.",
+    };
+  }
+
+  if (!scene.emotion) {
+    return {
+      code: "no_emotion_chosen",
+      reason: "This scene draws a character but no emotion is picked.",
+    };
+  }
+
+  if (!project.committedEmotions.includes(scene.emotion)) {
+    return {
+      code: "missing_emotion",
+      reason: `The character has no ${scene.emotion} image, so this scene has nothing to draw.`,
+    };
+  }
+
+  return null;
+}

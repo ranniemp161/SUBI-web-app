@@ -11,9 +11,9 @@ import { presignAssetReads } from "@/lib/storage";
 import { checkTranscriptFreshness } from "@/lib/staleness";
 import { CharacterPanel, type ReviewAsset } from "./character-panel";
 import { CharacterReuse } from "./character-reuse";
+import { Badge, Card, StatChip } from "@/components/ui";
 import Link from "next/link";
 
-/** `2:35`, or `1:02:35` once past an hour. Timecodes render tabular so a column of them lines up. */
 function clock(seconds: number): string {
   const total = Math.max(0, Math.floor(seconds));
   const h = Math.floor(total / 3600);
@@ -37,22 +37,15 @@ export default async function ProjectPage({
   if (!user) redirect("/dashboard");
 
   const project = await getBrollProject(user.id, id);
-  // Genuinely absent, or owned by someone else. Both answer 404 rather than
-  // 403, so a project id is never confirmed to a stranger (AC-38).
   if (!project) notFound();
 
   const [scenes, freshness, character] = await Promise.all([
     listBrollScenes(user.id, id),
-    // Advisory only, and never fatal: a linked project asks Ruff Cut whether
-    // the edit has moved since this transcript was taken (AC-49).
     checkTranscriptFreshness({
       sourceProjectId: project.sourceProjectId,
       storedFingerprint: project.edlFingerprint,
       token: await getToken(),
     }),
-    // The images belong to a character now, so this page reads them through the
-    // one the project points at. Null means the project has none yet, which is
-    // the state the review gate already handled as "no assets".
     getProjectCharacter(user.id, id),
   ]);
 
@@ -63,14 +56,8 @@ export default async function ProjectPage({
       ])
     : [[], 0];
 
-  // Offered only while this project has no character, which is what makes "no
-  // swap in this feature" true of the screen as well as of the route (spec
-  // `broll/0007` AC-123). The two lists are therefore never both non empty.
   const reusable = character ? [] : await listPickableCharacters(user.id);
 
-  // Signed here rather than fetched by the browser, so the first paint of the
-  // review gate needs no round trip. The urls point at the blob host, so the
-  // images still load directly and no Function sits in the data path (AC-17).
   const signed = await presignAssetReads([
     ...characterAssets.map((asset) => asset.pathname),
     ...reusable.map((entry) => entry.neutralPathname),
@@ -98,76 +85,137 @@ export default async function ProjectPage({
     0
   );
 
-  // The studio card's whole summary, from the query this page already ran.
   const sceneCount = scenes.length;
   const includedCount = scenes.filter((scene) => scene.included).length;
+  const hasCharacter = character !== null && characterAssets.length > 0;
+  const currentStep = !hasCharacter ? 2 : sceneCount === 0 ? 2 : 3;
 
   return (
-    <div className="max-w-[900px] mx-auto px-8 py-12">
-      <Link
-        href="/dashboard"
-        className="text-sm"
-        style={{ color: "var(--broll-muted)" }}
-      >
-        ← All projects
-      </Link>
+    <div className="max-w-[1400px] w-full mx-auto px-6 sm:px-8 py-8 md:py-10">
+      {/* Top Header & Next Step Row */}
+      <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-6 mb-8">
+        {/* Left Column: Breadcrumb, Title, Metadata Chips */}
+        <div className="flex-1 min-w-0">
+          <nav className="flex items-center gap-1.5 text-xs text-zinc-400 mb-2">
+            <Link
+              href="/dashboard"
+              className="hover:text-white transition-colors"
+            >
+              All projects
+            </Link>
+            <span className="text-zinc-600">/</span>
+            <span className="text-zinc-300 truncate">{project.name}</span>
+          </nav>
 
-      <h1
-        className="mt-4 text-2xl font-bold tracking-tight"
-        style={{ fontFamily: "var(--font-space-grotesk)" }}
-      >
-        {project.name}
-      </h1>
+          <div className="flex items-center gap-3.5 flex-wrap">
+            <h1
+              className="text-3xl font-bold tracking-tight text-white"
+              style={{ fontFamily: "var(--font-space-grotesk)" }}
+            >
+              {project.name}
+            </h1>
+            {hasCharacter ? (
+              <Badge variant="accent">
+                CHARACTER READY
+              </Badge>
+            ) : (
+              <Badge variant="neutral">
+                PHOTO NEEDED
+              </Badge>
+            )}
+          </div>
 
-      <dl className="mt-4 flex flex-wrap gap-x-8 gap-y-2 text-sm">
-        <div>
-          <dt className="inline" style={{ color: "var(--broll-muted)" }}>
-            Runtime{" "}
-          </dt>
-          <dd className="inline broll-tabular">{clock(project.durationMs / 1000)}</dd>
+          <dl className="mt-4 flex flex-wrap gap-2.5 text-xs">
+            <StatChip label="Runtime" value={clock(project.durationMs / 1000)} />
+            <StatChip label="Segments" value={transcript.segments.length} />
+            <StatChip label="Word timings" value={wordCount || "none"} />
+            <StatChip
+              label="Frame rate"
+              value={
+                transcript.fps
+                  ? `${(transcript.fps.numerator / transcript.fps.denominator).toFixed(2)} fps`
+                  : "unknown"
+              }
+            />
+            <StatChip
+              label="Source"
+              value={transcript.source.kind === "rough-cut" ? "Ruff Cut" : "Uploaded"}
+            />
+          </dl>
         </div>
-        <div>
-          <dt className="inline" style={{ color: "var(--broll-muted)" }}>
-            Segments{" "}
-          </dt>
-          <dd className="inline broll-tabular">{transcript.segments.length}</dd>
-        </div>
-        <div>
-          <dt className="inline" style={{ color: "var(--broll-muted)" }}>
-            Word timings{" "}
-          </dt>
-          <dd className="inline broll-tabular">{wordCount || "none"}</dd>
-        </div>
-        <div>
-          <dt className="inline" style={{ color: "var(--broll-muted)" }}>
-            Frame rate{" "}
-          </dt>
-          <dd className="inline broll-tabular">
-            {/* Null on a subtitle import, and shown as unknown rather than as a
-                plausible looking default. A transcript without a timebase is one
-                whose timecodes cannot be trusted, and pretending otherwise is
-                exactly the fabrication this format exists to prevent. */}
-            {transcript.fps
-              ? `${(transcript.fps.numerator / transcript.fps.denominator).toFixed(2)} fps`
-              : "unknown"}
-          </dd>
-        </div>
-        <div>
-          <dt className="inline" style={{ color: "var(--broll-muted)" }}>
-            Source{" "}
-          </dt>
-          <dd className="inline">
-            {transcript.source.kind === "rough-cut" ? "Ruff Cut" : "Uploaded"}
-          </dd>
-        </div>
-      </dl>
 
-      {/* Warns, never replaces: the stored transcript is what every scene's
-          timecode is measured against, so refreshing it silently would move
-          scenes under a plan the user already reviewed (AC-49). */}
+        {/* Right Column: Next Step Guide Card */}
+        <div className="w-full lg:w-[420px] shrink-0">
+          <Card className="p-4 sm:p-5 relative overflow-hidden">
+            <div className="flex items-center justify-between text-xs mb-2.5">
+              <span className="font-bold tracking-widest text-[10px] uppercase text-zinc-400">
+                NEXT STEP
+              </span>
+              <span className="text-zinc-400 broll-tabular font-medium">
+                Step {currentStep} of 4
+              </span>
+            </div>
+
+            {/* 4-Step Progress Bar */}
+            <div className="grid grid-cols-4 gap-1.5 mb-3.5" aria-hidden="true">
+              <div className="h-1 rounded-full bg-[var(--broll-accent)]" />
+              <div
+                className="h-1 rounded-full transition-colors"
+                style={{
+                  background: hasCharacter
+                    ? "var(--broll-accent)"
+                    : "rgba(255,255,255,0.15)",
+                }}
+              />
+              <div
+                className="h-1 rounded-full transition-colors"
+                style={{
+                  background:
+                    hasCharacter && sceneCount > 0
+                      ? "var(--broll-accent)"
+                      : "rgba(255,255,255,0.15)",
+                }}
+              />
+              <div className="h-1 rounded-full bg-white/15" />
+            </div>
+
+            <p className="text-xs text-zinc-300 mb-4 leading-relaxed">
+              {sceneCount === 0 ? (
+                "Review your character set below, then open Scene Studio to plan cutaways from your transcript."
+              ) : (
+                <>
+                  <strong className="text-white broll-tabular">{sceneCount}</strong> scenes planned ·{" "}
+                  <strong className="text-white broll-tabular">{includedCount}</strong> included in the export. Review them before you render.
+                </>
+              )}
+            </p>
+
+            <div className="flex items-center gap-2.5">
+              <Link
+                href={`/dashboard/${project.id}/scenes`}
+                className="flex-1 text-center py-2.5 px-4 rounded-lg font-bold text-xs transition-colors"
+                style={{
+                  background: "var(--broll-accent)",
+                  color: "var(--broll-accent-foreground)",
+                }}
+              >
+                Open Scene Studio →
+              </Link>
+              <Link
+                href={`/dashboard/${project.id}/scenes`}
+                className="py-2.5 px-4 rounded-lg text-xs font-semibold text-zinc-300 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 transition-colors"
+              >
+                Export
+              </Link>
+            </div>
+          </Card>
+        </div>
+      </div>
+
+      {/* Warns if transcript is stale */}
       {freshness === "stale" && (
         <p
-          className="broll-glow mt-6 rounded-lg px-4 py-3 text-sm"
+          className="broll-glow mb-8 rounded-lg px-4 py-3 text-xs leading-relaxed"
           role="status"
         >
           The Ruff Cut edit has changed since this transcript was taken, so these
@@ -176,9 +224,7 @@ export default async function ProjectPage({
         </p>
       )}
 
-      {/* Above the generate path on purpose: reusing a character is free and
-          instant, and a creator who owns one should see that before they are
-          asked for a photograph and two dollars. */}
+      {/* Reusing characters if no character yet */}
       {pickable.length > 0 && (
         <CharacterReuse
           projectId={project.id}
@@ -187,55 +233,14 @@ export default async function ProjectPage({
         />
       )}
 
+      {/* Character Panel (6-emotion grid + battery meter) */}
       <CharacterPanel
         projectId={project.id}
-        // Named so the paid re-run can say which character it is leaving
-        // behind rather than "the current one" (spec `broll/0007` AC-129).
         characterName={character?.name ?? null}
         initialAssets={reviewAssets}
         initialRegenerationsUsed={regensUsed}
-        // Formatted here because the price env override is server side only.
         setPrice={formatUsd(BROLL_CHARACTER_SET_MICROS)}
       />
-
-      {/* The plan lives on its own screen now (AC-94). This card states where
-          the plan stands and opens it; the review itself needs the width and
-          the two panes that this page cannot give it. */}
-      <section className="broll-glass mt-10 rounded-lg px-5 py-4">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <h2
-              className="text-sm font-semibold uppercase tracking-wide"
-              style={{ color: "var(--broll-muted)" }}
-            >
-              Scene Studio
-            </h2>
-            <p className="mt-1 text-sm">
-              {sceneCount === 0 ? (
-                "No scenes planned yet."
-              ) : (
-                <>
-                  <span className="broll-tabular">{sceneCount}</span> scene
-                  {sceneCount === 1 ? "" : "s"} planned,{" "}
-                  <span className="broll-tabular">{includedCount}</span> included in the
-                  export.
-                </>
-              )}
-            </p>
-          </div>
-
-          <Link
-            href={`/dashboard/${project.id}/scenes`}
-            className="rounded-lg px-4 py-2 text-sm font-semibold"
-            style={{
-              background: "var(--broll-accent)",
-              color: "var(--broll-accent-foreground)",
-            }}
-          >
-            {sceneCount === 0 ? "Plan scenes" : "Open Scene Studio"}
-          </Link>
-        </div>
-      </section>
     </div>
   );
 }

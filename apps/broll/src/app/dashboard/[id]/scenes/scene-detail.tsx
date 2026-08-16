@@ -4,7 +4,7 @@ import type { RefObject } from "react";
 import type { SceneSummary } from "@/lib/scenes";
 import type { CharacterEmotion } from "@/lib/emotions";
 import { formatClock } from "@/lib/utterances";
-import { sceneDrawsChart } from "@/lib/scene-templates";
+import { sceneDrawsChart, type SceneBlocker } from "@/lib/scene-templates";
 import type { Renderable } from "@/lib/render/renderable";
 import { ScenePreview } from "./scene-preview";
 import { SceneCitation } from "./scene-citation";
@@ -12,23 +12,12 @@ import { SceneOverrides, type ScenePatch } from "./scene-overrides";
 import { RenderSceneButton } from "./render-scene-button";
 import type { TranscriptChoice } from "./add-scene";
 import type { ScenePhase } from "./use-render-queue";
+import { Button, Card } from "@/components/ui";
 
 /**
  * The one open scene: what it looks like, what a creator may change, and where
  * its numbers came from (spec `broll/0006` AC-102).
- *
- * **The order is preview, controls, provenance, and it is deliberate.** The
- * preview is what a creator is judging, the controls are what they do about it,
- * and the proof is what they check before putting their name on the clip. Read
- * top to bottom that is the actual sequence of the decision; any other order
- * asks them to scroll back up after changing something.
- *
- * A manual scene has no cited line, no chart and no downgrade note, because
- * spec `0002`'s invariant makes all three NULL on a scene the creator added. So
- * its provenance block says the one true thing there is to say: where it was
- * placed, and the transcript line it sits on.
  */
-
 export function SceneDetail({
   projectId,
   scene,
@@ -36,6 +25,7 @@ export function SceneDetail({
   renderable,
   renderState,
   committedEmotions,
+  blocker,
   transcriptChoices,
   aspectWidth,
   aspectHeight,
@@ -43,9 +33,15 @@ export function SceneDetail({
   reducedMotion,
   firstControlRef,
   flushRef,
+  allScenes = [],
+  totalIncludedCount = 1,
+  readyCount = 0,
+  rendering = false,
+  onSelectScene,
   onChange,
   onDelete,
   onRender,
+  onDownload,
 }: {
   projectId: string;
   scene: SceneSummary;
@@ -54,6 +50,8 @@ export function SceneDetail({
   renderable: Renderable | null;
   renderState: ScenePhase | undefined;
   committedEmotions: CharacterEmotion[];
+  /** Why this scene cannot render, or null (AC-138). Computed by the shell. */
+  blocker: SceneBlocker | null;
   /** The stored document's lines, used to place a manual scene (AC-102). */
   transcriptChoices: TranscriptChoice[];
   aspectWidth: number;
@@ -63,83 +61,152 @@ export function SceneDetail({
   /** Where Enter from the list lands (AC-107). */
   firstControlRef: RefObject<HTMLInputElement | null>;
   flushRef: RefObject<(() => void) | null>;
+  allScenes?: SceneSummary[];
+  totalIncludedCount?: number;
+  readyCount?: number;
+  rendering?: boolean;
+  onSelectScene?: (id: string) => void;
   onChange: (patch: ScenePatch) => void;
   onDelete: () => void;
   onRender: () => void;
+  onDownload?: () => void;
 }) {
   const drawsChart = sceneDrawsChart(scene);
 
   return (
-    <div className="grid gap-6">
-      <header className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <h2 className="text-lg font-semibold" style={{ fontFamily: "var(--font-space-grotesk)" }}>
-          <span className="broll-tabular" style={{ color: "var(--broll-accent)" }}>
-            {formatClock(scene.startMs)}
-          </span>{" "}
-          <span style={{ color: "var(--broll-muted)" }}>· scene {position}</span>
-        </h2>
-        <span className="broll-tabular text-sm" style={{ color: "var(--broll-muted)" }}>
-          {(scene.durationMs / 1000).toFixed(1)}s · {scene.layoutTemplate}
-        </span>
-      </header>
+    <div className="flex flex-col xl:flex-row gap-6 min-h-full">
+      {/* Center Column: Canvas Preview, Header, Citation, and Timeline */}
+      <div className="flex-1 flex flex-col gap-4 min-w-0">
+        {/* Top Scene Subheader */}
+        <header className="flex flex-wrap items-center justify-between gap-3 pb-1">
+          <div className="flex items-center gap-2.5">
+            <span
+              className="broll-tabular text-sm font-bold"
+              style={{ color: "var(--broll-accent)" }}
+            >
+              {formatClock(scene.startMs)}
+            </span>
+            <span className="text-sm font-bold text-white">scene {position}</span>
+            <span className="broll-tabular text-xs text-zinc-400">
+              {(scene.durationMs / 1000).toFixed(1)}s · {scene.layoutTemplate}
+            </span>
+          </div>
 
-      {renderable ? (
-        <div className="grid gap-3">
-          <ScenePreview
-            renderable={renderable}
-            durationMs={scene.durationMs}
-            aspectWidth={aspectWidth}
-            aspectHeight={aspectHeight}
-            reducedMotion={reducedMotion}
+          <div className="flex items-center gap-2">
+            {/* Hidden rather than disabled when the scene has nothing to draw
+                (AC-138): the sentence below says what to do about it, and a
+                dead button beside an explanation teaches nothing the
+                explanation does not already say. */}
+            {renderable && !blocker && (
+              <RenderSceneButton
+                width={aspectWidth}
+                height={aspectHeight}
+                state={renderState}
+                disabled={locked}
+                onRender={onRender}
+              />
+            )}
+          </div>
+        </header>
+
+        {blocker && (
+          <p
+            className="rounded-xl px-4 py-3 text-xs bg-amber-500/10 border border-amber-500/20 text-amber-200"
+            role="status"
+          >
+            {blocker.reason}{" "}
+            {blocker.code === "no_character"
+              ? "Attach one on the project page and this scene renders again — the plan is kept, nothing has to be re-run."
+              : "Pick an emotion the character actually has, or redraw the missing one."}
+          </p>
+        )}
+
+        {/* Large Canvas Preview */}
+        {renderable ? (
+          <div className="w-full flex flex-col items-center">
+            <ScenePreview
+              renderable={renderable}
+              durationMs={scene.durationMs}
+              aspectWidth={aspectWidth}
+              aspectHeight={aspectHeight}
+              reducedMotion={reducedMotion}
+            />
+          </div>
+        ) : (
+          <p className="broll-glass rounded-xl p-6 text-sm text-center text-zinc-400" role="status">
+            <strong className="text-white">{scene.layoutTemplate}</strong> has no renderer yet, so this scene
+            cannot be previewed or exported. Pick a template this project can draw.
+          </p>
+        )}
+
+        {/* Source Citation block */}
+        <Provenance
+          scene={scene}
+          drawsChart={drawsChart}
+          transcriptChoices={transcriptChoices}
+        />
+
+        {/* Bottom Timeline Bar */}
+        {allScenes.length > 0 && (
+          <TimelineBar
+            scenes={allScenes}
+            currentSceneId={scene.id}
+            onSelectScene={onSelectScene}
           />
-          <RenderSceneButton
-            width={aspectWidth}
-            height={aspectHeight}
-            state={renderState}
-            disabled={locked}
-            onRender={onRender}
-          />
-        </div>
-      ) : (
-        <p className="broll-glass rounded-lg px-4 py-3 text-sm" role="status">
-          <strong>{scene.layoutTemplate}</strong> has no renderer yet, so this scene
-          cannot be previewed or exported. Pick a template this project can draw.
-        </p>
-      )}
+        )}
+      </div>
 
-      <SceneOverrides
-        projectId={projectId}
-        sceneId={scene.id}
-        included={scene.included}
-        overlayText={scene.overlayText}
-        layoutTemplate={scene.layoutTemplate}
-        emotion={scene.emotion}
-        origin={scene.origin}
-        hasChart={scene.chart !== null}
-        committedEmotions={committedEmotions}
-        disabled={locked}
-        firstControlRef={firstControlRef}
-        flushRef={flushRef}
-        onChange={onChange}
-        onDelete={onDelete}
-      />
+      {/* Right Column: Inspector Controls */}
+      <div className="w-full xl:w-[320px] shrink-0 flex flex-col gap-4">
+        <SceneOverrides
+          projectId={projectId}
+          sceneId={scene.id}
+          included={scene.included}
+          overlayText={scene.overlayText}
+          layoutTemplate={scene.layoutTemplate}
+          emotion={scene.emotion}
+          origin={scene.origin}
+          hasChart={scene.chart !== null}
+          committedEmotions={committedEmotions}
+          disabled={locked}
+          firstControlRef={firstControlRef}
+          flushRef={flushRef}
+          position={position}
+          totalIncluded={totalIncludedCount}
+          durationMs={scene.durationMs}
+          onChange={onChange}
+          onDelete={onDelete}
+        />
 
-      <Provenance
-        scene={scene}
-        drawsChart={drawsChart}
-        transcriptChoices={transcriptChoices}
-      />
+        {/* Bottom Render Status Card */}
+        <Card className="p-4 mt-auto">
+          <div className="flex items-center justify-between text-xs mb-3">
+            <span className="font-bold uppercase tracking-wider text-[10px] text-zinc-400">
+              Render status
+            </span>
+            <span className="broll-tabular font-semibold text-white">
+              {readyCount} / {allScenes.length} done
+            </span>
+          </div>
+
+          <Button
+            type="button"
+            variant="glass"
+            size="sm"
+            onClick={onDownload}
+            disabled={readyCount === 0 || rendering}
+            className="w-full"
+          >
+            Download zip
+          </Button>
+        </Card>
+      </div>
     </div>
   );
 }
 
 /**
  * Where this scene came from (AC-102).
- *
- * This is the product made visible. Every figure on a chart was proved against
- * the creator's own words before it was stored, and this is where they can see
- * that for themselves rather than take it on trust, which is the difference
- * between publishing under your own name and hoping.
  */
 function Provenance({
   scene,
@@ -153,64 +220,96 @@ function Provenance({
   if (scene.origin === "manual") {
     const line = lineUnder(transcriptChoices, scene.startMs);
     return (
-      <section className="grid gap-2 border-t pt-4" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
-        <h3
-          className="text-xs font-semibold uppercase tracking-wide"
-          style={{ color: "var(--broll-muted)" }}
-        >
-          Where this came from
+      <Card className="p-4">
+        <h3 className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 mb-1.5">
+          SOURCE
         </h3>
-        <p className="text-sm">
+        <p className="text-xs text-zinc-300">
           You added this scene by hand, placed at{" "}
-          <span className="broll-tabular" style={{ color: "var(--broll-accent)" }}>
+          <span className="broll-tabular font-bold" style={{ color: "var(--broll-accent)" }}>
             {formatClock(scene.startMs)}
           </span>
           .
         </p>
         {line && (
-          <p className="text-sm leading-relaxed" style={{ color: "var(--broll-muted)" }}>
-            It sits on this line: “{line.text}”
+          <p className="mt-1.5 text-xs text-zinc-400 leading-relaxed italic">
+            “{line.text}”
           </p>
         )}
-      </section>
+      </Card>
     );
   }
 
   return (
-    <section className="grid gap-2 border-t pt-4" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
-      <h3
-        className="text-xs font-semibold uppercase tracking-wide"
-        style={{ color: "var(--broll-muted)" }}
-      >
-        Where this came from
+    <Card className="p-4">
+      <h3 className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 mb-1.5">
+        SOURCE
       </h3>
 
-      {/* The full text, never clamped. The row's three line clamp is a scanning
-          decision, and this is the place it is always recoverable (AC-97). */}
       {scene.sourceText && (
-        <p className="text-sm leading-relaxed">{scene.sourceText}</p>
+        <p className="text-xs text-zinc-300 leading-relaxed">
+          {scene.sourceText}
+        </p>
       )}
 
-      {/* Keyed off the same predicate the row marker and the chart chip use, so
-          a row promising a traced chart and a pane showing no citation is not a
-          state this screen can reach (AC-105). */}
       {drawsChart && scene.chart && scene.sourceText && (
-        <SceneCitation sourceText={scene.sourceText} chart={scene.chart} />
+        <div className="mt-2 pt-2 border-t border-white/5">
+          <SceneCitation sourceText={scene.sourceText} chart={scene.chart} />
+        </div>
       )}
 
-      {/* A downgrade reads as a decision rather than a bug, and it survives a
-          reload because it is a column (AC-87). */}
       {scene.chartRejectionReason && (
-        <p className="text-sm" style={{ color: "var(--broll-muted)" }}>
+        <p className="mt-2 text-xs text-amber-400/90 leading-relaxed">
           <strong>Shown as text, not a chart:</strong> {scene.chartRejectionReason}. The
           number stays out rather than being guessed at.
         </p>
       )}
-    </section>
+    </Card>
   );
 }
 
-/** The transcript line a manual scene was placed on: the last one at or before it. */
+/** Bottom timeline scrubber */
+function TimelineBar({
+  scenes,
+  currentSceneId,
+  onSelectScene,
+}: {
+  scenes: SceneSummary[];
+  currentSceneId: string;
+  onSelectScene?: (id: string) => void;
+}) {
+  if (scenes.length === 0) return null;
+
+  const lastScene = scenes[scenes.length - 1];
+  const maxTimeMs = lastScene ? lastScene.startMs + lastScene.durationMs : 1000;
+
+  return (
+    <div className="flex items-center gap-2 mt-auto pt-2">
+      <div className="flex-1 flex items-center gap-1 h-3 p-0.5 rounded bg-[#111215] border border-white/[0.08]">
+        {scenes.map((s) => {
+          const isCurrent = s.id === currentSceneId;
+          return (
+            <button
+              key={s.id}
+              type="button"
+              onClick={() => onSelectScene?.(s.id)}
+              title={`${formatClock(s.startMs)} · Scene (${(s.durationMs / 1000).toFixed(1)}s)`}
+              className={`h-full rounded-[2px] transition-all flex-1 cursor-pointer ${
+                isCurrent
+                  ? "bg-[var(--broll-accent)] shadow-[0_0_8px_rgba(255,252,0,0.5)] scale-y-125"
+                  : "bg-white/20 hover:bg-white/40"
+              }`}
+            />
+          );
+        })}
+      </div>
+      <span className="text-[10px] text-zinc-500 broll-tabular font-medium">
+        {formatClock(maxTimeMs)}
+      </span>
+    </div>
+  );
+}
+
 function lineUnder(choices: TranscriptChoice[], startMs: number): TranscriptChoice | null {
   let found: TranscriptChoice | null = null;
   for (const choice of choices) {

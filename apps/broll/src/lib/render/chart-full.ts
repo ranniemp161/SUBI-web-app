@@ -1,5 +1,6 @@
 import { formatChartValue } from "./chart-label";
 import type { Render2DContext } from "./context";
+import { typeScale } from "./layout";
 
 /**
  * The `chart-full` template: the chart fills the frame (`design-prompt.md`).
@@ -151,6 +152,14 @@ interface Layout {
   width: number;
   height: number;
   margin: number;
+  /**
+   * The frame's short edge, which every type size and stroke width is measured
+   * against. Equal to `height` in landscape, so nothing about 1920x1080 output
+   * changed when this was introduced; in a 9:16 frame it is the width, and
+   * without it `bigNumberSizeRatio` (0.26) sets a 499px number in a 1080px
+   * frame, which is not a layout problem but a number running off the screen.
+   */
+  scale: number;
   grown: number;
 }
 
@@ -187,6 +196,7 @@ export function drawChartFullFrame(
     width,
     height,
     margin: Math.min(width, height) * theme.marginRatio,
+    scale: typeScale(frame),
     grown: entranceProgress(elapsedMs),
   };
 
@@ -206,7 +216,7 @@ export function drawChartFullFrame(
 
 /** The heading, top left, for every shape except the single big number. */
 function drawTitle(ctx: Chart2DContext, title: string, layout: Layout): void {
-  const size = layout.height * CHART_FULL_THEME.titleSizeRatio;
+  const size = layout.scale * CHART_FULL_THEME.titleSizeRatio;
   ctx.fillStyle = CHART_FULL_THEME.title;
   ctx.font = `600 ${size}px sans-serif`;
   ctx.textAlign = "left";
@@ -231,8 +241,8 @@ function drawBigNumber(
   const target = values[0];
   const shown = target * layout.grown;
 
-  const numberSize = layout.height * theme.bigNumberSizeRatio;
-  const captionSize = layout.height * theme.bigNumberCaptionRatio;
+  const numberSize = layout.scale * theme.bigNumberSizeRatio;
+  const captionSize = layout.scale * theme.bigNumberCaptionRatio;
   const centerX = layout.width / 2;
   const centerY = layout.height / 2;
 
@@ -252,8 +262,8 @@ function drawBigNumber(
 /** Plot area shared by the bar and line shapes. */
 function plotArea(layout: Layout) {
   const theme = CHART_FULL_THEME;
-  const titleSize = layout.height * theme.titleSizeRatio;
-  const categorySize = layout.height * theme.categorySizeRatio;
+  const titleSize = layout.scale * theme.titleSizeRatio;
+  const categorySize = layout.scale * theme.categorySizeRatio;
   const top = layout.margin + titleSize * 1.8;
   const bottom = layout.height - layout.margin - categorySize * 1.6;
   return {
@@ -273,7 +283,7 @@ function drawBars(
 ): void {
   const theme = CHART_FULL_THEME;
   const plot = plotArea(layout);
-  const valueSize = layout.height * theme.valueSizeRatio;
+  const valueSize = layout.scale * theme.valueSizeRatio;
 
   const slot = plot.width / values.length;
   const gap = slot * theme.barGapRatio;
@@ -323,7 +333,7 @@ function drawLine(
 ): void {
   const theme = CHART_FULL_THEME;
   const plot = plotArea(layout);
-  const valueSize = layout.height * theme.valueSizeRatio;
+  const valueSize = layout.scale * theme.valueSizeRatio;
 
   const peak = Math.max(...values.map((value) => Math.abs(value)));
   const step = values.length > 1 ? plot.width / (values.length - 1) : 0;
@@ -340,7 +350,7 @@ function drawLine(
   const reach = (values.length - 1) * layout.grown;
 
   ctx.strokeStyle = theme.bar;
-  ctx.lineWidth = Math.max(1, layout.height * theme.lineWidthRatio);
+  ctx.lineWidth = Math.max(1, layout.scale * theme.lineWidthRatio);
   ctx.lineJoin = "round";
   ctx.lineCap = "round";
   ctx.beginPath();
@@ -390,7 +400,7 @@ function drawPie(
   const radius = Math.min(plot.width, plot.height) / 2;
   const centerX = layout.width / 2;
   const centerY = plot.top + plot.height / 2;
-  const valueSize = layout.height * theme.valueSizeRatio;
+  const valueSize = layout.scale * theme.valueSizeRatio;
 
   // Start at twelve o'clock: canvas angles start at three o'clock.
   let angle = -Math.PI / 2;

@@ -10,6 +10,36 @@ import type { Render2DContext } from "./context";
  */
 
 /**
+ * The edge every type size and every inset is measured against.
+ *
+ * **This is the short edge, and in a landscape frame that IS the height, so
+ * swapping a `height *` for a `typeScale(...)` changes nothing at 1920x1080.**
+ * Every template used to size its type off the frame height, which is correct
+ * right up until the frame is taller than it is wide. At 1080x1920 the long
+ * edge is the height, so `0.11 * height` is a 211px cap trying to fit an 1080px
+ * frame, and `chart-full`'s big number (`0.26`) overflows the frame outright.
+ *
+ * Sizing off the short edge instead keeps a template's proportions readable in
+ * both orientations from one set of ratios, rather than needing a second theme
+ * per orientation.
+ */
+export function typeScale(box: { width: number; height: number }): number {
+  return Math.min(box.width, box.height);
+}
+
+/**
+ * Whether this frame is taller than it is wide.
+ *
+ * Only `character-left` branches on this, and only for composition: a template
+ * whose whole idea is "character beside the words" has no room to put anything
+ * beside anything in a 9:16 frame. Square counts as landscape, which is
+ * arbitrary and only has to be decided somewhere.
+ */
+export function isPortrait(frame: { width: number; height: number }): boolean {
+  return frame.height > frame.width;
+}
+
+/**
  * Breaks `text` into lines that fit `maxWidth`, measured through the context.
  *
  * A word longer than the line is left on its own line rather than split: these

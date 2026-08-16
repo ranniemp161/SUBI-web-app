@@ -61,6 +61,14 @@ npm -w @repo/transcript typecheck   # tsc --noEmit, via the root tsconfig.base.j
   therefore validated on `start`, not against the previous word's `end`.
   Tightening that check rejects real transcripts: it would force either dropping
   a spoken word or inventing a boundary no measurement supports.
+- **An imported subtitle's segments are allowed to overlap too**, for the same
+  reason one level up. A document built from an EDL has segments that cannot
+  overlap by construction, so an overlap there really is a bug worth catching. A
+  subtitle file is not built that way: caption cues routinely overlap by a
+  fraction of a second where one speaker's line runs under the next. Refusing
+  that would leave only bad options, either turning away a real caption file or
+  inventing boundaries the file does not state. Segment ordering is therefore
+  validated the same way word ordering is, on `start`.
 - `MAX_DOCUMENT_BYTES` (5 MiB) and `MAX_SEGMENT_COUNT` (20,000) are
   **provisional**, sized by arithmetic rather than the measurement spec
   `_root/0001`'s follow up asks for. Retune them in `document.ts`; nothing else

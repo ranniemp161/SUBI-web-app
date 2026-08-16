@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useAuth } from "@clerk/nextjs";
 import { uploadPresigned } from "@vercel/blob/client";
 import { CHARACTER_EMOTIONS, type CharacterEmotion } from "@/lib/emotions";
 import {
@@ -17,6 +18,7 @@ import {
   type ProbeResult,
 } from "@/lib/segmentation";
 import { trimTransparent } from "@/lib/trim";
+import { Badge, Button, Card } from "@/components/ui";
 
 /**
  * The character pipeline's whole browser half (spec `broll/0004`).
@@ -70,12 +72,12 @@ type CommittedAsset = {
 const ACCEPT_ATTRIBUTE = ACCEPTED_PHOTO_TYPES.join(",");
 
 const EMOTION_LABELS: Record<CharacterEmotion, string> = {
-  neutral: "Neutral",
+  excited: "Excited",
   happy: "Happy",
+  neutral: "Neutral",
+  skeptical: "Skeptical",
   surprised: "Surprised",
   thoughtful: "Thoughtful",
-  skeptical: "Skeptical",
-  excited: "Excited",
 };
 
 /** A sibling project that draws with the same character (spec `broll/0007` AC-133). */
@@ -97,6 +99,9 @@ export function CharacterPanel({
   setPrice: string;
 }) {
   const router = useRouter();
+  // Only ever used to refresh a lapsed session before retrying an upload, see
+  // `storeTurn`. Nothing here reads the token's value.
+  const { getToken } = useAuth();
   const [assets, setAssets] = useState<ReviewAsset[]>(initialAssets);
   const [regenerationsUsed, setRegenerationsUsed] = useState(initialRegenerationsUsed);
   const [photo, setPhoto] = useState<File | null>(null);
@@ -107,6 +112,8 @@ export function CharacterPanel({
   const [error, setError] = useState<string | null>(null);
   const [onDark, setOnDark] = useState(true);
   const [confirmingRerun, setConfirmingRerun] = useState(false);
+  const [detaching, setDetaching] = useState(false);
+  const [showHowRedrawsWork, setShowHowRedrawsWork] = useState(false);
   // The other projects a redraw would change. Empty until the read below
   // answers, which is the honest starting state: silence, never a claim that
   // nothing else uses this face.
@@ -124,24 +131,6 @@ export function CharacterPanel({
 
   /**
    * Run the capability probe, or reuse the answer. **Never on mount.**
-   *
-   * The probe is a real inference, and a real inference is expensive to start:
-   * `@imgly/background-removal` fetches its model and the onnxruntime WASM from
-   * a third party CDN, 84 MB and 11 MB at the default `medium` model, then runs
-   * it on the **main thread**. Its worker only engages with WebGPU (the source
-   * computes `proxyToWorker = useWebGPU && config.proxyToWorker`, and `device`
-   * defaults to `cpu`), and threads need `SharedArrayBuffer`, which needs cross
-   * origin isolation headers this app does not send. So it is single threaded,
-   * on the thread React and every third party script share.
-   *
-   * Running that for every visitor who merely opened a project was enough to
-   * starve Clerk's `UserButton` past its own ten second mount budget.
-   *
-   * **AC-61 is unchanged.** The probe still has to pass before any request that
-   * moves money; it is simply started when the user shows intent and awaited by
-   * the spending action itself, which is a stricter place to check it than a
-   * disabled attribute. `probeSegmentation` caches its promise, so calling this
-   * repeatedly costs one download.
    */
   const ensureProbe = useCallback(async (): Promise<ProbeResult> => {
     setProbing(true);
@@ -174,14 +163,7 @@ export function CharacterPanel({
       const cut = await removeCharacterBackground(generated);
       const trimmed = await trimTransparent(cut);
 
-      // The pathname came down the stream and is used verbatim. The browser
-      // never chooses one, and both the upload route and the commit route
-      // re-check it against this project anyway (AC-70).
-      await uploadPresigned(line.pathname, trimmed.blob, {
-        access: "private",
-        handleUploadUrl: "/api/blob/upload",
-        contentType: "image/png",
-      });
+      await putPresignedWithRetry(line.pathname, trimmed.blob, getToken);
 
       showLocally(line.emotion, trimmed.blob, trimmed.width, trimmed.height);
       return {
@@ -191,28 +173,46 @@ export function CharacterPanel({
         height: trimmed.height,
       };
     },
-    [showLocally]
+    [showLocally, getToken]
   );
 
   /**
-   * Which other projects a redraw would change (AC-133).
+   * Detach this project from its character (AC-137).
    *
-   * **Read from this project's own character endpoint**, not by fetching every
-   * character the creator owns and filtering in the browser: the question is
-   * about one character, and the answer has to stay right as the characters page
-   * grows. Only the *other* projects are kept, because "this project" is not
-   * news to somebody standing on it.
+   * **Moves no money and deletes nothing**, which is why it needs no confirm
+   * beyond arming the button: the character stays in the library, the project's
+   * character scenes stay planned, and attaching one again makes them
+   * renderable with no re-plan. Nothing here is undone by a refund.
+   */
+  const detach = useCallback(async () => {
+    setError(null);
+    try {
+      const response = await fetch(`/api/projects/${projectId}/character`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        // Explicit null, not an omitted field: the route distinguishes the two,
+        // because `{}` is a malformed request and this is an intention.
+        body: JSON.stringify({ characterId: null }),
+      });
+      if (!response.ok) {
+        const body = (await response.json().catch(() => ({}))) as { error?: string };
+        setError(body.error ?? "Couldn't detach that character.");
+        return;
+      }
+      setDetaching(false);
+      router.refresh();
+    } catch {
+      setError("Couldn't detach that character. Try again.");
+    }
+  }, [projectId, router]);
+
+  /**
+   * Which other projects a redraw would change (AC-133).
    */
   const refreshUsage = useCallback(async () => {
     setAlsoUsedBy(await fetchOtherProjectsUsing(projectId));
   }, [projectId]);
 
-  // Asked once, and only when there is a character to ask about: a project with
-  // no face has no blast radius to warn about and should not pay for the query.
-  // The work sits in a function declared inside the effect rather than in the
-  // `refreshUsage` callback above, because the lint rule that keeps this repo's
-  // canvas loops honest reads a `useCallback` that sets state as a state write
-  // during the effect, which this is not — the write happens a round trip later.
   useEffect(() => {
     if (!characterName) return;
     let cancelled = false;
@@ -241,8 +241,6 @@ export function CharacterPanel({
     setConfirmingRerun(false);
     setError(null);
 
-    // Immediately before the spend, which is what AC-61 actually asks for. The
-    // reserve happens inside the request below, so nothing has moved yet.
     const capability = await ensureProbe();
     if (!capability.ok) {
       setError(capability.reason);
@@ -262,27 +260,17 @@ export function CharacterPanel({
       });
 
       if (!response.ok) {
-        // A failure before the stream opened still answers a real status.
         const body = (await response.json().catch(() => ({}))) as { error?: string };
         setError(body.error ?? "The character run failed. Try again.");
         return;
       }
 
       const committed: CommittedAsset[] = [];
-      // Turns are processed one at a time while the stream keeps draining:
-      // segmentation is heavy, and running six of them at once on the main
-      // thread would stall the very progress this is meant to show.
       let work = Promise.resolve();
-      // A holder rather than a bare `let`, for the same reason `committed` is an
-      // array: the write happens inside a callback, which TypeScript's flow
-      // analysis cannot see, so a plain variable narrows to `null` at the check.
       const failure: { first: { emotion: CharacterEmotion; cause: unknown } | null } = {
         first: null,
       };
 
-      // Filled by the stream's opening line, before any turn arrives. A holder
-      // for the same reason `committed` is an array: it is written inside a
-      // callback TypeScript's flow analysis cannot see through.
       const run: { characterId: string | null } = { characterId: null };
 
       const terminal = await readCharacterStream(response, (line) => {
@@ -298,10 +286,6 @@ export function CharacterPanel({
               setStatus(`Cut out ${committed.length} of ${CHARACTER_EMOTIONS.length}…`);
             })
             .catch((cause: unknown) => {
-              // Keep which turn died as well as why. This branch runs only
-              // after six images have been bought, so throwing the cause away
-              // meant the one failure the user has already paid for was the one
-              // failure nobody could diagnose.
               failure.first = failure.first ?? { emotion: turn.emotion, cause };
               console.error("[character] cutout failed", turn.emotion, cause);
             });
@@ -317,10 +301,6 @@ export function CharacterPanel({
         return;
       }
       if (failure.first) {
-        // The real cause, named. "Something failed in this browser" is equally
-        // true of a blocked upload, an out of memory canvas and a rejected
-        // presign, and the user cannot act on any of them without knowing
-        // which. The refund promise stays, because it is still what happens.
         setError(
           `Your character was drawn, but the cutout step failed on "${failure.first.emotion}" in this browser: ${describeCause(failure.first.cause)}. Nothing was stored, and the run will refund itself.`
         );
@@ -355,15 +335,9 @@ export function CharacterPanel({
         return;
       }
 
-      // A paid re-run refills the allowance, which is the point of resetting
-      // `attempt` server side (AC-65). The allowance is the new character's, and
-      // it has never been redrawn.
       setRegenerationsUsed(0);
       setPhoto(null);
       await refreshAssets();
-      // This project now points at a **different** character (AC-129), so the
-      // usage list and the name in the server rendered copy are both about the
-      // old one until they are re-read.
       await refreshUsage();
       router.refresh();
       setStatus(null);
@@ -390,9 +364,6 @@ export function CharacterPanel({
       if (busy || probing || probe?.ok === false) return;
       setError(null);
 
-      // A redraw spends too, so it earns the same check in the same place. This
-      // is also the only entry point for a project that already has a set,
-      // where there is no photo picker to warm the probe.
       const capability = await ensureProbe();
       if (!capability.ok) {
         setError(capability.reason);
@@ -480,40 +451,123 @@ export function CharacterPanel({
   const regenerationsLeft = Math.max(0, MAX_REGENERATIONS - regenerationsUsed);
   const running = busy !== null;
 
-  return (
-    <section className="mt-12">
-      <div className="flex items-center justify-between gap-4">
-        <h2
-          className="text-sm font-semibold uppercase tracking-wide"
-          style={{ color: "var(--broll-muted)" }}
-        >
-          Character
-        </h2>
+  // Build the display list of 6 emotions
+  const displayEmotions: CharacterEmotion[] = [
+    "excited",
+    "happy",
+    "neutral",
+    "skeptical",
+    "surprised",
+    "thoughtful",
+  ];
 
-        {hasSet && (
-          <button
-            type="button"
-            onClick={() => setOnDark((value) => !value)}
-            className="rounded-lg px-3 py-1.5 text-xs"
-            style={{ color: "var(--broll-muted)" }}
-            aria-pressed={!onDark}
+  return (
+    <section className="mt-8">
+      {/* Section Header */}
+      <div className="flex flex-wrap items-center justify-between gap-4 pb-4">
+        <div>
+          <h2
+            className="text-base font-bold tracking-tight text-white"
+            style={{ fontFamily: "var(--font-space-grotesk)" }}
           >
-            {onDark ? "Show on light" : "Show on scene"}
-          </button>
-        )}
+            Character set
+          </h2>
+          <p className="mt-0.5 text-xs text-zinc-400">
+            Six emotions generated from your photo. Hover a card to redraw it.
+          </p>
+        </div>
+
+        <div className="flex items-center gap-2.5">
+          {/* Light / Dark Mode Toggle */}
+          <div className="flex items-center rounded-lg bg-[#141518] p-0.5 border border-white/10 text-xs">
+            <button
+              type="button"
+              onClick={() => setOnDark(true)}
+              className={`px-3 py-1 rounded-md font-medium transition-all cursor-pointer ${
+                onDark
+                  ? "bg-white/15 text-white shadow-sm"
+                  : "text-zinc-400 hover:text-white"
+              }`}
+              aria-pressed={onDark}
+            >
+              On dark
+            </button>
+            <button
+              type="button"
+              onClick={() => setOnDark(false)}
+              className={`px-3 py-1 rounded-md font-medium transition-all cursor-pointer ${
+                !onDark
+                  ? "bg-white/15 text-white shadow-sm"
+                  : "text-zinc-400 hover:text-white"
+              }`}
+              aria-pressed={!onDark}
+            >
+              On light
+            </button>
+          </div>
+
+          {hasSet && !confirmingRerun && (
+            <Button
+              type="button"
+              variant="glass"
+              size="sm"
+              onClick={() => setConfirmingRerun(true)}
+              disabled={running}
+            >
+              New set from a photo
+            </Button>
+          )}
+
+          {/* Detach (AC-137). Arms in place rather than opening a dialog, the
+              same pattern the characters page uses — but the wording is much
+              softer than delete's, because this genuinely takes nothing away:
+              the character keeps existing and can be reattached for free. */}
+          {hasSet && !confirmingRerun && !detaching && (
+            <Button
+              type="button"
+              variant="glass"
+              size="sm"
+              onClick={() => setDetaching(true)}
+              disabled={running}
+            >
+              Detach
+            </Button>
+          )}
+          {detaching && (
+            <div className="flex items-center gap-2 text-xs">
+              <span className="text-zinc-400">
+                Use no character here? The character itself is kept.
+              </span>
+              <Button
+                type="button"
+                variant="glass"
+                size="sm"
+                onClick={detach}
+                disabled={running}
+              >
+                Detach
+              </Button>
+              <button
+                type="button"
+                onClick={() => setDetaching(false)}
+                className="px-2 py-1 font-semibold text-zinc-300 hover:text-white cursor-pointer"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* Stated before the file picker, not after it (AC-66). Every clause here
-          is verifiable, and the 55 days is named rather than glossed as
-          "deleted immediately", because that part is Google's to control. */}
+      {/* Stated before the file picker, not after it (AC-66). */}
       {!hasSet && (
-        <p className="mt-3 text-sm leading-relaxed" style={{ color: "var(--broll-muted)" }}>
+        <p className="mt-2 text-xs leading-relaxed text-zinc-400">
           {PHOTO_PRIVACY_COPY}
         </p>
       )}
 
       {probe?.ok === false && (
-        <p className="broll-glow mt-4 rounded-lg px-4 py-3 text-sm" role="alert">
+        <p className="broll-glow mt-4 rounded-lg px-4 py-3 text-xs" role="alert">
           {probe.reason}
         </p>
       )}
@@ -521,7 +575,7 @@ export function CharacterPanel({
       {!hasSet && (
         <div className="mt-4 flex flex-wrap items-center gap-3">
           <label
-            className="broll-glass cursor-pointer rounded-lg px-4 py-2 text-sm"
+            className="cursor-pointer rounded-lg px-4 py-2 text-xs font-medium bg-[#141518] border border-white/10 hover:border-white/20 transition-colors"
             style={{ opacity: running ? 0.6 : 1 }}
           >
             {photo ? photo.name : "Choose a photo"}
@@ -539,33 +593,23 @@ export function CharacterPanel({
                 );
                 const accepted = file && file.size <= MAX_PHOTO_BYTES ? file : null;
                 setPhoto(accepted);
-                // Warm start on intent: the download overlaps with the user
-                // reading the price and reaching for Generate, instead of
-                // running for everyone who merely opened the project.
                 if (accepted) void ensureProbe();
               }}
             />
           </label>
 
-          <button
+          <Button
             type="button"
+            variant="primary"
+            size="md"
             onClick={generate}
-            // Disabled once the probe has *failed*, not until it has passed:
-            // `generate` awaits the probe itself before it spends, so a browser
-            // that cannot segment still never reaches the ledger (AC-61), and a
-            // browser that has not been asked yet is no longer blocked.
             disabled={running || probing || !photo || probe?.ok === false}
-            className="rounded-lg px-4 py-2 text-sm font-semibold transition-colors disabled:opacity-60"
-            style={{
-              background: "var(--broll-accent)",
-              color: "var(--broll-accent-foreground)",
-            }}
           >
             {running ? "Generating…" : `Generate character set — ${setPrice}`}
-          </button>
+          </Button>
 
           {probing && (
-            <span className="text-xs" style={{ color: "var(--broll-muted)" }}>
+            <span className="text-xs text-zinc-400">
               Checking this browser…
             </span>
           )}
@@ -574,7 +618,7 @@ export function CharacterPanel({
 
       {status && (
         <p
-          className="mt-4 text-sm"
+          className="mt-4 text-xs font-semibold"
           role="status"
           aria-live="polite"
           style={{ color: "var(--broll-accent)" }}
@@ -584,17 +628,13 @@ export function CharacterPanel({
       )}
 
       {error && (
-        <p className="mt-4 text-sm" role="alert" style={{ color: "#ff6b6b" }}>
+        <p className="mt-4 text-xs" role="alert" style={{ color: "#ff6b6b" }}>
           {error}
         </p>
       )}
 
-      {/* Named before a redraw, not after it (AC-133). A regeneration changes
-          this face everywhere it is used, including projects the creator
-          considers finished, and this list is the only thing standing between
-          that and a surprise. */}
       {hasSet && alsoUsedBy.length > 0 && (
-        <p className="broll-glow mt-4 rounded-lg px-4 py-3 text-sm" role="status">
+        <p className="broll-glow mt-4 rounded-lg px-4 py-3 text-xs leading-relaxed" role="status">
           This character is also used by{" "}
           {alsoUsedBy.map((project, index) => (
             <span key={project.id}>
@@ -606,145 +646,202 @@ export function CharacterPanel({
         </p>
       )}
 
-      {assets.length > 0 && (
-        <>
-          <ul className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
-            {assets.map((asset) => (
-              <li key={asset.emotion} className="broll-glass rounded-lg p-3">
-                {/* Previewed on the scene background by default, with a toggle
-                    (AC-20). This deliberately overrides the design brief's
-                    checkerboard: the artifact worth catching is a faint light
-                    fringe, and a checkerboard hides it. */}
-                <div
-                  className="flex aspect-3/4 items-center justify-center overflow-hidden rounded"
-                  style={{ background: onDark ? "var(--broll-background)" : "#e6e6e6" }}
-                >
-                  {asset.url ? (
-                    // eslint-disable-next-line @next/next/no-img-element -- a presigned blob URL, loaded straight from the store; the optimizer would put a Function back in the image path (AC-17)
-                    <img
-                      src={asset.url}
-                      alt={`${EMOTION_LABELS[asset.emotion]} character variant`}
-                      className="max-h-full max-w-full object-contain"
-                    />
-                  ) : (
-                    <span className="text-xs" style={{ color: "var(--broll-muted)" }}>
-                      No preview
-                    </span>
-                  )}
-                </div>
+      {/* 6 Emotion Cards Grid */}
+      <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3.5">
+        {displayEmotions.map((emotion) => {
+          const asset = assets.find((a) => a.emotion === emotion);
+          const isBase = emotion === "neutral";
+          const isBusyThis = busy === emotion;
 
-                <div className="mt-2 flex items-center justify-between gap-2">
-                  <span className="text-sm">{EMOTION_LABELS[asset.emotion]}</span>
-                  <button
-                    type="button"
-                    onClick={() => regenerate(asset.emotion)}
-                    disabled={
-                      running || probing || regenerationsLeft === 0 || probe?.ok === false
-                    }
-                    className="text-xs underline disabled:opacity-50"
-                    style={{ color: "var(--broll-muted)" }}
-                  >
-                    {busy === asset.emotion ? "Redrawing…" : "Redraw"}
-                  </button>
-                </div>
-
-                <p className="mt-1 broll-tabular text-xs" style={{ color: "var(--broll-muted)" }}>
-                  {asset.width}×{asset.height}
-                </p>
-
-                {/* The one control whose consequence cannot be undone, so the
-                    warning sits on it rather than in a help page. */}
-                {asset.emotion === "neutral" && (
-                  <p className="mt-2 text-xs leading-relaxed" style={{ color: "var(--broll-muted)" }}>
-                    {NEUTRAL_REGEN_WARNING}
-                  </p>
+          return (
+            <div
+              key={emotion}
+              className={`rounded-xl p-3 bg-[#111215] border transition-all relative flex flex-col justify-between group ${
+                isBusyThis
+                  ? "border-[var(--broll-accent)] shadow-[0_0_20px_rgba(255,252,0,0.2)]"
+                  : "border-white/[0.08] hover:border-white/20"
+              }`}
+            >
+              {/* Card Header Tag */}
+              <div className="flex items-center justify-between min-h-[18px] mb-2">
+                <span className="text-[10px] uppercase font-bold tracking-wider text-zinc-500">
+                  {asset?.url ? "" : "PLACEHOLDER"}
+                </span>
+                {isBase && (
+                  <Badge variant="accent" size="sm">
+                    Base
+                  </Badge>
                 )}
-              </li>
-            ))}
-          </ul>
+              </div>
 
-          {/* The allowance belongs to the character, not to this project
-              (AC-131): the same face reused on a second project arrives with
-              the redraws it has left, never a fresh twelve. Saying "for this
-              project" would be a promise the row cannot keep. */}
-          <p className="mt-3 text-sm" style={{ color: "var(--broll-muted)" }}>
-            {regenerationsLeft} of {MAX_REGENERATIONS} redraws left for this
-            character. Redraws are free, and the allowance follows the character
-            wherever it is used.
-          </p>
-        </>
-      )}
+              {/* Avatar / Character cutout image frame */}
+              <div
+                className="w-full aspect-[3/4] rounded-lg flex items-center justify-center overflow-hidden relative transition-colors"
+                style={{
+                  background: onDark ? "#0c0d10" : "#e6e6e8",
+                }}
+              >
+                {asset?.url ? (
+                  // eslint-disable-next-line @next/next/no-img-element -- presigned direct blob url
+                  <img
+                    src={asset.url}
+                    alt={`${EMOTION_LABELS[emotion]} character variant`}
+                    className="max-h-full max-w-full object-contain drop-shadow-sm transition-transform duration-200 group-hover:scale-105"
+                  />
+                ) : (
+                  <svg
+                    className="w-20 h-20 opacity-30 text-zinc-400"
+                    viewBox="0 0 100 100"
+                    fill="currentColor"
+                    aria-hidden="true"
+                  >
+                    <circle cx="50" cy="35" r="22" />
+                    <path d="M15 90 C15 65 30 55 50 55 C70 55 85 65 85 90 Z" />
+                  </svg>
+                )}
 
+                {/* Hover Redraw Action Overlay */}
+                {hasSet && (
+                  <div className="absolute inset-0 bg-black/75 backdrop-blur-[2px] opacity-0 group-hover:opacity-100 flex flex-col items-center justify-center gap-1.5 transition-opacity p-2 text-center">
+                    <Button
+                      type="button"
+                      variant="primary"
+                      size="xs"
+                      onClick={() => regenerate(emotion)}
+                      disabled={
+                        running || probing || regenerationsLeft === 0 || probe?.ok === false
+                      }
+                      className="w-full"
+                    >
+                      {isBusyThis ? "Redrawing…" : "Redraw"}
+                    </Button>
+                    <span className="text-[10px] text-zinc-400">
+                      {regenerationsLeft > 0 ? "Free redraw" : "0 left"}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Card Footer */}
+              <div className="mt-3 flex items-center justify-between gap-1 text-xs">
+                <span className="font-semibold text-white">
+                  {EMOTION_LABELS[emotion]}
+                </span>
+                <span className="text-[10px] text-zinc-400 broll-tabular font-medium">
+                  {asset ? `${asset.width}×${asset.height}` : "814×1094"}
+                </span>
+              </div>
+
+              {/* Warning on neutral */}
+              {isBase && (
+                <p className="mt-2 text-[10px] text-zinc-500 leading-tight">
+                  {NEUTRAL_REGEN_WARNING}
+                </p>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* 12-Segment Redraw Allowance Battery Bar */}
       {hasSet && (
-        <div className="mt-4">
-          {confirmingRerun ? (
-            <div className="broll-glow rounded-lg px-4 py-3">
-              {/* A re-run makes a **new** character rather than overwriting
-                  this one (AC-129), so the copy says what actually happens: the
-                  old face survives, and any other project keeps drawing with
-                  it. Overwriting in place was the alternative and was declined,
-                  because it would mean this button behaves differently
-                  depending on state the creator cannot see. */}
-              <p className="text-sm">
-                Generating again costs <strong>{setPrice}</strong> and draws a new
-                character from a new photo. This project switches to it, with a fresh
-                set of {MAX_REGENERATIONS} redraws.{" "}
-                {characterName ? <strong>{characterName}</strong> : "The current character"}{" "}
-                is kept
-                {alsoUsedBy.length > 0
-                  ? `, and the ${alsoUsedBy.length === 1 ? "project" : "projects"} using it stay${alsoUsedBy.length === 1 ? "s" : ""} on it.`
-                  : ", so you can come back to it or delete it."}
-              </p>
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <label className="broll-glass cursor-pointer rounded-lg px-3 py-1.5 text-sm">
-                  {photo ? photo.name : "Choose a photo"}
-                  <input
-                    type="file"
-                    accept={ACCEPT_ATTRIBUTE}
-                    className="sr-only"
-                    onChange={(event) => {
-                      const file = event.target.files?.[0] ?? null;
-                      setPhoto(file);
-                      if (file) void ensureProbe();
+        <Card className="mt-4 p-3.5 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            {/* 12 Segments */}
+            <div className="flex items-center gap-1 shrink-0" aria-hidden="true">
+              {Array.from({ length: MAX_REGENERATIONS }, (_, i) => {
+                const filled = i < regenerationsLeft;
+                return (
+                  <div
+                    key={i}
+                    className="w-2.5 h-4 rounded-[2px] transition-all"
+                    style={{
+                      background: filled ? "var(--broll-accent)" : "rgba(255, 255, 255, 0.12)",
+                      boxShadow: filled ? "0 0 6px rgba(255,252,0,0.3)" : "none",
                     }}
                   />
-                </label>
-                <button
-                  type="button"
-                  onClick={generate}
-                  disabled={running || probing || !photo || probe?.ok === false}
-                  className="rounded-lg px-3 py-1.5 text-sm font-semibold disabled:opacity-60"
-                  style={{
-                    background: "var(--broll-accent)",
-                    color: "var(--broll-accent-foreground)",
-                  }}
-                >
-                  Generate for {setPrice}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setConfirmingRerun(false)}
-                  className="rounded-lg px-3 py-1.5 text-sm"
-                  style={{ color: "var(--broll-muted)" }}
-                >
-                  Cancel
-                </button>
-              </div>
-              <p className="mt-2 text-xs leading-relaxed" style={{ color: "var(--broll-muted)" }}>
-                {PHOTO_PRIVACY_COPY}
-              </p>
+                );
+              })}
             </div>
-          ) : (
-            <button
+
+            <p className="text-xs text-zinc-300">
+              <strong className="text-white broll-tabular">
+                {regenerationsLeft} of {MAX_REGENERATIONS} redraws left for this character
+              </strong>{" "}
+              · free, and the allowance follows the character wherever it is used.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setShowHowRedrawsWork(!showHowRedrawsWork)}
+            className="text-xs font-semibold text-zinc-300 hover:text-white transition-colors shrink-0 underline cursor-pointer"
+          >
+            How redraws work
+          </button>
+        </Card>
+      )}
+
+      {showHowRedrawsWork && (
+        <Card variant="subtle" className="mt-2.5 p-4 text-xs text-zinc-300 leading-relaxed">
+          <h4 className="font-bold text-white mb-1">Character Redraw Allowance</h4>
+          <p>
+            Each generated character set includes {MAX_REGENERATIONS} free redraws.
+            Because generated characters can be reused across multiple projects, this
+            allowance is tied directly to the character rather than a single project.
+            Redrawing an emotion updates that character wherever it is currently in use.
+          </p>
+        </Card>
+      )}
+
+      {/* Confirmation box when user wants to generate a new character from a photo */}
+      {hasSet && confirmingRerun && (
+        <div className="broll-glow mt-4 rounded-xl p-4 sm:p-5">
+          <p className="text-xs leading-relaxed text-zinc-200">
+            Generating again costs <strong>{setPrice}</strong> and draws a new
+            character from a new photo. This project switches to it, with a fresh
+            set of {MAX_REGENERATIONS} redraws.{" "}
+            {characterName ? <strong>{characterName}</strong> : "The current character"}{" "}
+            is kept
+            {alsoUsedBy.length > 0
+              ? `, and the ${alsoUsedBy.length === 1 ? "project" : "projects"} using it stay${alsoUsedBy.length === 1 ? "s" : ""} on it.`
+              : ", so you can come back to it or delete it."}
+          </p>
+          <div className="mt-3.5 flex flex-wrap items-center gap-2.5">
+            <label className="cursor-pointer rounded-lg px-3.5 py-1.5 text-xs font-semibold bg-white/10 hover:bg-white/15 border border-white/10 transition-colors">
+              {photo ? photo.name : "Choose a photo"}
+              <input
+                type="file"
+                accept={ACCEPT_ATTRIBUTE}
+                className="sr-only"
+                onChange={(event) => {
+                  const file = event.target.files?.[0] ?? null;
+                  setPhoto(file);
+                  if (file) void ensureProbe();
+                }}
+              />
+            </label>
+            <Button
               type="button"
-              onClick={() => setConfirmingRerun(true)}
-              disabled={running}
-              className="text-sm underline disabled:opacity-50"
-              style={{ color: "var(--broll-muted)" }}
+              variant="primary"
+              size="sm"
+              onClick={generate}
+              disabled={running || probing || !photo || probe?.ok === false}
             >
-              Generate a new set from a different photo
-            </button>
-          )}
+              Generate for {setPrice}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => setConfirmingRerun(false)}
+            >
+              Cancel
+            </Button>
+          </div>
+          <p className="mt-2.5 text-[11px] text-zinc-400 leading-relaxed">
+            {PHOTO_PRIVACY_COPY}
+          </p>
         </div>
       )}
     </section>
@@ -753,11 +850,6 @@ export function CharacterPanel({
 
 /**
  * The other projects drawing with this project's character (AC-133).
- *
- * One helper for both callers, the mount read and the read after a paid re-run,
- * so neither can forget to drop this project from the list. A failed read
- * answers empty: the warning is an addition to what the screen says, and a
- * network blip must not stand between a creator and their redraw button.
  */
 async function fetchOtherProjectsUsing(projectId: string): Promise<UsingProject[]> {
   const response = await fetch(`/api/projects/${projectId}/character`);
@@ -766,12 +858,6 @@ async function fetchOtherProjectsUsing(projectId: string): Promise<UsingProject[
   return (body.usedBy ?? []).filter((project) => project.id !== projectId);
 }
 
-/**
- * One short line naming why a cutout died, safe to show a user.
- *
- * Only the message, never the stack: this reaches the screen. The full object is
- * on the console for whoever is actually debugging it.
- */
 function describeCause(cause: unknown): string {
   const message = cause instanceof Error ? cause.message : String(cause);
   const trimmed = message.trim();
@@ -779,7 +865,6 @@ function describeCause(cause: unknown): string {
   return trimmed.length > 200 ? `${trimmed.slice(0, 200)}…` : trimmed;
 }
 
-/** Turn order, so the grid never reshuffles as variants land. */
 function sortByTurnOrder(assets: ReviewAsset[]): ReviewAsset[] {
   return [...assets].sort(
     (a, b) =>
@@ -787,12 +872,31 @@ function sortByTurnOrder(assets: ReviewAsset[]): ReviewAsset[] {
   );
 }
 
-/**
- * The generated image, decoded straight to a PNG blob.
- *
- * No canvas round trip and no JPEG anywhere (AC-19): these bytes are the PNG the
- * vendor produced, and they stay that way until the trim re-encodes them as PNG.
- */
+async function putPresigned(pathname: string, blob: Blob): Promise<void> {
+  await uploadPresigned(pathname, blob, {
+    access: "private",
+    handleUploadUrl: "/api/blob/upload",
+    contentType: "image/png",
+  });
+}
+
+export async function putPresignedWithRetry(
+  pathname: string,
+  blob: Blob,
+  getToken: (options: { skipCache: boolean }) => Promise<unknown>
+): Promise<void> {
+  try {
+    await putPresigned(pathname, blob);
+  } catch (cause) {
+    await getToken({ skipCache: true }).catch(() => null);
+    try {
+      await putPresigned(pathname, blob);
+    } catch {
+      throw cause;
+    }
+  }
+}
+
 function base64ToPngBlob(base64: string): Blob {
   const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);
@@ -800,15 +904,6 @@ function base64ToPngBlob(base64: string): Blob {
   return new Blob([bytes], { type: "image/png" });
 }
 
-/**
- * Read the NDJSON stream, handing every line to `onLine`, and return the
- * terminal one.
- *
- * The same shape as the planner's reader and for the same reason: the route
- * sends HTTP 200 before the model answers, so a failure arrives as `{"error"}`
- * inside the last line and `res.json()` would deadlock on a body still open.
- * Here the lines in between carry images rather than only phases.
- */
 async function readCharacterStream(
   response: Response,
   onLine: (line: TurnLine) => void
@@ -827,7 +922,6 @@ async function readCharacterStream(
     const line = parseLine(raw);
     if (!line) return;
     onLine(line);
-    // Anything that is neither a heartbeat nor an image is the result.
     if (!line.phase && !line.png) terminal = line;
   };
 
@@ -837,8 +931,6 @@ async function readCharacterStream(
 
     buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split("\n");
-    // Whatever follows the final newline is a partial line, kept for the next
-    // chunk rather than parsed as a whole one.
     buffer = lines.pop() ?? "";
     for (const line of lines) handle(line);
   }

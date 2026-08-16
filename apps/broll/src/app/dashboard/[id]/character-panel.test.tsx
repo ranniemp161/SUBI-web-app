@@ -3,18 +3,35 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
 
 const probeSegmentation = vi.hoisted(() => vi.fn(async () => ({ ok: true as const })));
+const getToken = vi.hoisted(() =>
+  vi.fn<(options: { skipCache: boolean }) => Promise<string>>(
+    async () => "fresh-session-token"
+  )
+);
+// Typed by signature rather than by an implementation with unused parameters,
+// so the assertions below can read `calls[0][0]` and the lint rule about unused
+// mock arguments stays satisfied.
+const uploadPresigned = vi.hoisted(() =>
+  vi.fn<(pathname: string, blob: Blob, options: unknown) => Promise<void>>(
+    async () => undefined
+  )
+);
 
 vi.mock("@/lib/segmentation", () => ({
   probeSegmentation,
   removeCharacterBackground: vi.fn(),
 }));
 vi.mock("@/lib/trim", () => ({ trimTransparent: vi.fn() }));
-vi.mock("@vercel/blob/client", () => ({ uploadPresigned: vi.fn() }));
+vi.mock("@vercel/blob/client", () => ({ uploadPresigned }));
+// The panel asks Clerk for a fresh session token before it retries an upload,
+// so it needs the hook. Rendering inside a real `<ClerkProvider>` would put a
+// network dependency in a unit test for the sake of one function.
+vi.mock("@clerk/nextjs", () => ({ useAuth: () => ({ getToken }) }));
 // The panel re-reads the server after a paid re-run, because that run repoints
 // the project at a different character (spec `broll/0007` AC-129).
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 
-import { CharacterPanel } from "./character-panel";
+import { CharacterPanel, putPresignedWithRetry } from "./character-panel";
 import { CHARACTER_EMOTIONS } from "@/lib/emotions";
 
 /**
@@ -174,5 +191,67 @@ describe("the shared character warning (AC-133)", () => {
       expect(screen.getByText(/Generate character set/)).toBeTruthy();
     });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The regression this locks in: a character upload got a `401` from `proxy.ts`
+ * partway through a run, on 2026-08-14, and it cost the whole six image set.
+ *
+ * The cause is that cutting out six images blocks the main thread long enough
+ * for a Clerk session token to lapse, so the next presigned upload is refused
+ * before it reaches the route. It recovered on its own within seconds both
+ * times it was observed, which is why one retry against a fresh session is the
+ * right size of fix rather than a longer backoff.
+ */
+describe("a presigned upload that is refused mid run", () => {
+  const BLOB = new Blob(["png"], { type: "image/png" });
+  const PATH = "broll/characters/abc/happy-1-0123456789abcdef.png";
+
+  it("uploads once and never refreshes the session when the first try works", async () => {
+    await putPresignedWithRetry(PATH, BLOB, getToken);
+
+    expect(uploadPresigned).toHaveBeenCalledTimes(1);
+    // A healthy run must not mint a token per image.
+    expect(getToken).not.toHaveBeenCalled();
+  });
+
+  it("refreshes the session and retries once, so a lapsed token costs no images", async () => {
+    uploadPresigned.mockRejectedValueOnce(
+      new Error("Vercel Blob: Failed to retrieve the presigned URL")
+    );
+
+    await expect(putPresignedWithRetry(PATH, BLOB, getToken)).resolves.toBeUndefined();
+
+    expect(getToken).toHaveBeenCalledTimes(1);
+    // **The assertion this bug is really about.** A plain `getToken()` returns
+    // the cached session token, which during this failure is the stale one, so
+    // the retry repeats the identical refused request. That was measured: two
+    // `[proxy] refused` lines back to back for one turn.
+    expect(getToken).toHaveBeenCalledWith({ skipCache: true });
+    expect(uploadPresigned).toHaveBeenCalledTimes(2);
+    // The same pathname both times. A retry that uploaded elsewhere would
+    // leave the committed row pointing at an object that is not there.
+    expect(uploadPresigned.mock.calls[0][0]).toBe(PATH);
+    expect(uploadPresigned.mock.calls[1][0]).toBe(PATH);
+  });
+
+  it("gives up after the retry, reporting the failure that started it", async () => {
+    uploadPresigned
+      .mockRejectedValueOnce(new Error("first failure"))
+      .mockRejectedValueOnce(new Error("second failure"));
+
+    await expect(putPresignedWithRetry(PATH, BLOB, getToken)).rejects.toThrow(
+      "first failure"
+    );
+    expect(uploadPresigned).toHaveBeenCalledTimes(2);
+  });
+
+  it("still retries when refreshing the session itself fails", async () => {
+    uploadPresigned.mockRejectedValueOnce(new Error("refused"));
+    getToken.mockRejectedValueOnce(new Error("clerk is unreachable"));
+
+    await expect(putPresignedWithRetry(PATH, BLOB, getToken)).resolves.toBeUndefined();
+    expect(uploadPresigned).toHaveBeenCalledTimes(2);
   });
 });

@@ -5,32 +5,7 @@ import { MAX_OVERLAY_TEXT_CHARS } from "@/lib/scene-limits";
 import type { LayoutTemplate } from "@/lib/scene-schema";
 import type { CharacterEmotion } from "@/lib/emotions";
 import { isCharacterTemplate, templateOptionsFor } from "@/lib/scene-templates";
-
-/**
- * Scene Studio's edit controls: how a scene looks, whether it ships, and (for a
- * scene the creator added) whether it stays at all (spec `broll/0005`).
- *
- * **Presentation is editable; claims are not.** The template, the emotion, the
- * words on screen and the include flag are all a creator's to choose. The
- * chart's numbers and the scene's timings are not offered here at all, because
- * both are traced back to the transcript and editing either would let someone
- * publish a figure the app had just refused to invent. That is the whole line,
- * and it is drawn at whether a field carries a claim rather than at how hard
- * the field is to build. Spec `broll/0006` is a layout spec and has no
- * authority to widen that set, so it did not.
- *
- * **A template this scene cannot draw is never offered**, rather than offered
- * and rejected (AC-75). `templateOptionsFor` is shared with the route, so the
- * picker and the server cannot disagree about what is allowed.
- *
- * Saves are optimistic and debounced. Typing is the common case and a round
- * trip per keystroke would make the field feel broken; the preview above this
- * redraws from local state immediately either way.
- *
- * **Laid out as a column now**, not a wrapping row: it lives in the detail pane
- * under the preview rather than inside a list item (spec `0006` AC-102). Same
- * logic, same debounce, same optimistic save.
- */
+import { Card, Switch } from "@/components/ui";
 
 /** Long enough to coalesce typing, short enough to feel saved. */
 const SAVE_DEBOUNCE_MS = 600;
@@ -57,6 +32,9 @@ export function SceneOverrides({
   disabled = false,
   firstControlRef,
   flushRef,
+  position = 1,
+  totalIncluded = 1,
+  durationMs = 6000,
   onChange,
   onDelete,
 }: {
@@ -75,14 +53,10 @@ export function SceneOverrides({
   disabled?: boolean;
   /** Where Enter from the list lands (spec `0006` AC-107). */
   firstControlRef?: RefObject<HTMLInputElement | null>;
-  /**
-   * Lets the shell settle a half typed caption before a plan re-run starts.
-   *
-   * Without it, a creator who types and immediately re-runs fires a PATCH
-   * against a scene the run has already replaced, and the edit is lost with a
-   * 404 nobody sees (spec `0006` AC-116).
-   */
   flushRef?: RefObject<(() => void) | null>;
+  position?: number;
+  totalIncluded?: number;
+  durationMs?: number;
   /** Applied locally at once, so the preview and the batch react immediately. */
   onChange: (patch: ScenePatch) => void;
   /** Only ever called for a scene the creator added by hand (AC-81). */
@@ -91,7 +65,6 @@ export function SceneOverrides({
   const [state, setState] = useState<SaveState>("idle");
   const [deleting, setDeleting] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  /** The caption typed but not yet sent, or null when nothing is pending. */
   const pendingTextRef = useRef<string | null>(null);
 
   const save = useCallback(
@@ -111,7 +84,6 @@ export function SceneOverrides({
     [projectId, sceneId]
   );
 
-  /** Sends whatever is waiting on the debounce, right now. */
   const flush = useCallback(() => {
     if (timerRef.current) {
       clearTimeout(timerRef.current);
@@ -131,9 +103,6 @@ export function SceneOverrides({
     };
   }, [flushRef, flush]);
 
-  // A pending save must not outlive the scene it belongs to. Without this,
-  // selecting another scene mid keystroke fires a PATCH carrying this scene's
-  // text under the next scene's id.
   useEffect(() => {
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
@@ -155,15 +124,10 @@ export function SceneOverrides({
 
   const onIncluded = (value: boolean) => {
     onChange({ included: value });
-    // Not debounced: a toggle is one deliberate action, and waiting to save it
-    // would leave the export set ambiguous if the tab closed.
     void save({ included: value });
   };
 
   const onTemplate = (value: LayoutTemplate) => {
-    // The server clears the emotion off a non character template in the same
-    // statement (AC-93); mirrored here so the preview stops compositing a
-    // character the moment the picker changes rather than after the round trip.
     const patch: ScenePatch = isCharacterTemplate(value)
       ? { layoutTemplate: value }
       : { layoutTemplate: value, emotion: null };
@@ -198,68 +162,112 @@ export function SceneOverrides({
     hasChart,
     hasCharacterSet: committedEmotions.length > 0,
   });
-  // A template with no renderer, or one whose data has since gone, is still the
-  // scene's value. Listing it keeps the select honest about what is stored
-  // rather than silently showing a different template than the scene will draw.
   const templateChoices = templates.includes(layoutTemplate)
     ? templates
     : [layoutTemplate, ...templates];
 
+  const charCount = (overlayText ?? "").length;
+
   return (
-    <div className="grid gap-3">
-      <label className="flex items-center gap-2 text-sm">
-        <input
+    <div className="flex flex-col gap-5">
+      {/* 1. Include in export with Switch */}
+      <Card className="flex items-center justify-between p-3.5">
+        <div>
+          <span className="font-semibold text-xs text-white block">
+            Include in export
+          </span>
+          <span className="text-[11px] text-zinc-400 broll-tabular">
+            Clip {position} of {totalIncluded}
+          </span>
+        </div>
+
+        <Switch
           ref={firstControlRef}
-          type="checkbox"
           checked={included}
           disabled={disabled}
-          onChange={(event) => onIncluded(event.target.checked)}
+          onChange={onIncluded}
+          label="Include in export"
         />
-        Include in export
-      </label>
+      </Card>
 
-      <div className="flex flex-wrap gap-3">
-        <label className="flex items-center gap-2 text-xs" style={{ color: "var(--broll-muted)" }}>
-          <span className="shrink-0">Template</span>
-          <select
-            value={layoutTemplate}
-            disabled={disabled}
-            onChange={(event) => onTemplate(event.target.value as LayoutTemplate)}
-            className="broll-glass rounded-md px-2 py-1 text-xs"
-          >
-            {templateChoices.map((template) => (
-              <option key={template} value={template}>
-                {template}
-              </option>
-            ))}
-          </select>
-        </label>
+      {/* 2. Template Picker (Visual 2x2 cards) */}
+      <div>
+        <span className="block text-[10px] font-bold uppercase tracking-widest text-zinc-400 mb-2.5">
+          TEMPLATE
+        </span>
 
-        {/* Only on a character template, and only from what this project has
-            actually generated. An emotion nobody generated cannot be
-            composited, so it is never offered (AC-77). */}
-        {isCharacterTemplate(layoutTemplate) && committedEmotions.length > 0 && (
-          <label className="flex items-center gap-2 text-xs" style={{ color: "var(--broll-muted)" }}>
-            <span className="shrink-0">Emotion</span>
-            <select
-              value={emotion ?? ""}
-              disabled={disabled}
-              onChange={(event) => onEmotion(event.target.value as CharacterEmotion)}
-              className="broll-glass rounded-md px-2 py-1 text-xs"
-            >
-              {emotion === null && <option value="">Pick one</option>}
-              {committedEmotions.map((value) => (
-                <option key={value} value={value}>
-                  {value}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
+        <div className="grid grid-cols-2 gap-2">
+          {templateChoices.map((template) => {
+            const isSelected = layoutTemplate === template;
+            return (
+              <button
+                key={template}
+                type="button"
+                disabled={disabled}
+                onClick={() => onTemplate(template)}
+                className={`rounded-xl p-2.5 text-left transition-all flex flex-col justify-between cursor-pointer ${
+                  isSelected
+                    ? "bg-[#16171c] border-2 border-[var(--broll-accent)] shadow-[0_0_15px_rgba(255,252,0,0.15)]"
+                    : "bg-[#111215] border border-white/[0.08] hover:border-white/20"
+                }`}
+              >
+                <div className="w-full h-12 rounded bg-black/50 p-1.5 flex items-center justify-center mb-2 overflow-hidden">
+                  <TemplateDiagram template={template} />
+                </div>
+                <span
+                  className={`text-xs font-semibold truncate ${
+                    isSelected ? "text-[var(--broll-accent)] font-bold" : "text-zinc-300"
+                  }`}
+                >
+                  {template}
+                </span>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
-      <label className="flex flex-col gap-1 text-xs" style={{ color: "var(--broll-muted)" }}>
-        <span>On screen text</span>
+      {/* 3. Emotion Picker (Pills) */}
+      {isCharacterTemplate(layoutTemplate) && committedEmotions.length > 0 && (
+        <div>
+          <span className="block text-[10px] font-bold uppercase tracking-widest text-zinc-400 mb-2.5">
+            EMOTION
+          </span>
+
+          <div className="flex flex-wrap gap-1.5">
+            {committedEmotions.map((value) => {
+              const isSelected = emotion === value;
+              return (
+                <button
+                  key={value}
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => onEmotion(value)}
+                  className={`px-3 py-1 rounded-full text-xs font-medium transition-all cursor-pointer ${
+                    isSelected
+                      ? "bg-[var(--broll-accent)] text-[#111111] font-bold shadow-sm"
+                      : "bg-[#111215] border border-white/10 text-zinc-300 hover:text-white hover:border-white/20"
+                  }`}
+                >
+                  {value}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* 4. On-Screen Text Input */}
+      <div>
+        <div className="flex items-center justify-between mb-1.5">
+          <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-400">
+            ON-SCREEN TEXT
+          </span>
+          <span className="text-[10px] font-medium text-zinc-500 broll-tabular">
+            {charCount}/{MAX_OVERLAY_TEXT_CHARS}
+          </span>
+        </div>
+
         <input
           type="text"
           value={overlayText ?? ""}
@@ -267,37 +275,83 @@ export function SceneOverrides({
           placeholder="None"
           disabled={disabled}
           onChange={(event) => onText(event.target.value)}
-          className="broll-glass w-full rounded-md px-2 py-1.5 text-sm"
-          style={{ color: "var(--broll-foreground)" }}
+          className="w-full rounded-xl px-3.5 py-2.5 text-xs bg-[#111215] border border-white/[0.08] text-white placeholder-zinc-600 focus:border-[var(--broll-accent)] focus:outline-none transition-colors"
         />
-      </label>
 
-      <div className="flex items-center gap-3">
-        {/* A planner scene is never deletable: excluding it is the reversible
-            answer, and a re-run rewrites it anyway (AC-81). */}
+        <p className="mt-1.5 text-[10px] text-zinc-500 leading-tight">
+          Shown for the full {(durationMs / 1000).toFixed(1)}s. Two lines fit comfortably.
+        </p>
+      </div>
+
+      {/* 5. Footer actions: Save state & Delete */}
+      <div className="flex items-center justify-between pt-1">
         {origin === "manual" && (
           <button
             type="button"
             onClick={remove}
             disabled={deleting || disabled}
-            className="text-xs underline disabled:opacity-60"
-            style={{ color: "var(--broll-muted)" }}
+            className="text-xs text-red-400 hover:text-red-300 underline disabled:opacity-50 cursor-pointer"
           >
             {deleting ? "Deleting…" : "Delete this scene"}
           </button>
         )}
 
-        {state === "saving" && (
-          <span className="text-xs" style={{ color: "var(--broll-muted)" }}>
-            Saving…
-          </span>
-        )}
-        {state === "failed" && (
-          <span className="text-xs" role="alert" style={{ color: "#ff6b6b" }}>
-            Not saved
-          </span>
-        )}
+        <div className="ml-auto">
+          {state === "saving" && (
+            <span className="text-xs text-zinc-400">Saving…</span>
+          )}
+          {state === "failed" && (
+            <span className="text-xs text-red-400" role="alert">
+              Not saved
+            </span>
+          )}
+        </div>
       </div>
+    </div>
+  );
+}
+
+/** Visual mini-diagram for template cards */
+function TemplateDiagram({ template }: { template: LayoutTemplate }) {
+  if (template === "character-left") {
+    return (
+      <div className="w-full h-full flex items-center gap-1.5 px-1">
+        <div className="w-1/3 h-full rounded bg-zinc-600 flex items-center justify-center">
+          <div className="w-2.5 h-2.5 rounded-full bg-zinc-400" />
+        </div>
+        <div className="flex-1 flex flex-col gap-1">
+          <div className="w-full h-1 rounded bg-zinc-500" />
+          <div className="w-4/5 h-1 rounded bg-zinc-500" />
+          <div className="w-3/5 h-1 rounded bg-zinc-600" />
+        </div>
+      </div>
+    );
+  }
+  if (template === "character-center") {
+    return (
+      <div className="w-full h-full flex items-center justify-center relative">
+        <div className="w-6 h-8 rounded-t bg-zinc-600 flex items-center justify-center">
+          <div className="w-3 h-3 rounded-full bg-zinc-400" />
+        </div>
+      </div>
+    );
+  }
+  if (template === "chart-full") {
+    return (
+      <div className="w-full h-full flex items-end justify-center gap-1.5 px-2 pb-1">
+        <div className="w-2 h-4 rounded-t bg-[var(--broll-accent)] opacity-80" />
+        <div className="w-2 h-7 rounded-t bg-[var(--broll-accent)]" />
+        <div className="w-2 h-5 rounded-t bg-[var(--broll-accent)] opacity-90" />
+        <div className="w-2 h-3 rounded-t bg-[var(--broll-accent)] opacity-70" />
+      </div>
+    );
+  }
+  // text-card or fallback
+  return (
+    <div className="w-full h-full flex flex-col justify-center gap-1 px-2">
+      <div className="w-full h-1.5 rounded bg-zinc-400" />
+      <div className="w-4/5 h-1.5 rounded bg-zinc-400" />
+      <div className="w-2/3 h-1.5 rounded bg-zinc-500" />
     </div>
   );
 }

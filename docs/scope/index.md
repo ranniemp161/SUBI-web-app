@@ -12,7 +12,7 @@ through every layer, working).
 | `_root` (ecosystem wide) | [_root/scope.md](_root/scope.md) | Beta | 1 done, 2 in-progress, 1 planned, 3 existing, 2 deferred, 1 open question |
 | `apps/rough-cut` | [rough-cut/scope.md](rough-cut/scope.md) | Beta | 3 done, 2 in-progress, 13 existing, 5 deferred |
 | `apps/founders-frame` | [founders-frame/scope.md](founders-frame/scope.md) | Alpha | 1 done, 1 planned, 2 existing |
-| `apps/broll` | [broll/scope.md](broll/scope.md) | Beta | 2 done, 6 in-progress (all built, none verified), 2 planned |
+| `apps/broll` | [broll/scope.md](broll/scope.md) | Beta | 2 done, 9 in-progress (all built, none verified), 1 planned |
 | `apps/wallet` | tracked under `_root` | see `_root` | the Wallet app **is** the ecosystem wide billing feature |
 
 ## Notes
@@ -33,6 +33,15 @@ through every layer, working).
   row is feature 9, the Scene Studio screen design, enrolled that day and placed
   ahead of the owed verifications because those verifications need a human driving
   the very screen it is about to replace.
+  **Reconciled again on 2026-08-16, and the count moved twice more**, to 9
+  in-progress and 1 planned. Feature 11, character reuse, was enrolled on
+  2026-08-14 and built almost to the end. Feature 12, the visual pass and the
+  Renders view, was enrolled on 2026-08-16 out of work already sitting
+  uncommitted in the tree. Neither count change is a verification: seven
+  `Verify it` boxes are open across features 3, 4, 5, 6, 7, 9 and 11, and the two
+  written verify sheets stand at 17 of 46 and 6 of 72 boxes ticked. Read the
+  "landed" wording in that scope carefully, because **`main` stops at PR #143**
+  and everything after it is in open pull requests #145 and #146.
 - **One piece of work, three scopes, one set of boxes.** The transcript contract
   spans `_root` (a new shared package plus a shared schema migration),
   `apps/rough-cut` (a new export surface and route), and `apps/broll` (which drove

@@ -91,6 +91,12 @@ export async function createBrollProject(input: {
    * insert fails the insert rather than storing a dangling reference.
    */
   characterId?: string | null;
+  /**
+   * The frame the project's clips are cut in, already resolved from the picked
+   * ratio by `outputSizeFor`. Omitted keeps the columns' own 1920x1080 default,
+   * which is what every project created before the picker existed carries.
+   */
+  outputSize?: { width: number; height: number };
 }): Promise<string> {
   const [row] = await db
     .insert(brollProjects)
@@ -100,6 +106,9 @@ export async function createBrollProject(input: {
       style: input.style,
       brollCharacterId: input.characterId ?? null,
       transcript: input.document,
+      ...(input.outputSize
+        ? { outputWidth: input.outputSize.width, outputHeight: input.outputSize.height }
+        : {}),
       // Seconds in the document, milliseconds in the column. Stored rather than
       // recomputed because the planner and every project card read it, and
       // parsing a 5 MB document to learn one number is absurd.

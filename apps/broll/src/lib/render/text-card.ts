@@ -1,5 +1,5 @@
 import type { Render2DContext } from "./context";
-import { wrapText } from "./layout";
+import { typeScale, wrapText } from "./layout";
 
 /**
  * The `text-card` template: large text only (`design-prompt.md`).
@@ -61,14 +61,20 @@ export function fitTextSize(
   ctx: Pick<Render2DContext, "measureText"> & { font: string },
   text: string,
   box: { width: number; height: number },
-  frameHeight: number
+  frameScale: number
 ): { size: number; lines: string[] } {
   const theme = TEXT_CARD_THEME;
   // Sized against the **frame**, fitted against the **box**. Deriving the size
   // range from the box instead would silently shrink every card by the margin,
   // making the theme's stated ratios untrue.
-  const max = frameHeight * theme.maxTextSizeRatio;
-  const min = frameHeight * theme.minTextSizeRatio;
+  //
+  // `frameScale` is the frame's short edge, not its height — equal in landscape,
+  // and the difference between a readable card and a 211px cap in a 1080px wide
+  // frame in portrait. The shrink loop below would eventually rescue it either
+  // way, which is exactly the problem: every portrait card would bottom out at
+  // the minimum size regardless of how few words it holds.
+  const max = frameScale * theme.maxTextSizeRatio;
+  const min = frameScale * theme.minTextSizeRatio;
 
   let lines: string[] = [];
   let size = max;
@@ -104,7 +110,7 @@ export function drawTextCardFrame(
   const box = { width: width - margin * 2, height: height - margin * 2 };
 
   ctx.save();
-  const { size, lines } = fitTextSize(ctx, text, box, height);
+  const { size, lines } = fitTextSize(ctx, text, box, typeScale(frame));
   if (lines.length === 0) {
     ctx.restore();
     return;

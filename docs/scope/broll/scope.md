@@ -37,6 +37,8 @@ any, and mark a feature `done` when you decide it is._
 | 7 | Batch export, zip, credits | Phase 6 | in-progress |
 | 9 | Scene Studio screen design | Phase 7 | in-progress |
 | 11 | Character reuse across projects | Phase 7 | in-progress |
+| 12 | Visual pass and the Renders view | Phase 7 | in-progress |
+| 13 | Vertical output, and the empty transcript guard | Phase 7 | in-progress |
 | 10 | Blocking and edge states | Phase 7 | planned |
 | 8 | Production deploy and error reporting | Deploy | in-progress |
 
@@ -78,6 +80,33 @@ judged.
 > verifications above are still owed and still unstarted**, and feature 9 does not
 > touch them: it is UI composition, no money path, no vendor call. Nothing here
 > withdraws the warning two paragraphs up.
+
+> **Read every "landed" claim below against `main`, because `main` stops at PR
+> #143.** Checked 2026-08-16. Everything this scope records after that sits in two
+> open pull requests: #145 carries the rest of feature 6 and the whole of feature
+> 9, and #146 carries feature 11. Both are written, both are green, neither has
+> merged. The prose in features 6, 9 and 11 says "landed" and means "built and
+> pushed to a branch", which was true when each was written and is not the same
+> claim. #145 reports all required checks green and mergeable, so the gap is a
+> merge nobody has performed rather than anything failing.
+
+**Where the queue actually stands, 2026-08-16.** Seven `Verify it` boxes are open
+across features 3, 4, 5, 6, 7, 9 and 11, and the two written sheets say how far
+that is from done: spec 0005's verify page has 17 of 46 boxes ticked, spec 0006's
+has 6 of 72. The four verifications owed since 2026-08-12 have now been deferred
+three times, once for feature 9, once for feature 11, and once for feature 12
+below. Each deferral was reasoned and none was wrong on its own.
+
+**What that does and does not mean, corrected 2026-08-16.** An earlier version of
+this paragraph concluded "every phase of this app is built and almost none of it
+has been watched running", and that was wrong. The engineer develops by driving
+each feature in the browser as it is built, and the character pipeline and the
+planner have both been run against live Gemini and work. The open boxes record an
+unrun **ritual** — nobody has walked a written acceptance sheet criterion by
+criterion and left the evidence behind — which is a real gap but a much smaller
+one, and it is worth the most on the criteria that fail silently while the happy
+path looks fine (AC-22 and AC-61 in feature 3 are the two clearest). Do not read
+an unticked box here as an untested feature; ask.
 
 ## Phase 0
 
@@ -304,8 +333,17 @@ list, none blocking the boxes already ticked):
   each cue's own timing rather than inventing merged boundaries. But the planner
   assumes the utterance shape in two places, its `ceil(runtime × 1.2)` scene
   target and the Scene Studio's "identifiable source line". A caption cue reading
-  "was the deadline" identifies nothing. Decide in Phase 3 whether the planner
-  copes, or whether an import merges cues into utterances before planning.
+  "was the deadline" identifies nothing. ~~Decide in Phase 3 whether the planner
+  copes, or whether an import merges cues into utterances before planning.~~
+  **Decided and built** as AC-48, in
+  [apps/broll/src/lib/utterances.ts](../../../apps/broll/src/lib/utterances.ts):
+  an import merges, and it merges in b-roll rather than in `@repo/transcript`,
+  so the stored document still carries the file's own cues and only the
+  planner's view is merged. Confirmed by reading the module on 2026-08-16 — this
+  line had stayed open long after the code closed it, which is how it ended up
+  on a list of things still to build. Two constants there are genuinely still
+  unmeasured and are the real remainder: `UTTERANCE_GAP_MS` (700ms) and
+  `SCENES_PER_MINUTE` (1.2), both tunable only against a live run.
 
 **Bigger than the spec implies.** This phase carries a shared package extraction, a
 new export surface in a *different* app, and two shared-schema migrations. Budget
@@ -357,14 +395,24 @@ stored — with credits reserved and settled, and no double charge on a double-c
       b-roll went from 170 tests to 287. No migration: every column this feature
       uses shipped in `0015`/`0016`.
 
-      **Built, gated, and never once run against the real vendor.** Not a single
-      Gemini image call has been made by this code: the whole suite mocks
-      `fetch`, and no local run has had an image capable `GEMINI_API_KEY` or a
-      connected Blob store pointed at it. So the prompt wording spec 0004 wrote
-      down for the first time is still unjudged, exactly as its Follow up says,
-      and so is the segmentation quality on real output. Everything below
-      describes code that typechecks and is unit covered, not behaviour anyone
-      has watched.
+      **~~Built, gated, and never once run against the real vendor.~~ Overtaken
+      by events, and struck through rather than deleted because the reasoning
+      around it still reads as if it were true.** When this was written it was
+      correct: the whole suite mocks `fetch`, and no local run had had an image
+      capable `GEMINI_API_KEY` or a connected Blob store pointed at it. **The
+      engineer has since driven this pipeline against live Gemini and it works,
+      confirmed 2026-08-16.** So the prompt wording spec 0004 reconstructed has
+      been run and produces usable output, and so has the segmentation on real
+      images.
+
+      What is still owed is narrower than "unverified" and worth naming exactly:
+      nobody has walked
+      [verify.md](../../specs/broll/0004-character-pipeline/verify.md) criterion
+      by criterion and recorded the evidence, so the two that fail **silently**
+      are the ones still worth a deliberate pass — AC-22 (the reference photo
+      exists in no blob, no column and no log line) and AC-61 (the capability
+      probe refuses a browser that cannot segment before any money moves).
+      Neither of those announces itself while the happy path works.
 
       **One decision the spec left open, settled during the build and worth
       ratifying.** AC-16 asks the ledger row to carry the Gemini call's real
@@ -826,9 +874,12 @@ anything that is not helping them decide.
       [render/to-renderable.ts](../../../apps/broll/src/lib/render/to-renderable.ts).
       No migration and no new API route, exactly as AC-113 requires.
 
-      **Nothing here has been watched running.** The whole feature is "does this read
-      well", which is the one question a unit test cannot answer and `/check verify`
-      can. Treat every claim below as "built and typechecking", not as "seen".
+      **Nothing here had been watched running when this was written on
+      2026-08-14.** The whole feature is "does this read well", which is the one
+      question a unit test cannot answer and `/check verify` can. Treat every
+      claim below as "built and typechecking" *as of that date* — see the
+      correction at the top of this file before concluding it is still unseen,
+      and ask rather than assuming.
 
       **`plan-panel.tsx` and `batch-export.tsx` are gone as files while all of their
       behaviour survives**, so the diff reads much larger than the change is. The
@@ -999,12 +1050,14 @@ costs the full price.
         [character-reuse.tsx](../../../apps/broll/src/app/dashboard/%5Bid%5D/character-reuse.tsx).
         B-roll went from 475 tests to 492; `next build` compiles both screens.
 
-        **Reuse is now free in the code, and nobody has watched it happen.**
-        The queries were driven against the live dev branch with seeded rows
-        (five of six stays hidden, the attach copies the style, a second attach
-        refuses), but the branch holds no real character, because migration
-        `0018` deleted them all and generating one costs $2.00. So the first
-        real reuse is the first thing `/check verify` should buy.
+        **Reuse was free in the code and unwatched as of 2026-08-14, when this
+        was written.** The queries were driven against the live dev branch with
+        seeded rows (five of six stays hidden, the attach copies the style, a
+        second attach refuses), but the branch held no real character, because
+        migration `0018` deleted them all and generating one costs $2.00. That
+        blocker is gone — a live character set has been generated since — so
+        whether the reuse path itself has been driven is a question to ask
+        rather than to infer from this paragraph.
   - [x] Regeneration on a shared character: the claim on the character, the
         affected projects named before it runs, and the paid re-run forking
         rather than replacing (AC-129, AC-132, AC-133, AC-149). Landed
@@ -1041,11 +1094,88 @@ costs the full price.
         another user refused, and the usage list answering one project and never
         a stranger's. Every seeded row was deleted afterwards. **Nobody has
         watched any of this in a browser**, which is `/check verify`'s box.
-  - [ ] The characters page: list with thumbnails, usage and allowance, rename,
-        delete with the in use refusal, and detach (AC-134 to AC-137, AC-140)
-  - [ ] The faceless project: character scenes that say what they need, render
+  - [x] The characters page: list with thumbnails, usage and allowance, rename,
+        delete with the in use refusal, and detach (AC-134 to AC-137, AC-140).
+        **The write half landed 2026-08-16**, closing AC-135, AC-136, AC-137 and
+        AC-140. New code in
+        [api/characters/[characterId]/route.ts](../../../apps/broll/src/app/api/characters/%5BcharacterId%5D/route.ts)
+        (rename and delete), the detach branch on the
+        [project character PATCH](../../../apps/broll/src/app/api/projects/%5Bid%5D/character/route.ts),
+        three queries in
+        [characters.ts](../../../apps/broll/src/lib/characters.ts), and the
+        controls in
+        [character-actions.tsx](../../../apps/broll/src/app/dashboard/characters/character-actions.tsx)
+        and `character-panel.tsx`. Both destructive controls arm in place rather
+        than opening a dialog, which is this repo's established pattern.
+
+        **The in use refusal is inside the `DELETE`, not a read before it.** A
+        read then delete can be raced by an attach landing in the gap, and losing
+        that race takes the face out of a project that just claimed it — silently,
+        because `broll_projects.broll_character_id` is `ON DELETE SET NULL`. The
+        `NOT EXISTS` guard makes the refusal a property of the statement. The
+        second query naming the projects runs only on the refusal path.
+
+        Objects are deleted after the rows and best effort: once the rows are
+        gone the objects are referenced by nothing, which is what the sweep cron
+        collects, so a failed object delete is picked up next run rather than
+        stranded. Doing it the other way round strands a row pointing at nothing,
+        which the creator sees as a broken thumbnail.
+
+        _Superseded note, kept because it dated the gap:_ checked 2026-08-16,
+        [dashboard/characters/page.tsx](../../../apps/broll/src/app/dashboard/characters/page.tsx)
+        exists uncommitted, 241 lines, and it lists thumbnails, style, the
+        regeneration allowance and the projects using each character, which is
+        AC-134. It carries no rename, no delete and no detach, so AC-135, AC-136,
+        AC-137 and AC-140 are untouched. The box stays open because the three
+        writes are where the whole risk of this sub box lives: the in use refusal
+        and the best effort object delete are the parts that can lose someone a
+        character they paid for.
+  - [x] The faceless project: character scenes that say what they need, render
         and export refusing with that reason, and empty characters swept
-        (AC-130, AC-138)
+        (AC-130, AC-138). Landed 2026-08-16, and it became worth doing the same
+        day detach shipped: detaching is now the easy way to reach a project
+        whose character scenes have nothing to draw.
+
+        **`sceneBlocker` in
+        [scene-templates.ts](../../../apps/broll/src/lib/scene-templates.ts) is
+        the whole feature, and its input is the load bearing choice.** It reads
+        `committedEmotions`, the server's list off `broll_assets`, and never the
+        decoded bitmaps. Bitmaps arrive asynchronously and the map starts empty,
+        so a blocker keyed to them would announce that every character scene
+        needs a character for the first moment of every page load and then
+        silently take it back. Three distinct reasons, because the fixes differ:
+        no character at all, an emotion the character does not have, and no
+        emotion picked.
+
+        **Derived, never stored**, which is what makes the criterion's last
+        clause true for free: attaching a character clears every blocked scene
+        with no re-plan and no write, because there was never a column recording
+        the block.
+
+        The refusal rides on the render job rather than living in a button, so
+        it is a property of *enqueueing* — a later entry point cannot start an
+        encode that was never going to draw a character. `blocked` is its own
+        phase, distinct from `failed`: retrying a failure can work, retrying
+        this cannot, and the row says "Skipped" rather than "Failed" for that
+        reason.
+
+        **A batch skips and still delivers**, the same shape as AC-32: a run of
+        twelve with two faceless scenes hands over ten and zips them. That is
+        silent unless something says so, so the bar states the count *before*
+        Render all rather than leaving it to be noticed on the timeline.
+
+        AC-130 is a second pass in the same cron and shares no code with the
+        above: the existing sweep collects objects with no row, this collects
+        character rows with no objects, guarded on age, emptiness and no project
+        pointing at them. Empty rows exist because generate creates the character
+        before turn 1 and before the money is reserved, so a run that dies in
+        that gap counts against `MAX_CHARACTERS_PER_USER` forever.
+
+        **The templates' own missing-cutout fallback is unchanged**: a character
+        template handed no image still draws its text rather than failing. That
+        covers a bitmap that failed to decode, which is a different thing from a
+        project with no character, and the two paths now overlap without
+        conflicting.
 - [ ] Verify it: /check verify character reuse
 - [ ] Test it: /test character reuse
 
@@ -1094,6 +1224,147 @@ paid for character sets by hand and knows what the reuse step should feel like.
 It is placed ahead of feature 10 for the same reason it is worth doing at all,
 and it makes every later test project cheaper, since verification stops costing
 $2.00 a time.
+
+### 12. Visual pass and the Renders view · in-progress
+
+Enrolled by `/scope` on 2026-08-16, from work already sitting uncommitted in the
+tree rather than from a plan. It arrived the same way feature 9 did, the engineer
+looking at the screen and not liking it, which is a legitimate way for a feature
+to start and is why it gets a row of its own instead of being folded into a
+feature that already carries 66 unverified boxes.
+
+**Intent**: Give the app one visual language instead of per screen styling, and
+give a creator somewhere to see their rendered work that is not inside a single
+project.
+
+**Done when**: every B roll screen draws its buttons, cards, badges and chips
+from one shared set rather than from ad hoc classes, a creator can reach
+Characters and Renders from anywhere in the app, and the Renders view answers
+"what have I made so far" across all projects.
+
+- [ ] Build it: /develop visual pass and renders view
+  - [ ] The shared set and the restyle. Uncommitted as of 2026-08-16, in
+        [apps/broll/src/components/ui/](../../../apps/broll/src/components/ui/)
+        (`button`, `card`, `badge`, `switch`, `stat-chip`) with the restyle
+        rippling through [globals.css](../../../apps/broll/src/app/globals.css),
+        [layout.tsx](../../../apps/broll/src/app/layout.tsx), the dashboard, the
+        new project form and every Scene Studio file. About 1,568 lines added
+        across 18 changed files and 10 new ones.
+  - [ ] Top level navigation:
+        [nav-links.tsx](../../../apps/broll/src/app/nav-links.tsx), Projects plus
+        Characters plus Renders, with the active state derived from the path. It
+        is `hidden md:flex` today, so on a phone the app has no navigation at all,
+        which is feature 10's small screen refusal arriving as a gap rather than
+        as a message.
+  - [ ] The Renders view:
+        [dashboard/renders/page.tsx](../../../apps/broll/src/app/dashboard/renders/page.tsx),
+        scenes across every project the caller owns. Uncommitted.
+- [ ] Verify it: /check verify visual pass and renders view
+- [ ] Test it: /test visual pass and renders view
+
+**Two things found by reading the page, both fixed 2026-08-16 before the rest of
+the feature was built.**
+
+**The thumbnails failed silently, and on this page that read as data loss.**
+`presignAssetReads(...).catch(() => [])` swallowed every signing error and fell
+through to a per emotion "Empty" tile, so a store hiccup, an expired token or the
+wrong store all rendered exactly like a character with no images, on the one
+screen whose job is showing a creator the six faces they paid $2.00 for. Nothing
+was logged and nothing reached Sentry. Now signed in **one pass for the whole
+page**, so one failure is one `reportError` rather than one per character, and
+the three states are told apart: an image, "Could not load" for a stored variant
+that could not be signed, and "Empty" only when the variant genuinely does not
+exist. A banner says the characters are safe and the error was reported.
+
+**The page was an N+1 and is now three statements.** It ran
+`listCharacterAssets`, `regenerationsUsed` and `listProjectsUsingCharacter` per
+character plus a presign batch each, and the Neon HTTP driver gives every
+statement its own round trip, so ten characters was upwards of thirty requests.
+`listAssetsByCharacter` and `regenerationsUsedByCharacter` in
+[assets.ts](../../../apps/broll/src/lib/assets.ts) and `listProjectsByCharacter`
+in [characters.ts](../../../apps/broll/src/lib/characters.ts) each answer the
+whole library in one statement, grouped by character id. All three are scoped by
+`user_id` in SQL, the same ownership join the per character versions use, so the
+batching changed the number of round trips and not who can read what. The per
+character functions stay: they are the right shape for a route that already knows
+its character.
+
+**Two earlier flags in this row were wrong and are removed rather than left to
+mislead.** Checked 2026-08-16 by opening the files. `characters/page.tsx` and
+`renders/page.tsx` are **five line redirect stubs** pointing at the
+`/dashboard/*` pages, not second implementations, and neither is in
+`PUBLIC_ROUTES` so both sit behind the Clerk gate. And the Renders view is
+authorized correctly: it selects `broll_projects` by `user_id` first, then scopes
+the scene query to that id list with an empty list guard, and every helper the
+characters page calls takes a `userId` and filters on it.
+
+**No spec, and that is a judgement not an oversight.** This moves no money, adds
+no schema, calls no vendor, and the risk is "does it read well", which is what
+`/check verify` answers. If the Renders view grows a filter, a sort or paging,
+that logic earns a spec and tests, and this line is worth revisiting. The cross
+project read above is the one part that would change the answer.
+
+### 13. Vertical output, and the empty transcript guard · in-progress
+
+Enrolled 2026-08-16, from the engineer asking what was worth building next
+rather than from a plan. Two unrelated things share a row because both are
+small, both were already half-present in the codebase, and neither is worth its
+own ceremony.
+
+**Intent**: Let a creator cut a project for Shorts and Reels rather than only for
+YouTube, and stop a wrong file becoming a silently empty project.
+
+**Done when**: a new project can be created in 9:16 and every template that draws
+in landscape also draws in portrait; and a transcript with no speech in it is
+refused at intake on both paths instead of creating a project with nothing in it.
+
+- [x] Build it, 2026-08-16.
+  - [x] **The empty transcript guard.** Both intake paths refuse a document with
+        no segments, with wording that differs because the causes do: an upload
+        says the file has no subtitles, a Ruff Cut handoff points at the cut.
+        `hasSpeech` in
+        [actions.ts](../../../apps/broll/src/app/actions.ts) documents why the
+        check cannot live in `@repo/transcript` — zero segments has to stay legal
+        there, because Rough Cut's own export relies on it, so the parser
+        genuinely cannot tell an empty subtitle file from a file that is not one.
+
+        This closes the gap `/test` found on 2026-08-10 and recorded in feature
+        2. The test that pinned the broken behaviour said to change it rather
+        than delete it quietly when the check landed, and it was changed. Fixing
+        it also exposed that the Ruff Cut fixture built a document with
+        `segments: []`, so six handoff tests had been asserting the path works
+        with an empty transcript.
+  - [x] **Vertical output.** `broll_projects.output_width`/`output_height` have
+        existed since spec `0002` and nothing ever set them, so every project was
+        landscape by default rather than by choice.
+        [aspect-ratio.ts](../../../apps/broll/src/lib/aspect-ratio.ts) is the
+        picker's vocabulary, with a frame chooser on the new project form and the
+        ratio carried through both server actions.
+
+        **Two template problems that only a portrait frame reveals, both fixed.**
+        Every template sized its type off the frame **height**, which is correct
+        until the height is the long edge: at 1080x1920 `chart-full`'s big number
+        (`0.26`) is 499px in a 1080px frame and simply runs off it. `typeScale`
+        in [layout.ts](../../../apps/broll/src/lib/render/layout.ts) is the short
+        edge, which **equals the height in landscape**, so the swap is provably a
+        no-op at 1920x1080 — the existing 512 tests passing unchanged is that
+        claim checked rather than asserted.
+
+        And `character-left` needed real recomposition, not a ratio: its whole
+        idea is a side by side split, and a 9:16 frame has no side. It now stacks
+        in portrait, character along the bottom and words above, travelling in
+        from below rather than from the edge. It is the only template that
+        branches on orientation, and `character-center` stays full bleed so the
+        two remain visually distinct in portrait.
+- [ ] Verify it: /check verify vertical output. Nothing here spends anything, and
+      the question a test cannot answer is whether a 9:16 clip actually reads
+      well — the composition was reasoned and measured, not watched.
+
+**One thing deliberately not built.** There is no way to change a project's frame
+after it exists, and the form says so. The columns would allow it and rendering
+is client side and free, so the cost is a re-render rather than money; what stops
+it being obviously right is that a plan's scenes were composed against one shape.
+Worth deciding rather than inheriting from build order.
 
 ### 10. Blocking and edge states · planned · from spec 0006
 

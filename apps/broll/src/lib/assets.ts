@@ -109,6 +109,77 @@ export async function regenerationsUsed(
 }
 
 /**
+ * The two reads above, for **every** character a user owns, in one statement
+ * each.
+ *
+ * The per character pair is the right shape for a route that already knows which
+ * character it is working on. A page listing a whole library is the other shape,
+ * and calling them in a loop there costs three round trips per character: the
+ * Neon HTTP driver gives every statement its own request, so ten characters was
+ * upwards of thirty before a single image had been signed.
+ *
+ * Scoped by `user_id` rather than by an id list on purpose. The caller is
+ * showing a user their own library, so the owner **is** the filter, which keeps
+ * the ownership join identical to the per character version and leaves no `IN`
+ * list to grow.
+ */
+export async function listAssetsByCharacter(
+  userId: string
+): Promise<Map<string, CharacterAsset[]>> {
+  const rows = await db
+    .select({
+      characterId: brollAssets.brollCharacterId,
+      emotion: brollAssets.emotion,
+      pathname: brollAssets.r2Key,
+      width: brollAssets.width,
+      height: brollAssets.height,
+      byteSize: brollAssets.byteSize,
+      attempt: brollAssets.attempt,
+    })
+    .from(brollAssets)
+    .innerJoin(
+      brollCharacters,
+      eq(brollAssets.brollCharacterId, brollCharacters.id)
+    )
+    .where(eq(brollCharacters.userId, userId))
+    .orderBy(asc(brollAssets.emotion));
+
+  const byCharacter = new Map<string, CharacterAsset[]>();
+  for (const { characterId, ...asset } of rows) {
+    const list = byCharacter.get(characterId) ?? [];
+    list.push({ ...asset, emotion: asset.emotion as CharacterEmotion });
+    byCharacter.set(characterId, list);
+  }
+  return byCharacter;
+}
+
+/**
+ * `regenerationsUsed` for every character a user owns, grouped.
+ *
+ * A character with no assets is **absent from the map**, not zero in it, which
+ * is the same answer `regenerationsUsed` gives it (`coalesce(...) - count(*)`
+ * over no rows is zero). Callers read it as `?? 0`.
+ */
+export async function regenerationsUsedByCharacter(
+  userId: string
+): Promise<Map<string, number>> {
+  const rows = await db
+    .select({
+      characterId: brollAssets.brollCharacterId,
+      used: sql<number>`coalesce(sum(${brollAssets.attempt}), 0) - count(*)`,
+    })
+    .from(brollAssets)
+    .innerJoin(
+      brollCharacters,
+      eq(brollAssets.brollCharacterId, brollCharacters.id)
+    )
+    .where(eq(brollCharacters.userId, userId))
+    .groupBy(brollAssets.brollCharacterId);
+
+  return new Map(rows.map((row) => [row.characterId, Number(row.used)]));
+}
+
+/**
  * How many emotions this character has committed.
  *
  * **Complete means "one row per emotion", counted from the rows** (spec
