@@ -415,6 +415,24 @@ export const brollProjects = pgTable(
      */
     planRuns: integer("plan_runs").notNull().default(0),
     /**
+     * The character this project draws with, or NULL when it has none yet
+     * (spec `broll/0007` AC-120).
+     *
+     * **`ON DELETE RESTRICT`, and that is the point.** "Refuse to delete a
+     * character some project still uses" is a property of the database here
+     * rather than a check in the application, so it cannot lose a race with a
+     * concurrent attach. The application runs the same check anyway, but only to
+     * produce a message that names the projects; this constraint is the truth.
+     *
+     * Nullable because a project genuinely can have none: one created before its
+     * character was generated, and one detached from its character on purpose.
+     * Wherever it is set, `style` equals that character's style (AC-121).
+     */
+    brollCharacterId: uuid("broll_character_id").references(
+      (): AnyPgColumn => brollCharacters.id,
+      { onDelete: "restrict" }
+    ),
+    /**
      * Present from day one so an R2 retention policy is possible later without
      * a painful backfill. Character images are permanent recurring cost and no
      * retention policy is decided yet; storage cost compounds silently.
@@ -436,18 +454,85 @@ export const brollProjects = pgTable(
 );
 
 /**
+ * A reusable character: the thing a creator paid $2.00 for, owned by the
+ * **user** rather than by one project (spec `broll/0007`).
+ *
+ * This is the whole point of that spec. A character used to hang off a project
+ * and die with it, so somebody who liked their character paid again on the next
+ * video for a face they had already approved. Now projects point at a character,
+ * the six images hang off it, and reusing one is free.
+ *
+ * There is deliberately **no `source_project_id`**. The origin project supplies
+ * the name once, as text, and the character is independent after that. A real
+ * reference would make the two tables point at each other in both directions for
+ * a display string, and would dangle the day that project is deleted — which is
+ * exactly the coupling this table exists to break.
+ *
+ * There is deliberately **no status or completeness column** either. Complete
+ * means "one asset row per emotion", which the rows already answer, for the same
+ * reason the regeneration allowance is derived rather than stored.
+ */
+export const brollCharacters = pgTable(
+  "broll_characters",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    /** A character dies with its owner, and with nothing else. */
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /**
+     * Snapshotted from the origin project's name at generate time, and
+     * renameable afterwards. Free text, capped in the application at
+     * `MAX_CHARACTER_NAME_CHARS`, and not unique: two characters called "Demo"
+     * are a thing a creator is allowed to have.
+     */
+    name: text("name").notNull(),
+    /** The style the six images were actually generated in (anime, 3D, …). */
+    style: text("style").notNull(),
+    /**
+     * Non-null while a regeneration is writing this character.
+     *
+     * **The claim is on the character, not on the project, because the character
+     * is what gets written.** `broll_projects.gen_claim_at` serializes writers
+     * correctly only while a character belongs to one project; once two projects
+     * share one, two regenerations of the same emotion race and the loser's
+     * image vanishes with no error, which is exactly the failure spec `0004`
+     * AC-72 was written to prevent. Same shape and same ten minute stale window
+     * as the project claim (spec `broll/0007` AC-132).
+     */
+    genClaimAt: timestamp("gen_claim_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [
+    // The shape the reuse picker and the characters page both read by: equality
+    // on user_id, then created_at for the ordering.
+    index("broll_characters_user_created_idx").on(t.userId, t.createdAt),
+  ]
+);
+
+/**
  * One transparent character PNG per emotion, in R2. Regenerating a variant
  * replaces the row in place and deletes the object it superseded, so stored
  * objects stay bounded at one per emotion — history would grow object storage
  * without limit against a retention policy that does not exist yet.
+ *
+ * Hangs off the **character**, not the project (spec `broll/0007` AC-119). That
+ * one column move is what makes the same six images serve several projects, and
+ * it is why the storage prefix and the authorization rule moved one level over
+ * at the same time.
  */
 export const brollAssets = pgTable(
   "broll_assets",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    brollProjectId: uuid("broll_project_id")
+    brollCharacterId: uuid("broll_character_id")
       .notNull()
-      .references(() => brollProjects.id, { onDelete: "cascade" }),
+      .references(() => brollCharacters.id, { onDelete: "cascade" }),
     /**
      * Plain text, not a pgEnum, unlike every other constrained value in this
      * file. Phase 0 found that one out-of-enum emotion failed a whole plan and
@@ -457,9 +542,9 @@ export const brollAssets = pgTable(
      */
     emotion: text("emotion").notNull(),
     /**
-     * Stored, not derived from the project id and emotion, precisely so the key
-     * can carry a random element. A derivable key is a guessable key once you
-     * know the project id, and these are served by presigned URL.
+     * Stored, not derived from the character id and emotion, precisely so the
+     * key can carry a random element. A derivable key is a guessable key once
+     * you know the character id, and these are served by presigned URL.
      */
     r2Key: text("r2_key").notNull(),
     /**
@@ -484,8 +569,8 @@ export const brollAssets = pgTable(
   },
   (t) => [
     // What makes replace-in-place actually true rather than merely intended.
-    uniqueIndex("broll_assets_project_emotion_uq").on(
-      t.brollProjectId,
+    uniqueIndex("broll_assets_character_emotion_uq").on(
+      t.brollCharacterId,
       t.emotion
     ),
   ]
@@ -539,9 +624,21 @@ export const brollScenes = pgTable(
      */
     chart: jsonb("chart"),
     /**
-     * The planner's confidence, 0 to 1. Kept for display and for retuning the
-     * planner later — deliberately NOT used to decide `included`, because no
-     * threshold has any evidence behind it yet.
+     * Why the honesty check dropped this scene's chart, or NULL.
+     *
+     * **This cannot be derived, which is the only reason it is stored** (spec
+     * `broll/0005` AC-87). Once `chart` is NULL, a scene the planner meant as
+     * text and a scene that lost its chart are the same row, so the difference
+     * has to be written down at plan time or it is gone. NULL on a scene that
+     * never proposed a chart, which is the common case.
+     */
+    chartRejectionReason: text("chart_rejection_reason"),
+    /**
+     * The planner's confidence, 0 to 1. Read for display, and read at plan time
+     * to decide which scenes start `included` when the plan overshoots its own
+     * target (spec `broll/0005` AC-85). It was deliberately unused for that
+     * until 0005; the ranking still has no evidence behind it and is tuned
+     * alongside `SCENES_PER_MINUTE` in AC-28.
      */
     strength: real("strength"),
     /**
@@ -562,6 +659,20 @@ export const brollScenes = pgTable(
       .notNull()
       .default("pending"),
     renderedAt: timestamp("rendered_at", { withTimezone: true }),
+    /**
+     * When a human last changed this row through Scene Studio, or NULL if the
+     * planner's values are untouched (spec `broll/0005` AC-92).
+     *
+     * **A recorded fact, not an inferred one, and every writer must maintain
+     * it.** The re-run warning counts the review work a new plan is about to
+     * destroy, and no other column answers that: `overlay_text` is written by
+     * the planner at plan time, and after AC-85 so is `included = false`. Both
+     * proxies would tell a creator who restyled ten scenes that nothing was at
+     * risk. `updated_at` cannot stand in either, since the planner and any later
+     * background write move it too. A Scene Studio write that forgets this
+     * column makes the warning quietly under count.
+     */
+    userEditedAt: timestamp("user_edited_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -585,6 +696,8 @@ export type AiCutRunRow = typeof aiCutRuns.$inferSelect;
 export type NewAiCutRunRow = typeof aiCutRuns.$inferInsert;
 export type BrollProject = typeof brollProjects.$inferSelect;
 export type NewBrollProject = typeof brollProjects.$inferInsert;
+export type BrollCharacter = typeof brollCharacters.$inferSelect;
+export type NewBrollCharacter = typeof brollCharacters.$inferInsert;
 export type BrollAsset = typeof brollAssets.$inferSelect;
 export type NewBrollAsset = typeof brollAssets.$inferInsert;
 export type BrollScene = typeof brollScenes.$inferSelect;

@@ -12,7 +12,9 @@ import {
 } from "@repo/transcript";
 import { getAuthorizedDbUser } from "@repo/server-shared/authz";
 import { createBrollProject } from "@/lib/projects";
+import { resolveCompleteCharacter } from "@/lib/characters";
 import { isCharacterStyle } from "@/lib/styles";
+import { isUuid } from "@/lib/ids";
 import { ROUGH_CUT_URL } from "@/lib/env";
 
 /**
@@ -24,9 +26,15 @@ import { ROUGH_CUT_URL } from "@/lib/env";
  * catches it. Shared types live in `src/lib/projects.ts`.
  */
 
+/**
+ * The style is optional here and required by `resolveSetup` below, because a
+ * project created against an existing character takes that character's style
+ * instead of choosing one (spec `broll/0007` AC-122).
+ */
 const uploadSchema = z.object({
   name: z.string().trim().min(1).max(200),
-  style: z.string().refine(isCharacterStyle, "Unknown character style"),
+  style: z.string().optional(),
+  characterId: z.string().optional(),
   format: z.enum(["srt", "vtt", "json"]),
   text: z.string().min(1),
 });
@@ -36,6 +44,7 @@ export async function createProjectFromUpload(input: {
   style: string;
   format: string;
   text: string;
+  characterId?: string;
 }): Promise<{ error: string }> {
   const { userId: clerkId } = await auth();
   if (!clerkId) return { error: "You are not signed in." };
@@ -47,6 +56,9 @@ export async function createProjectFromUpload(input: {
   if (!parsed.success) {
     return { error: parsed.error.issues[0]?.message ?? "That input is not valid." };
   }
+
+  const setup = await resolveSetup(user.id, parsed.data);
+  if ("error" in setup) return { error: setup.error };
 
   let id: string;
   try {
@@ -63,7 +75,8 @@ export async function createProjectFromUpload(input: {
     id = await createBrollProject({
       userId: user.id,
       name: parsed.data.name,
-      style: parsed.data.style,
+      style: setup.style,
+      characterId: setup.characterId,
       document,
       // A subtitle upload has no Rough Cut project behind it, which is exactly
       // why `source_project_id` is nullable. A JSON handoff carries its origin
@@ -80,6 +93,45 @@ export async function createProjectFromUpload(input: {
   // Outside the try: redirect() signals by throwing, so catching it here would
   // swallow the navigation and report it as a parse failure.
   redirect(`/dashboard/${id}`);
+}
+
+/**
+ * Which style the new project is created in, and which character it starts
+ * attached to (AC-122, AC-121).
+ *
+ * **The two inputs are exclusive, and the character wins.** A creator reusing a
+ * character is not offered a style, because the six images already exist in one
+ * and generating scenes against a different one would be a lie the project
+ * carries forever. So the style input is read only on the other path.
+ *
+ * The character is resolved through the same owner scoped, completeness checked
+ * read the attach route uses, rather than trusted from the form. The picker only
+ * lists finished characters the caller owns; that is a display rule, and a
+ * display rule is not an authorization check.
+ */
+async function resolveSetup(
+  userId: string,
+  input: { style?: string; characterId?: string }
+): Promise<{ style: string; characterId: string | null } | { error: string }> {
+  const characterId = input.characterId?.trim();
+
+  if (!characterId) {
+    const style = input.style ?? "";
+    if (!isCharacterStyle(style)) return { error: "Unknown character style." };
+    return { style, characterId: null };
+  }
+
+  if (!isUuid(characterId)) return { error: "That character could not be found." };
+
+  const resolved = await resolveCompleteCharacter(userId, characterId);
+  if (resolved.status === "not_found") {
+    return { error: "That character could not be found." };
+  }
+  if (resolved.status === "incomplete") {
+    return { error: "That character isn't finished, so it can't be used yet." };
+  }
+
+  return { style: resolved.character.style, characterId };
 }
 
 /** Accepts a full studio URL or a bare id, because people paste the URL. */
@@ -109,6 +161,7 @@ export async function importFromRoughCut(input: {
   reference: string;
   name: string;
   style: string;
+  characterId?: string;
 }): Promise<{ error: string }> {
   const { userId: clerkId, getToken } = await auth();
   if (!clerkId) return { error: "You are not signed in." };
@@ -120,9 +173,13 @@ export async function importFromRoughCut(input: {
   if (!projectId) {
     return { error: "Paste a Ruff Cut project link, or its project id." };
   }
-  if (!isCharacterStyle(input.style)) return { error: "Unknown character style." };
+
   const name = input.name.trim();
   if (!name || name.length > 200) return { error: "Give the project a name." };
+
+  // After the free checks: this one reaches the database.
+  const setup = await resolveSetup(user.id, input);
+  if ("error" in setup) return { error: setup.error };
 
   const token = await getToken();
   if (!token) return { error: "Could not read your session. Sign in again." };
@@ -163,7 +220,8 @@ export async function importFromRoughCut(input: {
     id = await createBrollProject({
       userId: user.id,
       name,
-      style: input.style,
+      style: setup.style,
+      characterId: setup.characterId,
       document,
       // The real link, and the reason `source_project_id` exists at all.
       sourceProjectId: projectId,

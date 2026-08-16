@@ -76,7 +76,15 @@ export async function GET(request: Request): Promise<NextResponse> {
 
     let cursor: string | undefined;
     do {
-      const page = await list({ prefix: "broll/", cursor, limit: 1000 });
+      // `broll/characters/`, not `broll/` (spec `broll/0007` AC-144). Every
+      // stored object lives under a character now, and no old project shaped
+      // path survives the `0018` migration, so a wider prefix would only widen
+      // what a bug here could delete.
+      const page = await list({
+        prefix: "broll/characters/",
+        cursor,
+        limit: 1000,
+      });
       scanned += page.blobs.length;
 
       const orphans = page.blobs

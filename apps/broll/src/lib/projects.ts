@@ -79,6 +79,18 @@ export async function createBrollProject(input: {
   style: string;
   document: TranscriptDocument;
   sourceProjectId: string | null;
+  /**
+   * A character the creator picked at setup, already resolved and proven theirs
+   * by the caller (spec `broll/0007` AC-122). Null is the ordinary path: the
+   * project starts with no character and generates one later.
+   *
+   * `style` is the character's when this is set, which is what makes the
+   * invariant "a project with a character has that character's style" true from
+   * the very first row rather than from a later write. The foreign key is the
+   * backstop: a character deleted in the gap between the caller's read and this
+   * insert fails the insert rather than storing a dangling reference.
+   */
+  characterId?: string | null;
 }): Promise<string> {
   const [row] = await db
     .insert(brollProjects)
@@ -86,6 +98,7 @@ export async function createBrollProject(input: {
       userId: input.userId,
       name: input.name,
       style: input.style,
+      brollCharacterId: input.characterId ?? null,
       transcript: input.document,
       // Seconds in the document, milliseconds in the column. Stored rather than
       // recomputed because the planner and every project card read it, and
@@ -129,6 +142,31 @@ export async function getBrollProject(
   const row = rows[0];
   if (!row) return null;
   return { ...row, transcript: row.transcript as TranscriptDocument };
+}
+
+/**
+ * Which character this project points at, if any, and whether the project
+ * exists at all.
+ *
+ * One column, deliberately: the attach route needs to tell "not your project"
+ * (404) from "already has a character" (409), and `getBrollProject` would move
+ * the whole transcript to answer that — up to 5 MB over the HTTP driver for one
+ * uuid. Null means the project is missing or belongs to somebody else, which
+ * are the same answer here as everywhere else in this file.
+ */
+export async function getProjectCharacterRef(
+  userId: string,
+  id: string
+): Promise<{ characterId: string | null } | null> {
+  const rows = await db
+    .select({
+      characterId: brollProjects.brollCharacterId,
+    })
+    .from(brollProjects)
+    .where(and(eq(brollProjects.id, id), eq(brollProjects.userId, userId)))
+    .limit(1);
+
+  return rows[0] ?? null;
 }
 
 /**

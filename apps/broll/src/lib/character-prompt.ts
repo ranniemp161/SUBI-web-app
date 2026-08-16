@@ -142,7 +142,8 @@ export function buildNeutralRegenPrompt(): string {
 }
 
 /**
- * How many free single-variant regenerations one project gets (AC-64).
+ * How many free single-variant regenerations one **character** gets (AC-64,
+ * spec `broll/0007` AC-131).
  *
  * **Twelve is arithmetic, not measurement.** Spec `0001` §8.1 sized it as two
  * redraws per emotion against the set price's margin, and that section asks for
@@ -150,12 +151,37 @@ export function buildNeutralRegenPrompt(): string {
  * question. It is enforced *before* the Gemini call, so the cap costs nothing to
  * hit.
  *
- * Counted as `SUM(attempt) - COUNT(*)` across the project's assets rather than
- * stored, so it cannot drift from the rows it describes. Lives here rather than
- * in `assets.ts` because the review gate has to show what is left, and
- * `assets.ts` is server only.
+ * Counted as `SUM(attempt) - COUNT(*)` across the character's assets rather than
+ * stored, so it cannot drift from the rows it describes. Scoped to the character
+ * rather than the project is what stops the allowance refilling every time the
+ * same face is attached somewhere new. Lives here rather than in `assets.ts`
+ * because the review gate has to show what is left, and `assets.ts` is server
+ * only.
  */
 export const MAX_REGENERATIONS = 12;
+
+/**
+ * How many characters one user may own (spec `broll/0007` AC-139).
+ *
+ * A bound on storage that nothing else provides: this app has no retention
+ * policy, and a character no project uses is deleted only when its owner deletes
+ * it. Twenty is generous for a creator with a handful of recurring faces and
+ * still bounds the worst case per user at 120 stored PNGs.
+ *
+ * Enforced **inside** the insert, as a count subquery, so two concurrent
+ * generate runs cannot both read nineteen and both write. Checked before any
+ * Gemini call and before any charge, so hitting it costs nothing.
+ */
+export const MAX_CHARACTERS_PER_USER = 20;
+
+/**
+ * The longest name a character may carry (spec `broll/0007` AC-135).
+ *
+ * Free text and not unique: two characters called "Demo" are a thing a creator
+ * is allowed to have. Lives here beside `MAX_REGENERATIONS` for the same reason,
+ * so the rename input in the browser and the server side check read one number.
+ */
+export const MAX_CHARACTER_NAME_CHARS = 60;
 
 export const NEUTRAL_REGEN_WARNING =
   "Redrawing your base character moves it a little further from your photo each time. To start over from the photo, generate the set again.";

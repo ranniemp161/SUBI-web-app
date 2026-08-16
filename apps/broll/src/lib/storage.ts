@@ -8,7 +8,7 @@ import {
   type IssuedSignedToken,
 } from "@vercel/blob";
 import { reportError } from "@repo/server-shared/observability";
-import { projectAssetPrefix } from "@/lib/asset-path";
+import { characterAssetPrefix } from "@/lib/asset-path";
 
 /**
  * The character asset storage seam (spec `broll/0004`).
@@ -198,16 +198,21 @@ export async function deleteAssetQuietly(pathname: string): Promise<void> {
 }
 
 /**
- * Every object currently stored under a project, for the orphan sweep (AC-73).
+ * Every object currently stored under a character, for the orphan sweep (AC-73,
+ * spec `broll/0007` AC-144).
  *
  * A run that uploads four of six cutouts and is then abandoned leaves objects no
  * row references. On a plan whose failure mode is a thirty day lockout, letting
  * those accumulate is not a tidiness problem.
+ *
+ * Scoped to the character rather than the project, because that is what the
+ * prefix names now. A per run sweep that still listed a project prefix would
+ * find nothing at all and quietly stop collecting anything.
  */
-export async function listProjectAssetPathnames(
-  projectId: string
+export async function listCharacterAssetPathnames(
+  characterId: string
 ): Promise<string[]> {
-  const prefix = projectAssetPrefix(projectId);
+  const prefix = characterAssetPrefix(characterId);
   const found: string[] = [];
   let cursor: string | undefined;
 
@@ -221,18 +226,18 @@ export async function listProjectAssetPathnames(
 }
 
 /**
- * Delete every object under this project that no row claims.
+ * Delete every object under this character that no row claims.
  *
  * Takes the referenced set rather than reading the database itself, so this file
  * stays a storage seam and the caller keeps ownership of what "referenced"
  * means. Best effort per object: one stubborn delete must not abandon the rest.
  */
 export async function sweepOrphanedAssets(
-  projectId: string,
+  characterId: string,
   referenced: Iterable<string>
 ): Promise<number> {
   const keep = new Set(referenced);
-  const stored = await listProjectAssetPathnames(projectId);
+  const stored = await listCharacterAssetPathnames(characterId);
   const orphans = stored.filter((pathname) => !keep.has(pathname));
 
   for (const pathname of orphans) await deleteAssetQuietly(pathname);

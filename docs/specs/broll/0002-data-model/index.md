@@ -1,7 +1,7 @@
 # 0002. B-Roll data model
 
 **Date**: 2026-08-08
-**Status**: In Progress
+**Status**: Accepted
 
 ## Summary
 

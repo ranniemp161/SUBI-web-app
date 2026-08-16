@@ -133,6 +133,24 @@ export const transcriptDocumentSchema = baseDocumentSchema.superRefine((doc, ctx
     });
   }
 
+  // **An imported subtitle's cues are allowed to overlap**, for the same reason
+  // adjacent words are (see the long note below).
+  //
+  // Rough Cut collapses its segments against an EDL, so they come out disjoint
+  // by construction and an overlap there really is a bug worth catching. A
+  // subtitle file is not built that way. Caption cues routinely overlap by a
+  // fraction of a second where one cue is held on screen a moment past the
+  // start of the next, and both of those times were measured. Rejecting the
+  // overlap would leave only bad options: refuse a real caption file outright,
+  // or shorten a cue to a boundary no measurement supports — the second being
+  // exactly the fabrication this format exists to prevent.
+  //
+  // So an import is held to the rule the spec actually states, times never
+  // *decrease*, checked on `start` against the previous `start`. A Rough Cut
+  // document keeps the stricter disjointness check, because there it is true.
+  const cuesMayOverlap = doc.source.kind === "import";
+
+  let previousStart = -Infinity;
   let previousEnd = -Infinity;
   doc.segments.forEach((segment, index) => {
     if (segment.end < segment.start) {
@@ -142,13 +160,16 @@ export const transcriptDocumentSchema = baseDocumentSchema.superRefine((doc, ctx
         message: "Segment end is before its start.",
       });
     }
-    if (segment.start < previousEnd) {
+    if (segment.start < (cuesMayOverlap ? previousStart : previousEnd)) {
       ctx.addIssue({
         code: "custom",
         path: ["segments", index, "start"],
-        message: "Segment starts before the previous segment ended; times must never decrease.",
+        message: cuesMayOverlap
+          ? "Segment starts before the previous segment did; times must never decrease."
+          : "Segment starts before the previous segment ended; times must never decrease.",
       });
     }
+    previousStart = segment.start;
     previousEnd = Math.max(previousEnd, segment.end);
 
     // Word ordering is checked on `start`, not against the previous word's

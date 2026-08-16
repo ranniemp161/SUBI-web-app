@@ -10,8 +10,12 @@ vi.mock("@/lib/segmentation", () => ({
 }));
 vi.mock("@/lib/trim", () => ({ trimTransparent: vi.fn() }));
 vi.mock("@vercel/blob/client", () => ({ uploadPresigned: vi.fn() }));
+// The panel re-reads the server after a paid re-run, because that run repoints
+// the project at a different character (spec `broll/0007` AC-129).
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 
 import { CharacterPanel } from "./character-panel";
+import { CHARACTER_EMOTIONS } from "@/lib/emotions";
 
 /**
  * When the capability probe is allowed to run (spec `broll/0004` AC-61).
@@ -33,6 +37,7 @@ function renderPanel() {
   return render(
     <CharacterPanel
       projectId="11111111-1111-1111-1111-111111111111"
+      characterName={null}
       initialAssets={[]}
       initialRegenerationsUsed={0}
       setPrice="$2.00"
@@ -75,5 +80,99 @@ describe("the capability probe", () => {
     await waitFor(() => {
       expect(probeSegmentation).toHaveBeenCalledTimes(1);
     });
+  });
+});
+
+/**
+ * Naming the other projects a redraw would change (spec `broll/0007` AC-133).
+ *
+ * A regeneration changes this face everywhere the character is used, including
+ * projects the creator considers finished. The warning is the only thing
+ * standing between that and a surprise, so what it says and when it appears are
+ * both worth pinning.
+ */
+describe("the shared character warning (AC-133)", () => {
+  const PROJECT_ID = "11111111-1111-1111-1111-111111111111";
+  const OTHER_PROJECT = "22222222-2222-2222-2222-222222222222";
+
+  function fullSet() {
+    return CHARACTER_EMOTIONS.map((emotion) => ({
+      emotion,
+      width: 700,
+      height: 900,
+      attempt: 1,
+      url: null,
+    }));
+  }
+
+  function answerUsage(usedBy: { id: string; name: string }[]) {
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify({ usedBy, character: null, regenerations: null }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("names the other projects and never this one", async () => {
+    const fetchMock = answerUsage([
+      { id: PROJECT_ID, name: "Fuel imports" },
+      { id: OTHER_PROJECT, name: "Q3 recap" },
+    ]);
+
+    render(
+      <CharacterPanel
+        projectId={PROJECT_ID}
+        characterName="Fuel imports"
+        initialAssets={fullSet()}
+        initialRegenerationsUsed={0}
+        setPrice="$2.00"
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(/also used by/)).toBeTruthy();
+    });
+    expect(screen.getByText("Q3 recap")).toBeTruthy();
+    // Read from this project's own character endpoint, not from the whole
+    // characters collection filtered in the browser.
+    expect(fetchMock).toHaveBeenCalledWith(`/api/projects/${PROJECT_ID}/character`);
+  });
+
+  it("says nothing when this project is the only one using the character", async () => {
+    answerUsage([{ id: PROJECT_ID, name: "Fuel imports" }]);
+
+    render(
+      <CharacterPanel
+        projectId={PROJECT_ID}
+        characterName="Fuel imports"
+        initialAssets={fullSet()}
+        initialRegenerationsUsed={0}
+        setPrice="$2.00"
+      />
+    );
+
+    // The allowance line is the marker that the panel finished rendering its
+    // set, so this is "nothing appeared", not "not yet".
+    await waitFor(() => {
+      expect(screen.getByText(/redraws left for this character/)).toBeTruthy();
+    });
+    expect(screen.queryByText(/also used by/)).toBeNull();
+  });
+
+  it("does not ask at all on a project with no character", async () => {
+    const fetchMock = answerUsage([]);
+    renderPanel();
+
+    await waitFor(() => {
+      expect(screen.getByText(/Generate character set/)).toBeTruthy();
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

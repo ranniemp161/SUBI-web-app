@@ -12,9 +12,11 @@ import {
   collectScenes,
   buildPlannerPrompt,
   runScenePlan,
+  applySurplusRule,
   PlannerError,
   PLANNER_MODEL,
   MAX_PLAN_INPUT_TOKENS,
+  type PlannedScene,
 } from "./planner";
 import { MAX_SCENE_DURATION_MS, MIN_SCENE_DURATION_MS } from "./scene-schema";
 import type { Utterance } from "./utterances";
@@ -315,5 +317,127 @@ describe("runScenePlan", () => {
     await expect(runScenePlan({ utterances, sceneTarget: 12 })).rejects.toMatchObject({
       code: "failed",
     });
+  });
+});
+
+describe("applySurplusRule (spec 0005 AC-85)", () => {
+  function planned(over: Partial<PlannedScene> = {}): PlannedScene {
+    return {
+      startMs: 0,
+      durationMs: 6_000,
+      sourceText: "a line",
+      sourceStartMs: 0,
+      sourceEndMs: 5_000,
+      visualType: "text",
+      emotion: null,
+      layoutTemplate: "text-card",
+      overlayText: null,
+      chart: null,
+      chartRejectionReason: null,
+      strength: 0.5,
+      included: true,
+      ...over,
+    };
+  }
+
+  it("unchecks nothing when the plan is at or under target", () => {
+    const scenes = [planned({ strength: 0.1 }), planned({ startMs: 9_000, strength: 0.2 })];
+
+    expect(applySurplusRule(scenes, 2).every((s) => s.included)).toBe(true);
+    expect(applySurplusRule(scenes, 5).every((s) => s.included)).toBe(true);
+  });
+
+  it("keeps the strongest scenes up to the target and unchecks the rest", () => {
+    const scenes = [
+      planned({ startMs: 0, strength: 0.2 }),
+      planned({ startMs: 1_000, strength: 0.9 }),
+      planned({ startMs: 2_000, strength: 0.5 }),
+    ];
+
+    expect(applySurplusRule(scenes, 2).map((s) => s.included)).toEqual([
+      false,
+      true,
+      true,
+    ]);
+  });
+
+  it("breaks a tie by start time, so the same plan resolves the same way twice", () => {
+    // Without the tiebreak the winner would depend on arrival order, and the
+    // same transcript could plan differently on two runs.
+    const scenes = [
+      planned({ startMs: 5_000, strength: 0.4 }),
+      planned({ startMs: 1_000, strength: 0.4 }),
+    ];
+
+    expect(applySurplusRule(scenes, 1).map((s) => s.included)).toEqual([false, true]);
+  });
+
+  it("never drops a scene, only unchecks it", () => {
+    // A surplus scene is one click from being included. Dropping it would
+    // decide for the creator and lose material the planner was paid to find.
+    const scenes = [planned({ strength: 0.1 }), planned({ startMs: 9_000, strength: 0.9 })];
+
+    expect(applySurplusRule(scenes, 1)).toHaveLength(2);
+  });
+
+  it("returns the scenes in the order it was given", () => {
+    const scenes = [
+      planned({ startMs: 0, strength: 0.1 }),
+      planned({ startMs: 1_000, strength: 0.9 }),
+    ];
+
+    expect(applySurplusRule(scenes, 1).map((s) => s.startMs)).toEqual([0, 1_000]);
+  });
+});
+
+describe("chart rejection attribution (spec 0005 AC-87)", () => {
+  const cited: Utterance[] = [
+    { index: 0, text: "We cut fuel imports by 80%.", startMs: 0, endMs: 5_000 },
+    { index: 1, text: "Then it went the other way.", startMs: 9_000, endMs: 13_000 },
+  ];
+
+  const untraceable = {
+    type: "bar",
+    title: "Imports",
+    values: [42],
+    labels: [],
+    unit: null,
+    source_span: { start_char: 0, end_char: 27 },
+  };
+
+  it("records why a chart was dropped, on the scene that lost it", () => {
+    // Attributed at assembly rather than matched afterwards. `collectScenes`
+    // sorts by startMs once assembly is done, so anything positional would
+    // attach the reason to the wrong scene.
+    const result = collectScenes(
+      [
+        modelScene({ utterance_index: 1, chart: null }),
+        modelScene({ utterance_index: 0, chart: untraceable }),
+      ],
+      cited
+    );
+
+    const withReason = result.scenes.filter((s) => s.chartRejectionReason !== null);
+    expect(withReason).toHaveLength(1);
+    expect(withReason[0].sourceText).toBe(cited[0].text);
+    expect(withReason[0].chartRejectionReason).toContain("42");
+  });
+
+  it("leaves the reason null on a scene that never proposed a chart", () => {
+    // The common case, and the one the column has to distinguish: a scene the
+    // planner meant as text is not a downgrade.
+    const result = collectScenes([modelScene({ chart: null })], cited);
+
+    expect(result.scenes[0].chartRejectionReason).toBeNull();
+  });
+
+  it("keeps the scene when its chart is dropped", () => {
+    const result = collectScenes(
+      [modelScene({ utterance_index: 0, chart: untraceable })],
+      cited
+    );
+
+    expect(result.scenes).toHaveLength(1);
+    expect(result.scenes[0].chart).toBeNull();
   });
 });
