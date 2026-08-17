@@ -51,7 +51,10 @@ untested. The scope is the live plan; check it before trusting this line.
 | `src/app/api/blob/upload/route.ts` | Presigns one character asset PUT. **The authorization inside `getSignedToken` is the whole security of this route** — without it this is an anonymous write endpoint into the store |
 | `src/app/dashboard/[id]/character-panel.tsx` | The pipeline's whole browser half: reads the stream, cuts out, trims, uploads straight to storage, and owns the review gate |
 | `src/lib/render/renderable.ts` | **The app's only `switch` on template.** The page preview and the encoder both draw through `drawRenderable`, which is what stops what a creator judges on screen differing from what lands in the file. A new template is one case here |
-| `src/lib/render/context.ts` | The narrow 2D surface every template draws through, assignable from both canvas context types. One interface for all templates, so the tests can pass a recorder and assert draw calls with no canvas and no browser |
+| `src/lib/render/context.ts` | The narrow 2D surface every template draws through, assignable from both canvas context types. One interface for all templates, so the tests can pass a recorder and assert draw calls with no canvas and no browser. Widened for the clip design pass with gradients, shadows, `roundRect`, curves, transforms and real text metrics — **add to it when a template needs something, not in anticipation**, because every method is one more the recorder has to implement |
+| `src/lib/render/fonts.ts` | Registers Space Grotesk and DM Sans as `FontFace`s, in **whichever realm is drawing**. The page and the worker both go through it and both await it, because a worker's font set starts empty and cannot inherit the page's — that gap is why clips used to export in `system-ui` |
+| `src/lib/render/test-recorder.ts` | The `Render2DContext` the render tests draw onto. One copy, shared: three inline copies is how three recorders start disagreeing about what a draw call looks like. Not named `*.test.ts` so vitest treats it as a helper |
+| `public/fonts/` | The two woff2 files, and **the only reason `public/` exists in this app**. See the README beside them for provenance and the outstanding OFL vendoring |
 | `src/lib/render/` (rest) | `layout.ts` and `timing.ts` (the frame math), `capability.ts` (the WebCodecs probe), `chart-label.ts` (AC-34), `clip-filename.ts` (AC-33), `zip.ts`, and the four template drawers |
 | `src/lib/render/types.ts` | The page to worker contract. Lives here, not in the worker, so a client component can import the types without pulling `mediabunny` into the page bundle |
 | `src/lib/render/run-render.ts` | The one driver for a render worker, shared by the single scene button and the batch. Always terminates the worker and always settles the promise; the batch depends on both |
@@ -84,6 +87,18 @@ npm -w @repo/broll typecheck
   contains no Stripe integration and must never gain one.
 - **Cross-app URLs go through `src/lib/env.ts`**, never a raw `process.env`
   read: Next.js inlines `NEXT_PUBLIC_*` by literal name at build time.
+- **A clip is set in the brand faces, and both realms must register them.** The
+  page draws previews and the worker draws the export, and a worker's
+  `OffscreenCanvas` resolves families against a font set that starts empty and
+  cannot inherit the page's. So `render/fonts.ts` registers the same two files
+  from `public/fonts/` on both sides, the worker **awaits** it before frame zero,
+  and the page treats it as a repaint trigger rather than a gate. Naming a family
+  in a canvas `font` string without registering it in that realm renders
+  correctly in the preview and silently falls back in the exported file — the
+  exact preview/export divergence `renderable.ts` exists to prevent, and invisible
+  until someone looks at a frame. A family whose name contains a space must also
+  be **quoted** in the shorthand, or the canvas rejects the whole string and
+  silently keeps the previous font.
 - **Dark only.** There is no light mode. The hover state shifts *hue* (Key
   Yellow to Interactive Blue), not lightness — that is the established
   ecosystem behaviour, not a bug to fix. Text on yellow is `#111111`, because

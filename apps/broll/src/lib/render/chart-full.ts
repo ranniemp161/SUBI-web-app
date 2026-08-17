@@ -1,7 +1,7 @@
 import { formatChartValue } from "./chart-label";
 import type { Render2DContext } from "./context";
 import { typeScale } from "./layout";
-import { BRAND, SERIES, TYPEFACE, drawBackdrop } from "./theme";
+import { BODY_TYPEFACE, BRAND, SERIES, TYPEFACE, drawBackdrop } from "./theme";
 
 /**
  * The `chart-full` template: the chart fills the frame (`design-prompt.md`).
@@ -256,7 +256,8 @@ function drawBigNumber(
 
   const caption = scene.labels[0] ?? scene.title;
   ctx.fillStyle = theme.categoryLabel;
-  ctx.font = `400 ${captionSize}px ${TYPEFACE}`;
+  // Body face: the caption supports the number rather than being the claim.
+  ctx.font = `400 ${captionSize}px ${BODY_TYPEFACE}`;
   ctx.textBaseline = "top";
   ctx.fillText(caption, centerX, centerY + numberSize * 0.6);
 }
@@ -456,7 +457,8 @@ function drawCategory(
 ): void {
   if (!label) return;
   ctx.fillStyle = CHART_FULL_THEME.categoryLabel;
-  ctx.font = `400 ${size}px ${TYPEFACE}`;
+  // Body face: a category names a mark, it does not carry the claim.
+  ctx.font = `400 ${size}px ${BODY_TYPEFACE}`;
   ctx.textAlign = "center";
   ctx.textBaseline = "top";
   ctx.fillText(label, x, baseline + size * 0.5);

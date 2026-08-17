@@ -13,74 +13,10 @@ import {
   lineEntrance,
   type TextCardScene,
 } from "./text-card";
-import type { DrawableImage, Render2DContext } from "./context";
+import { bitmap, images, rects, recorder, texts, type Recorder } from "./test-recorder";
 
-type Call =
-  | { op: "fillRect"; x: number; y: number; width: number; height: number; style: string; alpha: number }
-  | { op: "fillText"; text: string; x: number; y: number; alpha: number; font: string }
-  | { op: "drawImage"; x: number; y: number; width: number; height: number; alpha: number };
-
-function recorder() {
-  const calls: Call[] = [];
-  const ctx: Render2DContext & { calls: Call[] } = {
-    calls,
-    fillStyle: "",
-    strokeStyle: "",
-    lineWidth: 0,
-    lineJoin: "round",
-    lineCap: "round",
-    font: "",
-    textAlign: "left",
-    textBaseline: "top",
-    globalAlpha: 1,
-    save() {},
-    restore() {},
-    translate() {},
-    beginPath() {},
-    closePath() {},
-    moveTo() {},
-    lineTo() {},
-    arc() {},
-    rect() {},
-    clip() {},
-    fill() {},
-    stroke() {},
-    fillRect(x, y, width, height) {
-      calls.push({
-        op: "fillRect",
-        x,
-        y,
-        width,
-        height,
-        style: String(this.fillStyle),
-        alpha: this.globalAlpha,
-      });
-    },
-    fillText(text, x, y) {
-      calls.push({ op: "fillText", text, x, y, alpha: this.globalAlpha, font: this.font });
-    },
-    measureText(text) {
-      // Roughly half an em per character, which is close to a real sans serif.
-      // An earlier version charged a tenth of an em and nothing ever wrapped,
-      // so the wrapping and shrinking paths were never actually exercised and
-      // two tests passed for the wrong reason.
-      const size = Number(this.font.match(/(\d+(?:\.\d+)?)px/)?.[1] ?? 10);
-      return { width: text.length * size * 0.5 };
-    },
-    drawImage(_image, dx, dy, dWidth, dHeight) {
-      calls.push({ op: "drawImage", x: dx, y: dy, width: dWidth, height: dHeight, alpha: this.globalAlpha });
-    },
-  };
-  return ctx;
-}
-
-type Rec = ReturnType<typeof recorder>;
-const texts = (c: Rec) => c.calls.filter((x): x is Extract<Call, { op: "fillText" }> => x.op === "fillText");
-const rects = (c: Rec) => c.calls.filter((x): x is Extract<Call, { op: "fillRect" }> => x.op === "fillRect");
-const images = (c: Rec) => c.calls.filter((x): x is Extract<Call, { op: "drawImage" }> => x.op === "drawImage");
-
-const bitmap = (width: number, height: number): DrawableImage =>
-  ({ width, height }) as unknown as DrawableImage;
+// The recorder, its call shape and the filter helpers are shared with every
+// other render test — see `test-recorder.ts` for why they are not inline.
 
 const CUTOUT = bitmap(686, 1126);
 const FRAME = { width: 1920, height: 1080, elapsedMs: 5_000 };
@@ -160,7 +96,7 @@ describe("text-card", () => {
   });
 
   it("shrinks long text to fit rather than overflowing", () => {
-    const size = (c: Rec) => Number(texts(c)[0].font.match(/(\d+(?:\.\d+)?)px/)?.[1]);
+    const size = (c: Recorder) => Number(texts(c)[0].font.match(/(\d+(?:\.\d+)?)px/)?.[1]);
     const short = draw({ text: "burn" });
     const long = draw({ text: LINE.repeat(6) });
     expect(size(long)).toBeLessThan(size(short));

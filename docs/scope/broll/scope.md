@@ -1411,17 +1411,22 @@ character run explains what it is doing while it downloads.
         stuck on "no renderer yet". Kept as a literal rather than an import, so
         the planner's server bundle does not pull in canvas drawing code to read
         an array of strings; a test asserts the two lists match.
-- [ ] **Brand typography, blocked on assets rather than on work.** Templates now
-      draw with a named stack instead of bare `sans-serif`, but not with Space
-      Grotesk and DM Sans, and the reason is worth keeping: the app loads both
-      through `next/font/google`, which self hosts into the build with no stable
-      public URL, and a render **worker** resolves fonts against `self.fonts`,
-      which nothing populates. Naming the brand face would render correctly in
-      the on page preview and silently fall back in the exported file — preview
-      and export disagreeing is the exact thing `renderable.ts` exists to
-      prevent. To finish: serve both woff2 files from `public/fonts/`, register
-      them with `FontFace` on the page **and** in the worker, await `ready`
-      before the first draw, and change `TYPEFACE`.
+- [x] **Brand typography, done 2026-08-17.** Clips are set in Space Grotesk and
+      DM Sans. The blocker was never the work: the app loads both through
+      `next/font/google`, which self hosts into the build with no stable public
+      URL, and a render **worker** resolves fonts against a set nothing
+      populates — so naming the brand face would have rendered correctly in the
+      on page preview and silently fallen back in the exported file. Fixed by
+      serving both woff2 from `public/fonts/` (the only reason that directory
+      exists) and registering them through one module, `render/fonts.ts`, that
+      the page and the worker both call. The worker **awaits** it before frame
+      zero, because an encode is a single pass; the page treats it as a repaint
+      trigger, so a scene appears immediately and sharpens a moment later. The
+      test that pinned the gap open now pins the opposite.
+
+      The split follows the brief rather than being invented: Space Grotesk on
+      the words a frame is about and on numeric data, DM Sans on the labels that
+      support them.
 - [ ] Verify it: /check verify the clip's design. This is the one feature on this
       scope where a unit test can say almost nothing — every question is "does
       the clip look right", which needs a real render watched at full size.
