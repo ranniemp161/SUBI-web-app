@@ -1481,11 +1481,12 @@ Studio for a stated price, and it renders and exports like any other template.
         `chart-full`, so a template added without a case here silently drew a
         chart in the one place preview and export must agree.
 - [ ] Verify it: /check verify object scenes against spec 0008's sheet.
-- [ ] **Cutout quality on real objects is inferred, not measured.** Phase 0
-      verified `@imgly` on generated people in both styles; a hero object is the
-      same kind of salient foreground, but nobody has looked. Check a handful
-      early — the contained fix if it disappoints is prompting for a flat keyable
-      colour and keying it inside `objects.ts`.
+- [x] **Cutout quality on real objects, checked 2026-08-17.** Phase 0 had only
+      verified `@imgly` on generated people, so this was the open risk. Driven
+      live: an oil refinery — thin pipework, lattice towers, the hardest shape
+      this is likely to meet — cut out with no halo and no background rectangle,
+      compositing cleanly onto the grid backdrop. The contingency (prompt for a
+      flat keyable colour and key it inside `objects.ts`) is not needed.
 - [ ] **Nothing sweeps orphaned illustrations.** A scene deleted by hand, or
       replaced by a plan re-run, leaves its image in the store. The character
       sweep is the precedent, and the Hobby plan's daily cron cap applies here

@@ -27,8 +27,11 @@ reading it that way has already produced one wrong status report.** Seven
 `Verify it` boxes are open across the scope and the two written verify sheets are
 mostly unticked, but that records which **ritual** has been run, not which
 behaviour works. The engineer develops by driving each feature in the browser as
-it is built, and the character pipeline and the scene planner have both been run
-against **live Gemini** and work (confirmed 2026-08-16). What the open boxes
+it is built, and the character pipeline, the scene planner and **object scenes**
+have all been run against **live Gemini** and work (the first two confirmed
+2026-08-16, object scenes 2026-08-17: a plan proposed an `object-full` scene, the
+subject traced to "Africa's largest oil refinery in Lagos", and the generated
+illustration cut out and composited cleanly). What the open boxes
 genuinely mean is that no one has walked a written acceptance sheet criterion by
 criterion and recorded the evidence. Ask before describing anything here as
 untested. The scope is the live plan; check it before trusting this line.
