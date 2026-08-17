@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+﻿import { describe, expect, it } from "vitest";
 import {
   CHARACTER_LEFT_THEME,
   characterEntrance,
@@ -120,7 +120,7 @@ describe("drawCharacterLeftFrame", () => {
   it("draws the character in the left column and the text to its right", () => {
     const ctx = draw(SCENE);
     const character = images(ctx)[0];
-    const column = 1920 * CHARACTER_LEFT_THEME.characterColumnRatio;
+    const column = 1920 * CHARACTER_LEFT_THEME.columnRatio;
 
     expect(character.x + character.width).toBeLessThanOrEqual(column + 1);
     for (const line of texts(ctx)) expect(line.x).toBeGreaterThanOrEqual(column);
@@ -194,7 +194,7 @@ describe("entrances", () => {
   it("the character arrives from zero to one", () => {
     expect(characterEntrance(0)).toBe(0);
     expect(characterEntrance(-10)).toBe(0);
-    expect(characterEntrance(CHARACTER_LEFT_THEME.characterEntranceMs)).toBe(1);
+    expect(characterEntrance(CHARACTER_LEFT_THEME.figureEntranceMs)).toBe(1);
   });
 
   it("the text waits, then arrives", () => {
@@ -216,7 +216,7 @@ describe("entrances", () => {
 // ---------------------------------------------------------------------------
 // Portrait. `character-left` is the only template that changes composition with
 // orientation, because it is the only one whose whole idea is a side by side
-// split — and a 9:16 frame has no side to put anything on.
+// split â€” and a 9:16 frame has no side to put anything on.
 // ---------------------------------------------------------------------------
 
 const PORTRAIT = { width: 1080, height: 1920, elapsedMs: 5_000 };
@@ -224,7 +224,7 @@ const PORTRAIT = { width: 1080, height: 1920, elapsedMs: 5_000 };
 describe("character-left in a portrait frame", () => {
   it("stacks: the character stands on the bottom edge, the words sit above it", () => {
     const drawn = images(draw(SCENE, PORTRAIT))[0];
-    const band = 1920 * CHARACTER_LEFT_THEME.portraitCharacterBandRatio;
+    const band = 1920 * CHARACTER_LEFT_THEME.portraitBandRatio;
 
     expect(drawn.y + drawn.height).toBeCloseTo(1920, 0);
     // Every word is clear of the band the character occupies.
@@ -268,9 +268,10 @@ describe("character-left in a portrait frame", () => {
     // The guard on the whole change: a landscape frame must draw exactly what it
     // drew before orientation existed as a concept.
     const drawn = images(draw(SCENE, FRAME))[0];
-    expect(drawn.x).toBeLessThan(1920 * CHARACTER_LEFT_THEME.characterColumnRatio);
+    expect(drawn.x).toBeLessThan(1920 * CHARACTER_LEFT_THEME.columnRatio);
     for (const line of texts(draw(SCENE, FRAME))) {
-      expect(line.x).toBeGreaterThanOrEqual(1920 * CHARACTER_LEFT_THEME.characterColumnRatio);
+      expect(line.x).toBeGreaterThanOrEqual(1920 * CHARACTER_LEFT_THEME.columnRatio);
     }
   });
 });
+

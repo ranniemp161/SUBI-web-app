@@ -16,6 +16,10 @@ export function StudioBar({
   plannerCount,
   exportableCount,
   blockedCount,
+  needingImagesCount,
+  missingImagesPrice,
+  drawingObjects,
+  objectBatchError,
   readyCount,
   isRerun,
   rerunPrice,
@@ -31,6 +35,7 @@ export function StudioBar({
   onRenderAll,
   onCancelRender,
   onDownload,
+  onDrawMissingObjects,
 }: {
   sceneCount: number;
   includedCount: number;
@@ -47,6 +52,21 @@ export function StudioBar({
    * kind of thing a creator notices only on the timeline.
    */
   blockedCount: number;
+  /**
+   * Included scenes blocked only because their illustration has not been drawn
+   * yet (spec `broll/0008`).
+   *
+   * **Separate from `blockedCount` because this one is fixable from here.**
+   * Illustrations are drawn on demand so a creator pays only for the ones they
+   * keep, but the brief also promises that plan-then-export-all produces usable
+   * output — so the gap is offered as one action with its total price before the
+   * export, rather than discovered as missing clips afterwards.
+   */
+  needingImagesCount: number;
+  /** The total to draw them all, formatted server side. */
+  missingImagesPrice: string;
+  drawingObjects: boolean;
+  objectBatchError: string | null;
   readyCount: number;
   isRerun: boolean;
   rerunPrice: string;
@@ -62,6 +82,7 @@ export function StudioBar({
   onRenderAll: () => void;
   onCancelRender: () => void;
   onDownload: () => void;
+  onDrawMissingObjects: () => void;
 }) {
   const [confirming, setConfirming] = useState(false);
   const [refusal, setRefusal] = useState<string | null>(null);
@@ -108,10 +129,18 @@ export function StudioBar({
                     <strong className="text-zinc-300">{droppedCharts}</strong> chart{droppedCharts === 1 ? "" : "s"} dropped
                   </span>
                 )}
-                {blockedCount > 0 && (
+                {blockedCount > needingImagesCount && (
                   <span className="text-amber-300/90">
                     {" · "}
-                    <strong>{blockedCount}</strong> need{blockedCount === 1 ? "s" : ""} a character
+                    <strong>{blockedCount - needingImagesCount}</strong> need
+                    {blockedCount - needingImagesCount === 1 ? "s" : ""} a character
+                  </span>
+                )}
+                {needingImagesCount > 0 && (
+                  <span className="text-amber-300/90">
+                    {" · "}
+                    <strong>{needingImagesCount}</strong> need
+                    {needingImagesCount === 1 ? "s" : ""} an illustration
                   </span>
                 )}
                 {readyCount > 0 && (
@@ -163,6 +192,24 @@ export function StudioBar({
           >
             {planning ? "Planning…" : isRerun ? `Re-run plan · ${rerunPrice}` : "Plan scenes"}
           </Button>
+
+          {/* Offered before Render all rather than after it, and priced on the
+              button: the batch would otherwise skip these silently, and clips
+              arriving short is exactly what a creator notices only on the
+              timeline. */}
+          {needingImagesCount > 0 && !rendering && (
+            <Button
+              type="button"
+              variant="glass"
+              size="sm"
+              onClick={onDrawMissingObjects}
+              disabled={planning || drawingObjects}
+            >
+              {drawingObjects
+                ? "Drawing…"
+                : `Draw ${needingImagesCount} illustration${needingImagesCount === 1 ? "" : "s"} · ${missingImagesPrice}`}
+            </Button>
+          )}
 
           {rendering ? (
             <Button
@@ -218,6 +265,12 @@ export function StudioBar({
       {zipError && (
         <p className="px-6 pb-2 text-xs" role="alert" style={{ color: "#ff6b6b" }}>
           {zipError}
+        </p>
+      )}
+
+      {objectBatchError && (
+        <p className="px-6 pb-2 text-xs" role="alert" style={{ color: "#ff6b6b" }}>
+          {objectBatchError}
         </p>
       )}
 

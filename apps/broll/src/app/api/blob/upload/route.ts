@@ -10,6 +10,8 @@ import { reportError } from "@repo/server-shared/observability";
 import {
   isCharacterAssetPathname,
   characterIdFromAssetPathname,
+  isObjectAssetPathname,
+  sceneIdFromObjectAssetPathname,
 } from "@/lib/asset-path";
 import {
   ASSET_CONTENT_TYPE,
@@ -17,11 +19,17 @@ import {
   isStorageConfigured,
 } from "@/lib/storage";
 import { getBrollCharacter } from "@/lib/characters";
+import { getObjectSceneContext } from "@/lib/scenes";
 
 /**
  * `POST /api/blob/upload` — hand the browser a presigned PUT for exactly one
- * character asset, so the finished PNG goes straight to storage and never
+ * generated asset, so the finished PNG goes straight to storage and never
  * crosses a Function (spec `broll/0004` AC-17).
+ *
+ * Two kinds of asset take this path: a **character** variant, owned by a
+ * character, and an **object** illustration, owned by a scene (spec
+ * `broll/0008`). They are told apart by their pathname prefix and authorized
+ * through different tables, in `authorizePathname` below.
  *
  * **The authorization lives inside `getSignedToken`, and that is the whole
  * security of this route.** Without it this is an anonymous write endpoint into
@@ -76,6 +84,42 @@ const UPLOAD_URL_TTL_MS = 10 * 60 * 1000;
 const INERT_WEBHOOK_KEY =
   "-----BEGIN PUBLIC KEY-----unused-----END PUBLIC KEY-----";
 
+/**
+ * Prove that this user may write to this pathname, or throw.
+ *
+ * **Throws rather than returning a boolean, on purpose.** A caller that forgets
+ * to check a returned `false` signs a URL anyway; a caller that forgets to await
+ * a throwing function fails its own lint. On the one path in the app where
+ * getting this wrong means an anonymous write into the store, the failure mode
+ * of the signature is worth choosing deliberately.
+ *
+ * Each branch ends in an **owner scoped query**, never in trusting the id the
+ * string carried. Someone else's character or scene is indistinguishable from a
+ * missing one here, so this both authorizes and avoids confirming that an id
+ * exists.
+ */
+async function authorizePathname(pathname: string, userId: string): Promise<void> {
+  const characterId = characterIdFromAssetPathname(pathname);
+  if (characterId) {
+    if (!isCharacterAssetPathname(pathname, characterId)) throw new Error("Not authorized");
+    const character = await getBrollCharacter(userId, characterId);
+    if (!character) throw new Error("Not authorized");
+    return;
+  }
+
+  // An object illustration belongs to a scene, and a scene belongs to a project,
+  // which is where the `user_id` actually lives (spec `broll/0008`).
+  const sceneId = sceneIdFromObjectAssetPathname(pathname);
+  if (sceneId) {
+    if (!isObjectAssetPathname(pathname, sceneId)) throw new Error("Not authorized");
+    const scene = await getObjectSceneContext(userId, sceneId);
+    if (!scene) throw new Error("Not authorized");
+    return;
+  }
+
+  throw new Error("Not authorized");
+}
+
 export async function POST(request: Request): Promise<NextResponse> {
   if (!isStorageConfigured()) {
     return NextResponse.json(
@@ -113,20 +157,16 @@ export async function POST(request: Request): Promise<NextResponse> {
         const user = await getAuthorizedDbUser(clerkId);
         if (!user) throw new Error("Not authorized");
 
-        // The id comes out of the pathname, then the pathname is validated
-        // against it. Doing it in that order means a malformed path cannot
-        // yield an id at all, so there is nothing to look up. An old project
-        // shaped path yields nothing here, which is what makes the clean break
-        // structural rather than a convention.
-        const characterId = characterIdFromAssetPathname(pathname);
-        if (!characterId || !isCharacterAssetPathname(pathname, characterId)) {
-          throw new Error("Not authorized");
-        }
-
-        // Owner scoped. Someone else's character is indistinguishable from a
-        // missing one, so this both authorizes and avoids confirming an id.
-        const character = await getBrollCharacter(user.id, characterId);
-        if (!character) throw new Error("Not authorized");
+        // Two shapes, and the pathname decides which. Each is recognised only
+        // by its own literal prefix segment, so neither can be reached through
+        // the other's check — see `asset-path.ts`.
+        //
+        // In both cases the id comes out of the pathname first and the pathname
+        // is then validated against it. Doing it in that order means a malformed
+        // path cannot yield an id at all, so there is nothing to look up. An old
+        // project shaped path yields nothing from either, which is what makes
+        // the clean break structural rather than a convention.
+        await authorizePathname(pathname, user.id);
 
         const token = await issueSignedToken({
           // Scoped to this one pathname, unlike the read delegation in
@@ -163,7 +203,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     if (message === "Not authorized") {
       return NextResponse.json({ error: "Not authorized" }, { status: 401 });
     }
-    reportError("Failed to presign a b-roll character upload", error);
+    reportError("Failed to presign a b-roll asset upload", error);
     return NextResponse.json({ error: "Could not start the upload." }, { status: 400 });
   }
 }

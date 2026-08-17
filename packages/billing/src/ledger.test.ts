@@ -37,6 +37,8 @@ import {
   reclaimStaleBrollHold,
   chargeBrollPlanRerun,
   refundBrollPlanRerun,
+  chargeBrollObjectImage,
+  refundBrollObjectImage,
 } from "./ledger";
 import { db } from "@repo/db";
 
@@ -428,5 +430,101 @@ describe("refundBrollPlanRerun", () => {
     await expect(
       refundBrollPlanRerun("u1", "b1", "k1")
     ).resolves.toBeUndefined();
+  });
+});
+
+describe("chargeBrollObjectImage", () => {
+  it("charges an owned project", async () => {
+    state.rows = [{ duplicate: 0, owned: 1 }];
+    await expect(chargeBrollObjectImage("u1", "b1", "k1")).resolves.toEqual({
+      status: "charged",
+    });
+  });
+
+  it("charges every illustration, including the first", async () => {
+    // Unlike a plan run there is no bundled first one, which is what lets this
+    // statement carry no counter at all. If a "bundled" status ever appears
+    // here, something has grown a second meaning.
+    state.rows = [{ duplicate: 0, owned: 1 }];
+    const first = await chargeBrollObjectImage("u1", "b1", "k1");
+    const second = await chargeBrollObjectImage("u1", "b1", "k2");
+    expect(first).toEqual(second);
+    expect(first.status).toBe("charged");
+  });
+
+  it("treats an already-charged key as success", async () => {
+    // A double-click. The work was paid for, and surfacing an error to a caller
+    // that already has its picture would be a lie.
+    state.rows = [{ duplicate: 1, owned: 0 }];
+    await expect(chargeBrollObjectImage("u1", "b1", "k1")).resolves.toEqual({
+      status: "charged",
+    });
+  });
+
+  it("returns not_found when the project is not this user's", async () => {
+    state.rows = [{ duplicate: 0, owned: 0 }];
+    await expect(chargeBrollObjectImage("u1", "b1", "k1")).resolves.toEqual({
+      status: "not_found",
+    });
+  });
+
+  it("maps a CHECK violation to insufficient", async () => {
+    // Overdraft protection is the constraint, not a balance qual, so an
+    // unaffordable draw rolls the whole statement back — ledger row included.
+    state.executeError = Object.assign(new Error("violates check constraint"), {
+      code: "23514",
+    });
+    await expect(chargeBrollObjectImage("u1", "b1", "k1")).resolves.toEqual({
+      status: "insufficient",
+    });
+  });
+
+  it("works without an idempotency key", async () => {
+    state.rows = [{ duplicate: 0, owned: 1 }];
+    await expect(chargeBrollObjectImage("u1", "b1")).resolves.toEqual({
+      status: "charged",
+    });
+  });
+
+  it("rethrows non-CHECK errors", async () => {
+    state.executeError = Object.assign(new Error("connection lost"), {
+      code: "57P01",
+    });
+    await expect(chargeBrollObjectImage("u1", "b1", "k1")).rejects.toThrow(
+      "connection lost"
+    );
+  });
+
+  it("moves money in one statement", async () => {
+    // The invariant this whole package exists for: the ledger row and the cached
+    // balance move together or not at all, because the neon-http driver has no
+    // transaction to hold them together.
+    state.rows = [{ duplicate: 0, owned: 1 }];
+    await chargeBrollObjectImage("u1", "b1", "k1");
+    expect(db.execute).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("refundBrollObjectImage", () => {
+  it("credits the price back", async () => {
+    state.rows = [{ balance_micros: 5_000_000 }];
+    await expect(
+      refundBrollObjectImage("u1", "b1", "k1")
+    ).resolves.toBeUndefined();
+    expect(db.execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("is safe to retry", async () => {
+    // Its own broll_object_refund: prefix conflicts, so a retried refund cannot
+    // double-credit — and it cannot collide with the charge's key either.
+    state.rows = [];
+    await expect(
+      refundBrollObjectImage("u1", "b1", "k1")
+    ).resolves.toBeUndefined();
+  });
+
+  it("works without an idempotency key", async () => {
+    state.rows = [];
+    await expect(refundBrollObjectImage("u1", "b1")).resolves.toBeUndefined();
   });
 });

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
-import { uploadPresigned } from "@vercel/blob/client";
+import { base64ToPngBlob, putPresignedWithRetry } from "@/lib/blob-upload";
 import { CHARACTER_EMOTIONS, type CharacterEmotion } from "@/lib/emotions";
 import {
   ACCEPTED_PHOTO_TYPES,
@@ -879,38 +879,6 @@ function sortByTurnOrder(assets: ReviewAsset[]): ReviewAsset[] {
     (a, b) =>
       CHARACTER_EMOTIONS.indexOf(a.emotion) - CHARACTER_EMOTIONS.indexOf(b.emotion)
   );
-}
-
-async function putPresigned(pathname: string, blob: Blob): Promise<void> {
-  await uploadPresigned(pathname, blob, {
-    access: "private",
-    handleUploadUrl: "/api/blob/upload",
-    contentType: "image/png",
-  });
-}
-
-export async function putPresignedWithRetry(
-  pathname: string,
-  blob: Blob,
-  getToken: (options: { skipCache: boolean }) => Promise<unknown>
-): Promise<void> {
-  try {
-    await putPresigned(pathname, blob);
-  } catch (cause) {
-    await getToken({ skipCache: true }).catch(() => null);
-    try {
-      await putPresigned(pathname, blob);
-    } catch {
-      throw cause;
-    }
-  }
-}
-
-function base64ToPngBlob(base64: string): Blob {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-  return new Blob([bytes], { type: "image/png" });
 }
 
 async function readCharacterStream(

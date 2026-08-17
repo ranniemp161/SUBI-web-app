@@ -10,6 +10,8 @@ import {
   AI_CUT_COST_MICROS_PER_SECOND,
   BROLL_CHARACTER_SET_COST_MICROS,
   BROLL_CHARACTER_SET_MICROS,
+  BROLL_OBJECT_IMAGE_COST_MICROS,
+  BROLL_OBJECT_IMAGE_MICROS,
   BROLL_PLAN_RERUN_COST_MICROS,
   BROLL_PLAN_RERUN_MICROS,
   BROLL_STALE_HOLD_MS,
@@ -761,6 +763,107 @@ export async function refundBrollPlanRerun(
       INSERT INTO credit_ledger (user_id, delta_micros, reason, broll_project_id, cost_micros, stripe_event_id)
       SELECT id, ${priceMicros}, 'refund', ${brollProjectId},
              ${BROLL_PLAN_RERUN_COST_MICROS}, ${ledgerKey}
+      FROM users WHERE id = ${userId}
+      ON CONFLICT (stripe_event_id) DO NOTHING
+      RETURNING user_id, delta_micros
+    )
+    UPDATE users u SET balance_micros = u.balance_micros + ins.delta_micros
+    FROM ins WHERE u.id = ins.user_id
+  `);
+}
+
+export type BrollObjectChargeResult =
+  | { status: "charged" }
+  | { status: "insufficient" }
+  /** No such project for this user. */
+  | { status: "not_found" };
+
+/**
+ * Charge one generated object illustration (spec `broll/0008`).
+ *
+ * **Eager, like `chargeBrollPlanRerun`, not a hold like the character set.** The
+ * shape follows the shape of the work: a character set is a ~110 second run of
+ * six external calls, so the money is reserved before the vendor is paid and
+ * settled against what the run actually bought. One illustration is a single
+ * call of about fifteen seconds, and a hold would add a reserve, a settle and a
+ * reclaim path to protect a window barely longer than the request itself.
+ *
+ * There is deliberately **no counter to increment**, which is what makes this
+ * simpler than the plan re-run it is otherwise modelled on: every illustration
+ * is charged, including the first, so nothing has to distinguish a bundled run
+ * from a paid one. The per-scene attempt cap lives on the scene row and is not a
+ * money question.
+ *
+ * `idempotencyKey` rides the same generic unique `stripe_event_id` slot under a
+ * `broll_object:` prefix, so a double-click charges once.
+ */
+export async function chargeBrollObjectImage(
+  userId: string,
+  brollProjectId: string,
+  idempotencyKey?: string,
+  priceMicros: number = BROLL_OBJECT_IMAGE_MICROS
+): Promise<BrollObjectChargeResult> {
+  const ledgerKey = idempotencyKey ? `broll_object:${idempotencyKey}` : null;
+  try {
+    const [row] = await executeRows(sql`
+      WITH dup AS (
+        SELECT 1 FROM credit_ledger
+        WHERE ${ledgerKey}::text IS NOT NULL AND stripe_event_id = ${ledgerKey}
+      ),
+      owner AS (
+        SELECT user_id FROM broll_projects
+        WHERE id = ${brollProjectId} AND user_id = ${userId}
+          AND NOT EXISTS (SELECT 1 FROM dup)
+      ),
+      ins AS (
+        INSERT INTO credit_ledger (user_id, delta_micros, reason, broll_project_id, cost_micros, stripe_event_id)
+        SELECT user_id, ${-priceMicros}, 'broll_object_image', ${brollProjectId},
+               ${BROLL_OBJECT_IMAGE_COST_MICROS}, ${ledgerKey}
+        FROM owner
+        ON CONFLICT (stripe_event_id) DO NOTHING
+        RETURNING user_id, delta_micros
+      ),
+      charged AS (
+        UPDATE users u SET balance_micros = u.balance_micros + ins.delta_micros
+        FROM ins WHERE u.id = ins.user_id
+      )
+      SELECT (SELECT count(*)::int FROM dup) AS duplicate,
+             (SELECT count(*)::int FROM owner) AS owned
+    `);
+
+    // A key we have already charged: the work was paid for, report success.
+    if (Number(row?.duplicate ?? 0) > 0) return { status: "charged" };
+    if (!row || Number(row.owned) === 0) return { status: "not_found" };
+    return { status: "charged" };
+  } catch (error) {
+    if (isCheckViolation(error)) return { status: "insufficient" };
+    throw error;
+  }
+}
+
+/**
+ * Refund an illustration that was charged and never delivered — the model call
+ * failed, or it answered with no picture.
+ *
+ * A straight credit-back with no hold to reconcile, matching
+ * `refundBrollPlanRerun`, keyed under its own `broll_object_refund:` prefix so a
+ * retried refund cannot double-credit.
+ *
+ * The scene's `object_attempt` is deliberately left alone, for the same reason
+ * `plan_runs` is: it counts what was attempted, and it is not a money figure.
+ */
+export async function refundBrollObjectImage(
+  userId: string,
+  brollProjectId: string,
+  idempotencyKey?: string,
+  priceMicros: number = BROLL_OBJECT_IMAGE_MICROS
+): Promise<void> {
+  const ledgerKey = idempotencyKey ? `broll_object_refund:${idempotencyKey}` : null;
+  await executeRows(sql`
+    WITH ins AS (
+      INSERT INTO credit_ledger (user_id, delta_micros, reason, broll_project_id, cost_micros, stripe_event_id)
+      SELECT id, ${priceMicros}, 'refund', ${brollProjectId},
+             ${BROLL_OBJECT_IMAGE_COST_MICROS}, ${ledgerKey}
       FROM users WHERE id = ${userId}
       ON CONFLICT (stripe_event_id) DO NOTHING
       RETURNING user_id, delta_micros

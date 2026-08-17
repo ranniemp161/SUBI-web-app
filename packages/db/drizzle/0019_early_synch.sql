@@ -1,0 +1,21 @@
+-- The ledger reason for one generated object illustration (spec broll/0008).
+--
+-- Deliberately a SEPARATE migration from 0020, which adds the broll_scenes
+-- columns the feature needs, and for the same reason 0016 was separate from
+-- 0015: the repo's add, deploy, then use rule. A value must exist in the live
+-- enum before any deployed code writes it. Nothing below uses it — only
+-- application code does, later — so this is a deploy-ordering requirement
+-- rather than a Postgres one.
+--
+-- **Apply this in its own `db:migrate` run.** drizzle-kit replays every pending
+-- migration inside one transaction, so generating 0019 and 0020 and then
+-- running migrate once puts them in the same transaction and defeats the split.
+-- Postgres tolerates that here, because nothing in 0020 writes this value — but
+-- the ordering is the point, and a later migration that does write it would
+-- fail outright.
+--
+-- ALTER TYPE ... ADD VALUE is not reversible: Postgres has no DROP VALUE. A
+-- rollback means recreating the type and rewriting every column that uses it.
+-- The value is additive and no existing row is touched, so this applies
+-- instantly with no table scan.
+ALTER TYPE "public"."credit_ledger_reason" ADD VALUE 'broll_object_image';

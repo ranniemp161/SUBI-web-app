@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { traceChart, normalizeForTrace, resolveSpan } from "./honesty";
-import type { SceneChart } from "./scene-schema";
+import { traceChart, traceObject, normalizeForTrace, resolveSpan } from "./honesty";
+import type { SceneChart, SceneObject } from "./scene-schema";
 
 function chart(over: Partial<SceneChart> = {}): SceneChart {
   return {
@@ -156,5 +156,106 @@ describe("resolveSpan", () => {
 
   it("returns null for a start past the end of the line", () => {
     expect(resolveSpan("abc", { start_char: 5, end_char: 9 })).toBeNull();
+  });
+});
+
+/**
+ * The subject trace (spec `broll/0008`).
+ *
+ * The same rule as `traceChart`, applied to the thing a scene is about to draw
+ * rather than to the numbers on it. An illustration of a castle nobody mentioned
+ * is a picture of a claim nobody made — and it is harder to spot than an invented
+ * number, because nothing about a well drawn castle looks wrong.
+ */
+
+function object(over: Partial<SceneObject> = {}): SceneObject {
+  return {
+    subject: "a castle",
+    source_span: { start_char: 0, end_char: 60 },
+    ...over,
+  };
+}
+
+describe("traceObject", () => {
+  const line = "They built a castle on the hill above the river.";
+
+  it("passes a subject the speaker actually named", () => {
+    expect(traceObject(object(), line)).toEqual({ traced: true });
+  });
+
+  it("drops a subject the line never names", () => {
+    const result = traceObject(object({ subject: "a submarine" }), line);
+    expect(result.traced).toBe(false);
+    expect(result).toMatchObject({ reason: expect.stringContaining("submarine") });
+  });
+
+  it("drops an adjective the speaker did not say", () => {
+    // "a castle" and "a ruined castle" are different pictures, and the second
+    // one is the model's rather than the speaker's. Requiring every content word
+    // is what catches this; requiring only one would let it through on "castle".
+    expect(traceObject(object({ subject: "a ruined castle" }), line).traced).toBe(false);
+  });
+
+  it("ignores the articles and joining words a noun phrase attracts", () => {
+    // Those are the model's grammar, not the speaker's content, so a subject is
+    // not rejected for containing "a" or "the" when the line phrased it another
+    // way.
+    expect(traceObject(object({ subject: "the castle" }), line).traced).toBe(true);
+    expect(traceObject(object({ subject: "castle" }), line).traced).toBe(true);
+  });
+
+  it("matches across singular and plural", () => {
+    // A speaker says "castles dotted the hillside" and a model quite reasonably
+    // proposes "a castle". Refusing that would drop an illustration of something
+    // the speaker plainly named.
+    const plural = "Castles dotted the hillside for miles.";
+    expect(traceObject(object({ subject: "a castle" }), plural).traced).toBe(true);
+    expect(traceObject(object({ subject: "castles" }), line).traced).toBe(true);
+  });
+
+  it("handles a -y to -ies plural", () => {
+    expect(
+      traceObject(object({ subject: "a factory" }), "The factories closed that winter.").traced
+    ).toBe(true);
+  });
+
+  it("is case and punctuation insensitive, like the chart trace", () => {
+    expect(
+      traceObject(object({ subject: "A Castle," }), line.toUpperCase()).traced
+    ).toBe(true);
+  });
+
+  it("drops a subject cited outside the span, even when the line contains it", () => {
+    // The offsets are the citation. A subject found somewhere else in the line
+    // was not read out of the words the model pointed at.
+    const result = traceObject(
+      object({ subject: "a castle", source_span: { start_char: 0, end_char: 10 } }),
+      line
+    );
+    expect(result.traced).toBe(false);
+  });
+
+  it("drops a span that does not exist in the line it points at", () => {
+    const result = traceObject(
+      object({ source_span: { start_char: 500, end_char: 520 } }),
+      line
+    );
+    expect(result.traced).toBe(false);
+    expect(result).toMatchObject({ reason: expect.stringContaining("cited span") });
+  });
+
+  it("drops a subject made only of stopwords", () => {
+    expect(traceObject(object({ subject: "the" }), line)).toEqual({
+      traced: false,
+      reason: "the subject names nothing",
+    });
+  });
+
+  it("does not match a word inside a longer one", () => {
+    // The same boundary discipline `traceChart` uses for numbers: "cat" must not
+    // pass on "catalogue", or the check stops meaning anything.
+    expect(
+      traceObject(object({ subject: "a cat" }), "The catalogue arrived on Tuesday.").traced
+    ).toBe(false);
   });
 });

@@ -4,7 +4,24 @@ import type { RefObject } from "react";
 import type { SceneSummary } from "@/lib/scenes";
 import type { CharacterEmotion } from "@/lib/emotions";
 import { formatClock } from "@/lib/utterances";
-import { sceneDrawsChart, type SceneBlocker } from "@/lib/scene-templates";
+import { isObjectTemplate, sceneDrawsChart, type SceneBlocker } from "@/lib/scene-templates";
+import { ObjectPanel } from "./object-panel";
+
+/**
+ * What to do about each way a scene can be blocked (AC-138).
+ *
+ * A lookup rather than a chain of ternaries, so a new blocker code is a compile
+ * error here instead of silently inheriting whichever advice happened to be the
+ * fallback — which is what a two-branch ternary did to `no_object_image` before
+ * this existed.
+ */
+const BLOCKER_ADVICE: Record<SceneBlocker["code"], string> = {
+  no_character:
+    "Attach one on the project page and this scene renders again — the plan is kept, nothing has to be re-run.",
+  no_emotion_chosen: "Pick an emotion the character actually has, or redraw the missing one.",
+  missing_emotion: "Pick an emotion the character actually has, or redraw the missing one.",
+  no_object_image: "Draw it below, and this scene renders.",
+};
 import type { Renderable } from "@/lib/render/renderable";
 import { ScenePreview } from "./scene-preview";
 import { SceneCitation } from "./scene-citation";
@@ -42,6 +59,8 @@ export function SceneDetail({
   onDelete,
   onRender,
   onDownload,
+  objectImagePrice,
+  onObjectGenerated,
 }: {
   projectId: string;
   scene: SceneSummary;
@@ -70,8 +89,13 @@ export function SceneDetail({
   onDelete: () => void;
   onRender: () => void;
   onDownload?: () => void;
+  /** Formatted server side: the price env override is not public. */
+  objectImagePrice: string;
+  /** Records a freshly drawn illustration locally, so the preview redraws. */
+  onObjectGenerated: (pathname: string) => void;
 }) {
   const drawsChart = sceneDrawsChart(scene);
+  const drawsObject = scene.object !== null && isObjectTemplate(scene.layoutTemplate);
 
   return (
     <div className="flex flex-col xl:flex-row gap-6 min-h-full">
@@ -114,10 +138,7 @@ export function SceneDetail({
             className="rounded-xl px-4 py-3 text-xs bg-amber-500/10 border border-amber-500/20 text-amber-200"
             role="status"
           >
-            {blocker.reason}{" "}
-            {blocker.code === "no_character"
-              ? "Attach one on the project page and this scene renders again — the plan is kept, nothing has to be re-run."
-              : "Pick an emotion the character actually has, or redraw the missing one."}
+            {blocker.reason} {BLOCKER_ADVICE[blocker.code]}
           </p>
         )}
 
@@ -167,6 +188,7 @@ export function SceneDetail({
           emotion={scene.emotion}
           origin={scene.origin}
           hasChart={scene.chart !== null}
+          hasObject={scene.object !== null}
           committedEmotions={committedEmotions}
           disabled={locked}
           firstControlRef={firstControlRef}
@@ -177,6 +199,22 @@ export function SceneDetail({
           onChange={onChange}
           onDelete={onDelete}
         />
+
+        {/* Shown only while the scene is actually going to draw an object, so a
+            creator who restyles it to text is not left looking at a button that
+            spends money on a picture nothing will show. */}
+        {drawsObject && scene.object && (
+          <ObjectPanel
+            projectId={projectId}
+            sceneId={scene.id}
+            subject={scene.object.subject}
+            attempt={scene.objectAttempt}
+            hasImage={scene.objectAssetPath !== null}
+            price={objectImagePrice}
+            disabled={locked}
+            onGenerated={onObjectGenerated}
+          />
+        )}
 
         {/* Bottom Render Status Card */}
         <Card className="p-4 mt-auto">
