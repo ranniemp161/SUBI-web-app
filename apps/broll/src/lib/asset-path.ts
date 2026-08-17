@@ -117,3 +117,90 @@ export function characterIdFromAssetPathname(pathname: string): string | null {
   if (!ASSET_TAIL.test(tail)) return null;
   return characterId;
 }
+
+/**
+ * Object illustrations (spec `broll/0008`), which live under their own prefix
+ * and are owned by a **scene** rather than by a character.
+ *
+ * A separate prefix rather than a fifth field in the character shape, and the
+ * `objects/` segment is matched literally for exactly the reason `characters/`
+ * is: the two shapes look alike enough to be confused by a reader skimming the
+ * regular expressions, and confusing them is a cross user read. A character path
+ * yields no scene id here and an object path yields no character id there —
+ * `asset-path.test.ts` keeps one of each as an explicit rejection case.
+ *
+ * Ownership runs `broll_scenes → broll_projects.user_id`, which is the chain the
+ * scene PATCH route already proves inside its own statement.
+ */
+export function objectAssetPrefix(sceneId: string): string {
+  return `broll/objects/${sceneId}/`;
+}
+
+/**
+ * The shape of everything after the prefix: `<attempt>-<random>.png`.
+ *
+ * No leading name segment, because unlike a character variant there is nothing
+ * to name: a scene has one illustration at a time, and the attempt number is
+ * what distinguishes this one from the one it replaced. As strict as its
+ * sibling — no slash, no dot but the extension's — so traversal is impossible by
+ * construction rather than filtered.
+ */
+const OBJECT_TAIL = /^[0-9]+-[0-9a-f]{16}\.png$/;
+
+/**
+ * Mint the pathname for one scene's illustration.
+ *
+ * A regeneration passes the next `attempt` and gets a **new** path, never the
+ * old one: Vercel's CDN caches blobs for up to a month and an overwrite takes up
+ * to sixty seconds to propagate, so writing in place would serve the creator
+ * back the very illustration they just paid to replace.
+ */
+export function objectAssetPathname(
+  sceneId: string,
+  attempt: number,
+  random: string = randomSuffix()
+): string {
+  return `${objectAssetPrefix(sceneId)}${attempt}-${random}.png`;
+}
+
+/** True only if `pathname` is an illustration belonging to `sceneId`. */
+export function isObjectAssetPathname(pathname: string, sceneId: string): boolean {
+  const prefix = objectAssetPrefix(sceneId);
+  if (!pathname.startsWith(prefix)) return false;
+  return OBJECT_TAIL.test(pathname.slice(prefix.length));
+}
+
+/**
+ * True only if `pathname` is the illustration this scene's given attempt would
+ * have produced — the check the commit route needs.
+ *
+ * Stricter than well-formedness on purpose. A path that is valid for a *different*
+ * attempt is a stale upload from a request that lost a race, and pointing the row
+ * at it would show the creator an illustration they had already replaced. The
+ * random tail is deliberately not checked: it is the part the generate route
+ * chose and the client is simply handing back.
+ */
+export function isObjectAssetPathnameForAttempt(
+  pathname: string,
+  sceneId: string,
+  attempt: number
+): boolean {
+  if (!isObjectAssetPathname(pathname, sceneId)) return false;
+  const tail = pathname.slice(objectAssetPrefix(sceneId).length);
+  return tail.startsWith(`${attempt}-`);
+}
+
+/**
+ * Recover the owning scene id from a pathname, so the presigned upload route can
+ * look the scene up and prove ownership before it signs anything.
+ *
+ * Returns null unless the whole pathname is a well formed illustration path, so
+ * a caller can never get an id back out of a string this module would reject.
+ */
+export function sceneIdFromObjectAssetPathname(pathname: string): string | null {
+  const match = pathname.match(/^broll\/objects\/([^/]+)\/(.+)$/);
+  if (!match) return null;
+  const [, sceneId, tail] = match;
+  if (!OBJECT_TAIL.test(tail)) return null;
+  return sceneId;
+}

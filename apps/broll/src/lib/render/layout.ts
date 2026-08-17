@@ -30,9 +30,9 @@ export function typeScale(box: { width: number; height: number }): number {
 /**
  * Whether this frame is taller than it is wide.
  *
- * Only `character-left` branches on this, and only for composition: a template
- * whose whole idea is "character beside the words" has no room to put anything
- * beside anything in a 9:16 frame. Square counts as landscape, which is
+ * Only the side by side templates branch on this, and only for composition: a
+ * template whose whole idea is "figure beside the words" has no room to put
+ * anything beside anything in a 9:16 frame. Square counts as landscape, which is
  * arbitrary and only has to be decided somewhere.
  */
 export function isPortrait(frame: { width: number; height: number }): boolean {
@@ -71,8 +71,19 @@ export function wrapText(
 }
 
 /**
- * Fits an image into a box while preserving its aspect ratio, anchored to the
- * bottom centre of the box.
+ * Where a fitted image sits inside the space left over.
+ *
+ * `bottom` is what a character wants: cutouts are cropped to their own bounding
+ * box, so only a shared floor line stops them bobbing between scenes. `center`
+ * is what a generated object wants — a rocket or a barrel has no feet, and
+ * standing it on the frame edge reads as a mistake rather than as a decision
+ * (spec `broll/0008`).
+ */
+export type FitAnchor = "bottom" | "center";
+
+/**
+ * Fits an image into a box while preserving its aspect ratio, centred
+ * horizontally and anchored vertically by `anchor`.
  *
  * Character cutouts are portrait and their widths vary per emotion (the stored
  * set runs 686 to 866 wide against a constant 1126 tall), because each is
@@ -85,9 +96,10 @@ export function wrapText(
  * every image this app generates (the generation frame is 3:4). The mode only
  * differed for a landscape source, which cannot occur here.
  */
-export function fitCharacter(
+export function fitFigure(
   image: { width: number; height: number },
-  box: { x: number; y: number; width: number; height: number }
+  box: { x: number; y: number; width: number; height: number },
+  anchor: FitAnchor = "bottom"
 ): { x: number; y: number; width: number; height: number } {
   if (image.width <= 0 || image.height <= 0) {
     return { x: box.x, y: box.y, width: 0, height: 0 };
@@ -97,11 +109,24 @@ export function fitCharacter(
 
   const width = image.width * scale;
   const height = image.height * scale;
+  const slack = box.height - height;
 
   return {
     x: box.x + (box.width - width) / 2,
-    y: box.y + box.height - height,
+    y: box.y + (anchor === "center" ? slack / 2 : slack),
     width,
     height,
   };
+}
+
+/**
+ * The bottom anchored fit, under the name every character template already calls
+ * it by. Kept so the character path reads as what it is rather than as a special
+ * case of something more general.
+ */
+export function fitCharacter(
+  image: { width: number; height: number },
+  box: { x: number; y: number; width: number; height: number }
+): { x: number; y: number; width: number; height: number } {
+  return fitFigure(image, box, "bottom");
 }

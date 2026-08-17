@@ -106,6 +106,22 @@ export function flatRateMicros(
 export const DEFAULT_BROLL_CHARACTER_SET_MICROS = 2_000_000;
 export const DEFAULT_BROLL_PLAN_RERUN_MICROS = 250_000;
 
+/**
+ * One generated object illustration, $0.35 (spec `broll/0008`).
+ *
+ * **Priced against the character set rather than derived**, and it is a price
+ * rather than a calculation: $2.00 buys six images that cost $0.84, so ~2.4x
+ * cost. One image costs $0.134, and $0.35 holds roughly the same multiple while
+ * landing on a number a creator can reason about — a scene's illustration costs
+ * about a third of a dollar, and a plan with six object scenes costs about what
+ * the character set did.
+ *
+ * Env-overridable for the same reason every price here is: a reprice is a Vercel
+ * env change and a redeploy, never a code change. Tentative pending the same
+ * client review the character-set price is waiting on.
+ */
+export const DEFAULT_BROLL_OBJECT_IMAGE_MICROS = 350_000;
+
 export const BROLL_CHARACTER_SET_MICROS = flatRateMicros(
   process.env.BROLL_CHARACTER_SET_MICROS,
   DEFAULT_BROLL_CHARACTER_SET_MICROS
@@ -113,6 +129,10 @@ export const BROLL_CHARACTER_SET_MICROS = flatRateMicros(
 export const BROLL_PLAN_RERUN_MICROS = flatRateMicros(
   process.env.BROLL_PLAN_RERUN_MICROS,
   DEFAULT_BROLL_PLAN_RERUN_MICROS
+);
+export const BROLL_OBJECT_IMAGE_MICROS = flatRateMicros(
+  process.env.BROLL_OBJECT_IMAGE_MICROS,
+  DEFAULT_BROLL_OBJECT_IMAGE_MICROS
 );
 
 /**
@@ -131,6 +151,18 @@ export const BROLL_PLAN_RERUN_MICROS = flatRateMicros(
  */
 export const BROLL_CHARACTER_SET_COST_MICROS = 840_000;
 export const BROLL_PLAN_RERUN_COST_MICROS = 2_000;
+
+/**
+ * One object illustration: a single image at the Pro tier's $0.134, with no
+ * multi-turn image input to add because there is no chain — the whole request is
+ * one text prompt.
+ *
+ * The one figure here that is a single published rate rather than an estimate
+ * over one, which is why it is exactly a sixth of the character set's image
+ * component rather than a round number. It rots with the tier like every other
+ * price in this file.
+ */
+export const BROLL_OBJECT_IMAGE_COST_MICROS = 134_000;
 
 /**
  * How long a b-roll generation claim may sit before it is treated as abandoned.

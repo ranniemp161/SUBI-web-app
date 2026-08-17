@@ -1,11 +1,13 @@
 import "server-only";
 import { db } from "@repo/db";
 import { brollScenes, brollProjects } from "@repo/db/schema";
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, isNotNull, sql } from "drizzle-orm";
+import type { CharacterStyleId } from "./styles";
 import {
   MIN_SCENE_DURATION_MS,
   MAX_SCENE_DURATION_MS,
   type SceneChart,
+  type SceneObject,
   type VisualType,
   type LayoutTemplate,
 } from "./scene-schema";
@@ -40,6 +42,19 @@ export type SceneSummary = {
   chart: SceneChart | null;
   /** Why the honesty check dropped this scene's chart, or null (AC-87). */
   chartRejectionReason: string | null;
+  /** The thing this scene illustrates, or null (spec `broll/0008`). */
+  object: SceneObject | null;
+  /** Why the subject trace dropped this scene's object, or null. */
+  objectRejectionReason: string | null;
+  /**
+   * Where the generated illustration lives, or null until one exists.
+   *
+   * The studio reads this as "can this scene draw yet", never as a URL: the
+   * store is private, so a pathname is exchanged for a signed URL separately.
+   */
+  objectAssetPath: string | null;
+  /** How many illustrations have been generated for this scene. */
+  objectAttempt: number;
   strength: number | null;
   included: boolean;
   origin: string;
@@ -72,6 +87,10 @@ export async function listBrollScenes(
       overlayText: brollScenes.overlayText,
       chart: brollScenes.chart,
       chartRejectionReason: brollScenes.chartRejectionReason,
+      object: brollScenes.object,
+      objectRejectionReason: brollScenes.objectRejectionReason,
+      objectAssetPath: brollScenes.objectAssetPath,
+      objectAttempt: brollScenes.objectAttempt,
       strength: brollScenes.strength,
       included: brollScenes.included,
       origin: brollScenes.origin,
@@ -90,6 +109,7 @@ export async function listBrollScenes(
     emotion: row.emotion as CharacterEmotion | null,
     layoutTemplate: row.layoutTemplate as LayoutTemplate,
     chart: (row.chart as SceneChart | null) ?? null,
+    object: (row.object as SceneObject | null) ?? null,
   }));
 }
 
@@ -136,6 +156,8 @@ export async function replacePlannerScenes(
         ${scene.overlayText}::text,
         ${scene.chart ? JSON.stringify(scene.chart) : null}::jsonb,
         ${scene.chartRejectionReason}::text,
+        ${scene.object ? JSON.stringify(scene.object) : null}::jsonb,
+        ${scene.objectRejectionReason}::text,
         ${scene.strength}::real,
         ${scene.included}::boolean,
         'planner'::text
@@ -154,7 +176,9 @@ export async function replacePlannerScenes(
         broll_project_id, start_ms, duration_ms,
         source_text, source_start_ms, source_end_ms,
         visual_type, emotion, layout_template, overlay_text,
-        chart, chart_rejection_reason, strength, included, origin
+        chart, chart_rejection_reason,
+        object, object_rejection_reason,
+        strength, included, origin
       )
       VALUES ${values}
       RETURNING id
@@ -193,6 +217,15 @@ export type SceneEditContext = {
   layoutTemplate: LayoutTemplate;
   /** `chart-full` is only offerable while this holds (AC-75). */
   hasChart: boolean;
+  /**
+   * Whether the scene carries a subject that survived the trace, which is what
+   * makes the object templates offerable (spec `broll/0008`).
+   *
+   * Deliberately the **subject** and not the generated image: an illustration is
+   * made on demand, from the template that carries the button that makes it, so
+   * gating on the image would make the template unreachable.
+   */
+  hasObject: boolean;
   /** The emotions actually committed for this project (AC-77). */
   committedEmotions: CharacterEmotion[];
 };
@@ -223,6 +256,7 @@ export async function getSceneEditContext(
       s.origin AS origin,
       s.layout_template AS layout_template,
       (s.chart IS NOT NULL) AS has_chart,
+      (s.object IS NOT NULL) AS has_object,
       coalesce(
         (SELECT array_agg(a.emotion) FROM broll_assets a
           WHERE a.broll_character_id = p.broll_character_id),
@@ -241,6 +275,7 @@ export async function getSceneEditContext(
         origin?: string;
         layout_template?: string;
         has_chart?: boolean;
+        has_object?: boolean;
         emotions?: string[];
       }[];
     }).rows ?? [];
@@ -251,6 +286,7 @@ export async function getSceneEditContext(
     origin: row.origin ?? "planner",
     layoutTemplate: row.layout_template as LayoutTemplate,
     hasChart: Boolean(row.has_chart),
+    hasObject: Boolean(row.has_object),
     committedEmotions: (row.emotions ?? []) as CharacterEmotion[],
   };
 }
@@ -325,6 +361,135 @@ export async function updateBrollScene(
     .returning({ id: brollScenes.id });
 
   return updated.length > 0;
+}
+
+/**
+ * Everything the object routes need about one scene, owner scoped
+ * (spec `broll/0008`).
+ *
+ * One statement rather than three: the generate route needs the subject to
+ * prompt with, the project's style to draw it in, and the attempt counter to
+ * mint the next pathname from, and the Neon HTTP driver charges a round trip per
+ * statement. The upload route needs only the answer "does this user own this
+ * scene", which a non-null return already is.
+ *
+ * **Owner scoped through `broll_projects.user_id`**, the same chain the scene
+ * PATCH proves inside its own statement. A scene id belonging to someone else
+ * answers null, which every caller turns into a 404 rather than a 403 — a
+ * distinct status would confirm the scene exists.
+ */
+export type ObjectSceneContext = {
+  projectId: string;
+  /** The project's character style, so an illustration matches the character. */
+  style: CharacterStyleId;
+  /** The traced subject, or null if this scene has none. */
+  subject: string | null;
+  /** How many illustrations this scene has already had generated. */
+  attempt: number;
+  layoutTemplate: LayoutTemplate;
+};
+
+export async function getObjectSceneContext(
+  userId: string,
+  sceneId: string
+): Promise<ObjectSceneContext | null> {
+  const result = await db.execute(sql`
+    SELECT
+      p.id AS project_id,
+      p.style AS style,
+      s.object ->> 'subject' AS subject,
+      s.object_attempt AS attempt,
+      s.layout_template AS layout_template
+    FROM broll_scenes s
+    JOIN broll_projects p ON p.id = s.broll_project_id
+    WHERE s.id = ${sceneId}::uuid AND p.user_id = ${userId}
+  `);
+
+  const rows =
+    (result as unknown as {
+      rows: {
+        project_id?: string;
+        style?: string;
+        subject?: string | null;
+        attempt?: number;
+        layout_template?: string;
+      }[];
+    }).rows ?? [];
+  const row = rows[0];
+  if (!row?.project_id) return null;
+
+  return {
+    projectId: row.project_id,
+    style: row.style as CharacterStyleId,
+    subject: row.subject ?? null,
+    attempt: Number(row.attempt ?? 0),
+    layoutTemplate: row.layout_template as LayoutTemplate,
+  };
+}
+
+/**
+ * Record a generated illustration against its scene, owner scoped.
+ *
+ * **The attempt counter is incremented in the same statement**, and the new
+ * pathname is written beside it, so the two can never disagree about which
+ * illustration is current. A separate increment would let a retry mint a
+ * pathname the row has already moved past.
+ *
+ * `user_edited_at` is deliberately **not** touched. That column counts the
+ * review work a plan re-run would destroy, and generating an illustration is
+ * work a re-run does not destroy: the image stays in the store and the row keeps
+ * pointing at it only if the scene survives, which is exactly what re-running
+ * puts at risk — but the column's job is to count *edits*, and the re-run
+ * warning would over-count if a spend that made no editorial choice bumped it.
+ */
+export async function commitSceneObject(
+  userId: string,
+  sceneId: string,
+  pathname: string
+): Promise<boolean> {
+  const updated = await db.execute(sql`
+    UPDATE broll_scenes s
+    SET object_asset_path = ${pathname},
+        object_attempt = s.object_attempt + 1,
+        updated_at = now()
+    FROM broll_projects p
+    WHERE s.id = ${sceneId}::uuid
+      AND p.id = s.broll_project_id
+      AND p.user_id = ${userId}
+    RETURNING s.id
+  `);
+
+  const rows = (updated as unknown as { rows: { id?: string }[] }).rows ?? [];
+  return rows.length > 0;
+}
+
+/**
+ * Every stored illustration in one project, owner scoped — the grouped read the
+ * studio needs.
+ *
+ * One statement for the whole project rather than one per scene, per this app's
+ * round trip convention: a twenty scene plan asking twenty times is twenty HTTP
+ * requests on the Neon driver to populate one screen.
+ */
+export async function listProjectObjectAssets(
+  userId: string,
+  projectId: string
+): Promise<{ sceneId: string; pathname: string }[]> {
+  const rows = await db
+    .select({ sceneId: brollScenes.id, pathname: brollScenes.objectAssetPath })
+    .from(brollScenes)
+    .innerJoin(brollProjects, eq(brollScenes.brollProjectId, brollProjects.id))
+    .where(
+      and(
+        eq(brollScenes.brollProjectId, projectId),
+        eq(brollProjects.userId, userId),
+        isNotNull(brollScenes.objectAssetPath)
+      )
+    );
+
+  return rows
+    .filter((row): row is { sceneId: string; pathname: string } => row.pathname !== null)
+    .map((row) => ({ sceneId: row.sceneId, pathname: row.pathname }));
 }
 
 /** A scene the creator added by hand, as the list needs it back. */

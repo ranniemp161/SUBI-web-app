@@ -226,6 +226,13 @@ export const creditLedgerReasonEnum = pgEnum("credit_ledger_reason", [
    */
   "broll_character_set",
   "broll_plan_rerun",
+  /**
+   * One generated object illustration for a scene (spec `broll/0008`). Its own
+   * migration for the same reason the two above needed one: a value must exist
+   * in the live enum before any deployed code writes it, and Postgres will not
+   * let a value added inside a transaction be used in that same transaction.
+   */
+  "broll_object_image",
 ]);
 
 /**
@@ -605,11 +612,11 @@ export const brollScenes = pgTable(
     sourceText: text("source_text"),
     sourceStartMs: integer("source_start_ms"),
     sourceEndMs: integer("source_end_ms"),
-    /** character | infographic | text. */
+    /** character | infographic | text | object. Derived from the template, never sent by a client. */
     visualType: text("visual_type").notNull(),
-    /** Which character variant to composite; NULL on a chart-only or text-only scene. */
+    /** Which character variant to composite; NULL on a chart-only, object-only or text-only scene. */
     emotion: text("emotion"),
-    /** One of the six fixed templates (character-left, chart-full, …). */
+    /** One of the nine fixed templates (character-left, chart-full, object-full, …). */
     layoutTemplate: text("layout_template").notNull(),
     overlayText: text("overlay_text"),
     /**
@@ -633,6 +640,45 @@ export const brollScenes = pgTable(
      * never proposed a chart, which is the common case.
      */
     chartRejectionReason: text("chart_rejection_reason"),
+    /**
+     * `{subject, source_span}`, or NULL — the concrete thing the speaker named
+     * and where they named it (spec `broll/0008`).
+     *
+     * The sibling of `chart`, and traced the same way for the same reason. A
+     * chart's numbers must come out of the cited line; an object's subject must
+     * too, because a castle the speaker never mentioned is the same category of
+     * invention as a number they never said. NULL is the common case: most lines
+     * name nothing depictable.
+     */
+    object: jsonb("object"),
+    /**
+     * Why the subject trace dropped this scene's object, or NULL.
+     *
+     * Exists for exactly the reason `chart_rejection_reason` does: once `object`
+     * is NULL, a scene the planner meant as text and a scene that lost its
+     * object are the same row, and the difference has to be written down at plan
+     * time or it is gone.
+     */
+    objectRejectionReason: text("object_rejection_reason"),
+    /**
+     * Where this scene's generated illustration lives in the blob store, or NULL
+     * until one is generated.
+     *
+     * Images are made on demand rather than at plan time, so a proposed object
+     * scene the creator never opens costs nothing. `object_asset_path` is
+     * therefore the difference between a scene that can draw and one that is
+     * blocked — see `sceneBlocker`.
+     */
+    objectAssetPath: text("object_asset_path"),
+    /**
+     * How many images have been generated for this scene, and the counter the
+     * next pathname is minted from.
+     *
+     * A regeneration writes a **new** path and never overwrites: Vercel's CDN
+     * caches blobs for up to a month, so writing in place would serve the
+     * creator back the very illustration they just rejected.
+     */
+    objectAttempt: integer("object_attempt").notNull().default(0),
     /**
      * The planner's confidence, 0 to 1. Read for display, and read at plan time
      * to decide which scenes start `included` when the plan overshoots its own

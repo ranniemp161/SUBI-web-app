@@ -1,18 +1,22 @@
-import type { SceneChart } from "./scene-schema";
+import type { SceneChart, SceneObject } from "./scene-schema";
 
 /**
- * The honesty check: does every number on this chart actually appear in the
- * line the model cited? (spec `broll/0003` AC-54.)
+ * The honesty check: does what this scene puts on screen actually appear in the
+ * line the model cited? (spec `broll/0003` AC-54, spec `broll/0008`.)
  *
- * **This is the product.** B-Roll's one promise is that a figure on screen came
+ * Two traces, one rule. `traceChart` asks it of every number and the unit;
+ * `traceObject` asks it of the thing the scene is about to illustrate.
+ *
+ * **This is the product.** B-Roll's one promise is that what is on screen came
  * out of the creator's own talk, so a creator can publish under their own name
- * without checking each chart by hand. That promise is kept here, by ordinary
+ * without checking each clip by hand. That promise is kept here, by ordinary
  * code that cannot itself hallucinate — not by asking a model to be careful,
  * and not by asking a second model to mark the first one's work.
  *
- * A chart that fails is **dropped, not fixed**: `chart` is written NULL and the
- * scene survives as a text treatment. Nothing here ever edits a value into
- * agreement, because a corrected number is still a number nobody said.
+ * What fails is **dropped, not fixed**: the column is written NULL and the
+ * scene survives as a text treatment. Nothing here ever edits a value or a
+ * subject into agreement, because a corrected number is still a number nobody
+ * said and a corrected subject is still a thing nobody named.
  *
  * Pure: no database, no network, no model. That is what makes it testable, and
  * being testable is the only reason to trust it.
@@ -169,6 +173,84 @@ export function traceChart(chart: SceneChart, utteranceText: string): ChartTrace
       return {
         traced: false,
         reason: `the unit "${chart.unit}" does not appear in the cited line`,
+      };
+    }
+  }
+
+  return { traced: true };
+}
+
+/**
+ * The words a model adds to make a subject read like English, which the speaker
+ * is under no obligation to have said.
+ *
+ * Kept to articles and the two joining words a noun phrase actually attracts.
+ * Anything longer starts excusing adjectives, and an adjective the speaker did
+ * not say is exactly what this check is for: "a castle" and "a ruined castle"
+ * are different pictures.
+ */
+const SUBJECT_STOPWORDS = new Set(["a", "an", "the", "of", "and"]);
+
+/**
+ * Singular and plural spellings of one word.
+ *
+ * A speaker says "castles dotted the hillside" and a model quite reasonably
+ * proposes "a castle". Refusing that would drop an illustration of something the
+ * speaker plainly named, so the comparison is made across both numbers. The rules
+ * are the ordinary English ones and are deliberately shallow — this is the same
+ * lever `ALIAS_GROUPS` is, to be widened against real transcripts rather than
+ * guessed at now.
+ */
+function wordForms(word: string): string[] {
+  const forms = new Set<string>([word]);
+  if (word.endsWith("ies") && word.length > 4) forms.add(`${word.slice(0, -3)}y`);
+  if (word.endsWith("es") && word.length > 3) forms.add(word.slice(0, -2));
+  if (word.endsWith("s") && word.length > 2) forms.add(word.slice(0, -1));
+  if (word.endsWith("y") && word.length > 2) forms.add(`${word.slice(0, -1)}ies`);
+  forms.add(`${word}s`);
+  forms.add(`${word}es`);
+  return [...forms];
+}
+
+/**
+ * Verify that the thing this scene will illustrate is a thing the speaker named
+ * (spec `broll/0008`).
+ *
+ * **Every content word must be there, not merely one.** Requiring one would let
+ * "a medieval castle" pass on a line that only says "the medieval period", and
+ * an illustration of a castle nobody mentioned is a picture of a claim nobody
+ * made — the same failure `traceChart` exists to prevent, in a medium where it is
+ * harder to notice. Articles and joining words are dropped first, because those
+ * are the model's grammar rather than the speaker's content.
+ *
+ * A failure **drops the object and keeps the scene**, exactly as a failed chart
+ * does. Nothing here ever rewrites a subject into agreement.
+ */
+export function traceObject(object: SceneObject, utteranceText: string): ChartTrace {
+  const raw = resolveSpan(utteranceText, object.source_span);
+  if (raw === null) {
+    return {
+      traced: false,
+      reason: "the cited span does not exist in the line it points at",
+    };
+  }
+
+  const span = normalizeForTrace(raw);
+  const words = normalizeForTrace(object.subject)
+    // Punctuation the model may bring with a noun phrase is not content.
+    .replace(/[^a-z0-9\s-]/g, " ")
+    .split(/\s+/)
+    .filter((word) => word.length > 0 && !SUBJECT_STOPWORDS.has(word));
+
+  if (words.length === 0) {
+    return { traced: false, reason: "the subject names nothing" };
+  }
+
+  for (const word of words) {
+    if (!wordForms(word).some((form) => containsToken(span, form))) {
+      return {
+        traced: false,
+        reason: `"${object.subject}" is not named in the cited line`,
       };
     }
   }

@@ -20,6 +20,7 @@ function validScene() {
     layout_template: "character-left" as const,
     overlay_text: "three years",
     chart: null,
+    object: null,
     strength: 0.7,
   };
 }
