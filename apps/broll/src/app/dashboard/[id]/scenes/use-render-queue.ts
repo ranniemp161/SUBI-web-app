@@ -42,7 +42,16 @@ export type ScenePhase =
   | { phase: "queued" }
   | { phase: "rendering"; ratio: number }
   | { phase: "done"; bytes: number }
-  | { phase: "failed"; message: string };
+  | { phase: "failed"; message: string }
+  /**
+   * Refused before any encoder started, with the reason (AC-138).
+   *
+   * Distinct from `failed` on purpose: a failure is something that went wrong
+   * and is worth retrying, this is something that was never going to work and
+   * retrying changes nothing. The creator has to attach a character instead, so
+   * the two must not read the same.
+   */
+  | { phase: "blocked"; message: string };
 
 export interface RenderJob {
   id: string;
@@ -58,6 +67,17 @@ export interface RenderJob {
    * renders one scene wants that file, not an archive. A batch never does.
    */
   downloadWhenDone?: boolean;
+  /**
+   * Why this scene cannot be rendered at all, from `sceneBlocker` (AC-138).
+   *
+   * **Carried on the job rather than checked inside the queue**, because the
+   * queue deliberately knows nothing about scenes, emotions or characters — it
+   * takes a `Renderable` and a duration. Putting the reason on the job keeps the
+   * refusal a property of *enqueueing* rather than of one button, so a third
+   * entry point added later cannot start an encode that was never going to
+   * produce a character, while the knowledge of why stays where the data is.
+   */
+  blockedReason?: string;
 }
 
 export interface RenderQueue {
@@ -198,23 +218,38 @@ export function useRenderQueue({
     (jobs: RenderJob[]) => {
       cancelRef.current = false;
       const accepted: RenderJob[] = [];
+      const blocked: RenderJob[] = [];
 
       for (const job of jobs) {
         const alreadyWaiting = queueRef.current.some((queued) => queued.id === job.id);
         // Refused rather than started twice: a second encoder for one scene is
         // the exact hazard one queue exists to remove (AC-117).
         if (alreadyWaiting || currentIdRef.current === job.id) continue;
+        // Refused before the encoder rather than after it (AC-138). A batch of
+        // twelve with two faceless scenes still renders the other ten — the same
+        // shape as AC-32, where one clip failing never stops the rest.
+        if (job.blockedReason) {
+          blocked.push(job);
+          continue;
+        }
         accepted.push(job);
       }
 
-      if (accepted.length === 0) return;
+      if (accepted.length === 0 && blocked.length === 0) return;
 
       queueRef.current.push(...accepted);
       setStates((previous) => {
         const next = { ...previous };
+        for (const job of blocked) {
+          next[job.id] = { phase: "blocked", message: job.blockedReason! };
+        }
         for (const job of accepted) next[job.id] = { phase: "queued" };
         return next;
       });
+
+      // Nothing to drain when every job was refused, and calling it anyway would
+      // flip `running` true for a batch that will never start.
+      if (accepted.length === 0) return;
       void drain();
     },
     [drain]

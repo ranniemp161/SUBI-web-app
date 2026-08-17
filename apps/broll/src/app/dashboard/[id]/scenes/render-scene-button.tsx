@@ -3,28 +3,7 @@
 import { useEffect, useState } from "react";
 import { checkRenderCapability } from "@/lib/render/capability";
 import type { ScenePhase } from "./use-render-queue";
-
-/**
- * Renders the open scene to an MP4 and downloads it (spec `0001` Phase 4,
- * AC-29, AC-33; spec `0006` AC-117).
- *
- * **It no longer owns a `Worker`.** It used to construct one per click, beside a
- * batch export that owned another, so pressing this while "Render all" was
- * running put two encoders on one laptop, which is exactly what the batch was
- * built to avoid. It now enqueues into the studio's single render queue, so one
- * encode runs at a time because there is one queue rather than because nobody
- * presses two buttons. The one clip download stays: a creator who renders one
- * scene wants that file, not an archive.
- *
- * The capability check still runs **on mount**, not on click. AC-29's wording is
- * that nothing fails mid export after credits are spent, so a browser that
- * cannot encode has to say so before the user has invested anything in the
- * scene, not after they press the button.
- *
- * Export is free (AC-35). Nothing here touches the ledger, and there is
- * deliberately no confirmation step: rendering costs the user nothing, so a
- * price gate would be inventing friction.
- */
+import { Button } from "@/components/ui";
 
 type Capability =
   | { phase: "checking" }
@@ -58,12 +37,6 @@ export function RenderSceneButton({
         );
       })
       .catch(() => {
-        // A probe that throws rather than answering leaves this stuck in
-        // `checking` forever, which is a button that is disabled with no
-        // explanation. A browser we could not question is one we cannot claim
-        // can encode, so it is reported as unsupported: AC-29 wants the refusal
-        // to arrive before any spend, and an honest "we could not tell" is that
-        // refusal.
         if (active) {
           setCapability({
             phase: "unsupported",
@@ -79,14 +52,12 @@ export function RenderSceneButton({
 
   if (capability.phase === "unsupported") {
     return (
-      <p className="text-xs" style={{ color: "var(--broll-muted)" }} role="note">
+      <p className="text-xs text-zinc-400" role="note">
         {capability.reason}
       </p>
     );
   }
 
-  // Already in the queue: the button says so rather than adding a second job,
-  // which the queue would refuse anyway (AC-117).
   const busy = state?.phase === "queued" || state?.phase === "rendering";
 
   const label =
@@ -97,15 +68,16 @@ export function RenderSceneButton({
         : "Render this clip";
 
   return (
-    <div className="flex items-center gap-3">
-      <button
+    <div className="flex items-center gap-2.5">
+      <Button
         type="button"
+        variant="primary"
+        size="sm"
         onClick={onRender}
         disabled={busy || disabled || capability.phase === "checking"}
-        className="broll-glass rounded-md px-3 py-1.5 text-xs disabled:opacity-60"
       >
         {label}
-      </button>
+      </Button>
       {state?.phase === "failed" && (
         <span className="text-xs" role="alert" style={{ color: "#ff6b6b" }}>
           {state.message}

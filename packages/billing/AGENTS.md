@@ -17,7 +17,7 @@ was dead code that no test covered. **Do not re-implement any of this app-side.*
 | File | Owns |
 |---|---|
 | `src/pricing.ts` | Rates, metering, conversions, and display — pure, no imports at all, safe in a client bundle. `MICROS_PER_USD`, `RETAIL_MICROS_PER_MINUTE` (env-overridable), `chargeMicrosForSeconds`, `formatUsd`, the per-second cost estimates that populate `credit_ledger.cost_micros`, hold sizing (`costSecondsForDurationMs`, `secondsFromDeepgramDuration`), and the member grant helpers. |
-| `src/ledger.ts` | Every statement that moves money. Rough-cut/wallet: `reserveCredits`, `reclaimStaleHold`, `settleHold`/`settleHoldQuietly`, `depositPurchase`, `chargeAiCut`, `refundAiCut`, `ensureMonthlyGrant`. B-roll: `reserveBrollHold`, `settleBrollHold`/`settleBrollHoldQuietly`, `reclaimStaleBrollHold`, `claimBrollGeneration`, `releaseBrollClaim`/`releaseBrollClaimQuietly`, `chargeBrollPlanRerun`, `refundBrollPlanRerun`. Server-only, enforced by an `import "server-only"` at the top. |
+| `src/ledger.ts` | Every statement that moves money. Rough-cut/wallet: `reserveCredits`, `reclaimStaleHold`, `settleHold`/`settleHoldQuietly`, `depositPurchase`, `chargeAiCut`, `refundAiCut`, `ensureMonthlyGrant`. B-roll: `reserveBrollHold`, `settleBrollHold`/`settleBrollHoldQuietly`, `reclaimStaleBrollHold`, `chargeBrollPlanRerun`, `refundBrollPlanRerun`. Server-only, enforced by an `import "server-only"` at the top. |
 | `src/index.ts` | Barrel re-exporting both, for the common server-side case. |
 
 ## Conventions
@@ -73,15 +73,20 @@ was dead code that no test covered. **Do not re-implement any of this app-side.*
   are not interchangeable. The short one is sized for an in-memory gap between
   reserving a transcription and marking it processing; reclaiming a character
   set that fast would rob a generation still in flight and charge twice.
-- **`claimBrollGeneration` takes a ZERO hold, and the zero is load bearing.** A
-  free regeneration still has to be the only writer on the project, and
-  `gen_claim_at` is the money path's column, so the claim goes through here even
-  though nothing is charged and no ledger row is written. Zero rather than NULL
-  because `settleBrollHold` and `reclaimStaleBrollHold` both qual on
-  `hold_micros IS NOT NULL` and both guard their refund insert with `held <> 0`:
-  the existing release paths therefore handle a zero hold with no new SQL, while
-  a NULL hold would be invisible to the stale reclaim and would strand the
-  project forever the first time a regeneration crashed.
+- **There is deliberately no zero money claim pair here any more, and it is not
+  coming back.** `claimBrollGeneration` and `releaseBrollClaim` used to take
+  `broll_projects.gen_claim_at` with a zero `hold_micros`, so a free
+  regeneration could be the only writer on a project. Spec `broll/0007` made a
+  character shareable between projects, and a project scoped claim stops
+  serializing the moment two projects write the same six rows. The claim moved to
+  the row it protects, `broll_characters`, and it touches no balance at all, so it
+  lives beside those rows as `claimCharacterGeneration` in
+  `apps/broll/src/lib/characters.ts`. The pair was **deleted** rather than left
+  here unused: a second, unreferenced claim implementation on a money path is
+  exactly the drift this package exists to end. What stays in this file is what it
+  always was, every statement that touches a balance. `ledger.ts` carries the same
+  note where the functions used to be, so the next reader finds it in either
+  place.
 - **`settleBrollHold` UPDATEs `cost_micros` on the reserve row** — the one place
   anything here mutates an existing ledger row instead of appending. It is safe
   because `cost_micros` is margin reporting, carries no balance effect, and is

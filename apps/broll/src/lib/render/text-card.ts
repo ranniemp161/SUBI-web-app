@@ -1,5 +1,6 @@
 import type { Render2DContext } from "./context";
-import { wrapText } from "./layout";
+import { typeScale, wrapText } from "./layout";
+import { BRAND, TYPEFACE, drawBackdrop } from "./theme";
 
 /**
  * The `text-card` template: large text only (`design-prompt.md`).
@@ -15,10 +16,10 @@ import { wrapText } from "./layout";
  */
 
 export const TEXT_CARD_THEME = {
-  background: "#0b0f19",
-  text: "#f4f6fb",
+  background: BRAND.background,
+  text: BRAND.foreground,
   /** A quiet rule above the words, so the frame is not one floating block. */
-  rule: "#5b8cff",
+  rule: BRAND.accent,
   ruleWidthRatio: 0.06,
   ruleThicknessRatio: 0.006,
   marginRatio: 0.1,
@@ -61,14 +62,20 @@ export function fitTextSize(
   ctx: Pick<Render2DContext, "measureText"> & { font: string },
   text: string,
   box: { width: number; height: number },
-  frameHeight: number
+  frameScale: number
 ): { size: number; lines: string[] } {
   const theme = TEXT_CARD_THEME;
   // Sized against the **frame**, fitted against the **box**. Deriving the size
   // range from the box instead would silently shrink every card by the margin,
   // making the theme's stated ratios untrue.
-  const max = frameHeight * theme.maxTextSizeRatio;
-  const min = frameHeight * theme.minTextSizeRatio;
+  //
+  // `frameScale` is the frame's short edge, not its height — equal in landscape,
+  // and the difference between a readable card and a 211px cap in a 1080px wide
+  // frame in portrait. The shrink loop below would eventually rescue it either
+  // way, which is exactly the problem: every portrait card would bottom out at
+  // the minimum size regardless of how few words it holds.
+  const max = frameScale * theme.maxTextSizeRatio;
+  const min = frameScale * theme.minTextSizeRatio;
 
   let lines: string[] = [];
   let size = max;
@@ -77,7 +84,7 @@ export function fitTextSize(
   // this cannot loop on a pathological string.
   for (let step = 0; step <= 12; step += 1) {
     size = max - ((max - min) * step) / 12;
-    ctx.font = `700 ${size}px sans-serif`;
+    ctx.font = `700 ${size}px ${TYPEFACE}`;
     lines = wrapText(ctx, text, box.width);
     if (lines.length * size * theme.lineHeightRatio <= box.height) break;
   }
@@ -94,8 +101,7 @@ export function drawTextCardFrame(
   const { width, height, elapsedMs } = frame;
   const theme = TEXT_CARD_THEME;
 
-  ctx.fillStyle = theme.background;
-  ctx.fillRect(0, 0, width, height);
+  drawBackdrop(ctx, frame);
 
   const text = scene.text?.trim();
   if (!text) return;
@@ -104,7 +110,7 @@ export function drawTextCardFrame(
   const box = { width: width - margin * 2, height: height - margin * 2 };
 
   ctx.save();
-  const { size, lines } = fitTextSize(ctx, text, box, height);
+  const { size, lines } = fitTextSize(ctx, text, box, typeScale(frame));
   if (lines.length === 0) {
     ctx.restore();
     return;
@@ -128,7 +134,7 @@ export function drawTextCardFrame(
   }
 
   ctx.fillStyle = theme.text;
-  ctx.font = `700 ${size}px sans-serif`;
+  ctx.font = `700 ${size}px ${TYPEFACE}`;
   ctx.textAlign = "left";
   ctx.textBaseline = "middle";
 

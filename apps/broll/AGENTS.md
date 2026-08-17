@@ -11,15 +11,25 @@ Runs on port **3003**. Shares the Clerk instance and the Neon database with
 `apps/rough-cut` and `apps/wallet`; deep-links to Wallet for every top-up and
 never processes a payment itself.
 
-**Status: Phases 1 to 6 built, not yet verified.** A user can create a project by
-uploading a transcript or inheriting one from Ruff Cut, see its parsed segments,
-plan scenes, generate a six emotion character set that is segmented, trimmed and
-stored, review that plan and override it, and render scenes to MP4 in the
-browser, one at a time or as a whole batch downloaded as a zip. Four of the six
-planned templates draw today (`chart-full`, `character-left`,
-`character-center`, `text-card`). **Not one `/check verify` box is ticked**, so
-everything here typechecks and is unit covered rather than watched running. The
-scope is the live plan; check it before trusting this line.
+**Status: Phases 1 to 7 built, not yet verified.** A user can create a project by
+uploading a transcript or inheriting one from Ruff Cut, plan scenes, generate a
+six emotion character set that is segmented, trimmed and stored, reuse a
+character they already own on a new project for free, review and edit the plan on
+a list and detail Scene Studio screen at `/dashboard/[id]/scenes`, and render
+scenes to MP4 in the browser, one at a time or as a whole batch downloaded as a
+zip. Four of the six planned templates draw today (`chart-full`,
+`character-left`, `character-center`, `text-card`).
+
+**An unticked `/check verify` box does not mean the feature is unexercised, and
+reading it that way has already produced one wrong status report.** Seven
+`Verify it` boxes are open across the scope and the two written verify sheets are
+mostly unticked, but that records which **ritual** has been run, not which
+behaviour works. The engineer develops by driving each feature in the browser as
+it is built, and the character pipeline and the scene planner have both been run
+against **live Gemini** and work (confirmed 2026-08-16). What the open boxes
+genuinely mean is that no one has walked a written acceptance sheet criterion by
+criterion and recorded the evidence. Ask before describing anything here as
+untested. The scope is the live plan; check it before trusting this line.
 
 ## Key files
 | File | Owns |
@@ -49,7 +59,12 @@ scope is the live plan; check it before trusting this line.
 | `src/lib/sentry-scrub.ts` | Removes the request body from every Sentry event. Pure and unit tested, because an untested privacy guard is a comment. See Conventions |
 | `src/lib/scene-limits.ts` | Constants the browser needs out of `scenes.ts`, which is `server-only`. See Conventions |
 | `src/app/api/projects/[id]/scenes/[sceneId]/route.ts` | Scene Studio's `PATCH`. Ownership is enforced **inside** the `UPDATE`, see Conventions |
-| `src/app/dashboard/[id]/scene-overrides.tsx`, `scene-preview.tsx`, `batch-export.tsx` | Scene Studio: the two overrides, the live canvas preview, and the render everything to a zip flow |
+| `src/app/dashboard/[id]/scenes/` | **The Scene Studio screen**, a route of its own since spec `0006`: `scene-studio.tsx` (the two pane shell that owns selection and the render queue), `studio-bar.tsx`, `scene-row.tsx`, `scene-detail.tsx`, `scene-overrides.tsx`, `scene-preview.tsx`, `add-scene.tsx`, `scene-citation.tsx`, `use-render-queue.ts`. `plan-panel.tsx` and `batch-export.tsx` are **gone as files** and every behaviour they had was moved here, not rewritten |
+| `src/lib/characters.ts` | Every `broll_characters` query, and the owner check behind them. A character belongs to a **user**, not a project (spec `0007`), and the character id appears inside a storage pathname a client can send us, which is why every path here proves ownership first. Holds `claimCharacterGeneration`, the claim that used to live in `@repo/billing` |
+| `src/lib/assets.ts` | Every `broll_assets` query, scoped through `broll_characters.user_id`. The replace rules live here rather than in the routes: a replacement is a **new pathname**, never an overwrite, and its row is written before the superseded object is deleted |
+| `src/lib/scene-strength.ts`, `src/lib/render/to-renderable.ts` | The pure pieces the Scene Studio row and the encoder share, extracted so both draw and rank a scene the same way |
+| `src/components/ui/` | The app's shared surface set (`button`, `card`, `badge`, `switch`, `stat-chip`). New in the visual pass; prefer these over ad hoc classes on a new screen |
+| `src/app/nav-links.tsx` | Top level navigation across Projects, Characters and Renders. `hidden md:flex` today, so a phone gets no navigation at all, which is a known gap owned by the blocking and edge states feature |
 
 ## Commands
 ```bash
@@ -96,18 +111,45 @@ npm -w @repo/broll typecheck
   refuses in both cases, which is the good outcome, but the fix is always this
   one. Rough Cut has `blob-path.ts` and `transcript-limits.ts` for the same
   reason.
-- **Scene Studio edits exactly two fields, and that is a product rule, not a
-  backlog.** A scene's timings come from the utterance it cited and its chart
+- **Presentation is editable, claims are not. That is the product rule, and it is
+  not a backlog.** Scene Studio writes exactly four fields, and the PATCH schema
+  names them rather than a list someone has to keep current: `included`,
+  `overlayText`, `layoutTemplate`, `emotion`. None of them carries a claim, so a
+  creator may restyle freely. What stays locked is what the reasoning actually
+  justifies: a scene's timings come from the utterance it cited, and its chart
   only exists because it survived the honesty check against the transcript, so
   both are measured rather than proposed. Making either editable would let a
   creator put back a number the app had just refused to invent, which is the one
   thing this product must never allow. Excluding a scene sets a flag and never
   deletes, so changing your mind costs nothing.
+
+  The build of 2026-08-12 allowed only `included` and `overlayText` and called
+  that the rule; spec `broll/0005` found the line drawn in the wrong place and
+  widened it, because template and emotion decide nothing about what the scene
+  asserts. Do not narrow it back by reading an older note.
 - **A scene write proves ownership inside the statement, never before it.** The
   `UPDATE` joins through `broll_projects` on `user_id`, so another user's scene
   id changes nothing and answers 404. Reading the row to check the owner and
   then updating is two statements racing, and a 403 would confirm the scene
   exists.
+- **There is one render queue, and every entry point enqueues into it.**
+  `use-render-queue.ts` is owned by the Scene Studio shell, and both the single
+  scene button and Render all go through it (spec `0006` AC-117). Before this the
+  single scene button constructed its **own** `Worker` beside a batch that owned
+  another, so pressing it mid batch put two encoders on one laptop, which is
+  precisely what the batch was built to avoid. One encode at a time is now a
+  property of there being one queue, not of nobody pressing two buttons. Do not
+  give a new entry point its own `Worker`.
+- **A query has two shapes here, and a list page must use the grouped one.** The
+  per character reads (`listCharacterAssets`, `regenerationsUsed`,
+  `listProjectsUsingCharacter`) are right for a route that already knows its
+  character. A page showing a whole library calls the grouped siblings instead
+  (`listAssetsByCharacter`, `regenerationsUsedByCharacter`,
+  `listProjectsByCharacter`), which answer every character a user owns in one
+  statement each. The Neon HTTP driver gives every statement its own round trip,
+  so the per character versions in a loop cost three requests per character. Both
+  shapes scope on `user_id` in SQL, so this is a decision about round trips and
+  never about who can read what.
 - **Rate limiters here fail closed on money paths and open on the edit path.**
   `writeRateLimit` is the only `failClosed: false` one in the app: it guards two
   column writes that spend nothing at any vendor, so a Redis blip blocking a
@@ -157,8 +199,15 @@ npm -w @repo/broll typecheck
   word timings and an exact frame rate), an uploaded subtitle file gives one per
   2 seconds (caption cues, no word timings, no frame rate). Both are correct, and
   `@repo/transcript` is deliberate about not merging cues into utterances it
-  cannot measure. The planner assumes the utterance shape, so this is a Phase 3
-  decision, not a bug. See the b-roll scope's decision debt.
+  cannot measure. **This is handled, and the handling is `src/lib/utterances.ts`,
+  not the shared package.** `mergeSegmentsIntoUtterances` converges both shapes
+  before anything is planned, so the difference reaches the planner as one unit.
+  The stored document keeps the file's own cues, which is what makes the
+  transcript contract honest; only the planner's view is merged. Its
+  `MAX_UTTERANCE_MS` backstop is the part worth knowing about — auto-captions
+  carry no punctuation and butt up against each other, so on project `0620` the
+  other two boundary signals never fired and 254 cues merged into one utterance.
+  Two signals cannot segment a transcript that offers neither.
 - **B-Roll must be registered as a satellite domain in the Clerk Dashboard
   before it can run in production.** There is no `isSatellite` setting anywhere
   in this repo's source — the multi-domain SSO set is configured entirely in

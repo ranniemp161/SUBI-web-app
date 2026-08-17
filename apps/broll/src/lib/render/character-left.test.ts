@@ -171,7 +171,14 @@ describe("drawCharacterLeftFrame", () => {
 
   it("produces a valid frame with neither a cutout nor text", () => {
     const ctx = draw({ text: null, image: null });
-    expect(ctx.calls).toHaveLength(1);
+    // The frame is fully painted rather than left transparent, and carries
+    // nothing but the backdrop. Asserted as a property rather than a call count:
+    // the ground is a black fill plus the brand grid, so counting calls made this
+    // test a check on how many grid lines a 1920x1080 frame happens to have.
+    expect(images(ctx)).toHaveLength(0);
+    expect(texts(ctx)).toHaveLength(0);
+    const ground = ctx.calls[0];
+    expect(ground).toMatchObject({ op: "fillRect", x: 0, y: 0, width: 1920, height: 1080 });
     expect(ctx.calls[0]).toMatchObject({ op: "fillRect" });
   });
 
@@ -203,5 +210,67 @@ describe("entrances", () => {
     // mean a clip that never settles.
     expect(characterEntrance(4_000)).toBe(1);
     expect(textEntrance(4_000)).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Portrait. `character-left` is the only template that changes composition with
+// orientation, because it is the only one whose whole idea is a side by side
+// split — and a 9:16 frame has no side to put anything on.
+// ---------------------------------------------------------------------------
+
+const PORTRAIT = { width: 1080, height: 1920, elapsedMs: 5_000 };
+
+describe("character-left in a portrait frame", () => {
+  it("stacks: the character stands on the bottom edge, the words sit above it", () => {
+    const drawn = images(draw(SCENE, PORTRAIT))[0];
+    const band = 1920 * CHARACTER_LEFT_THEME.portraitCharacterBandRatio;
+
+    expect(drawn.y + drawn.height).toBeCloseTo(1920, 0);
+    // Every word is clear of the band the character occupies.
+    for (const line of texts(draw(SCENE, PORTRAIT))) {
+      expect(line.y).toBeLessThan(1920 - band);
+    }
+  });
+
+  it("gives the character the whole frame width to fit into, not 40% of it", () => {
+    // The bug this template was reshaped for: 0.4 * 1080 is a 432px column
+    // beside a 1920px tall frame, which strands a small figure in a mostly
+    // empty one.
+    const drawn = images(draw(SCENE, PORTRAIT))[0];
+    expect(drawn.width).toBeGreaterThan(1080 * 0.6);
+    expect(drawn.x + drawn.width / 2).toBeCloseTo(540, 0);
+  });
+
+  it("travels in from below rather than from the side", () => {
+    // Sliding horizontally under a stacked layout reads as a mistake, not a
+    // move. Landscape keeps its horizontal slide; this asserts they differ.
+    const early = images(draw(SCENE, { ...PORTRAIT, elapsedMs: 120 }))[0];
+    const settled = images(draw(SCENE, PORTRAIT))[0];
+    expect(early.y).toBeGreaterThan(settled.y);
+    expect(early.x).toBeCloseTo(settled.x, 0);
+  });
+
+  it("sizes the words off the short edge, so they are not capped by the long one", () => {
+    // The ratio is a share of the short edge in both orientations. Off the
+    // height, 0.085 would set 163px type inside a 1080px wide frame.
+    // This recorder does not carry the font per call, and the template sets it
+    // once before filling, so the context holds it after the draw.
+    const sizeOf = (frame: typeof FRAME) =>
+      Number(draw(SCENE, frame).font.match(/(\d+(?:\.\d+)?)px/)?.[1]);
+
+    expect(sizeOf(PORTRAIT)).toBeCloseTo(1080 * CHARACTER_LEFT_THEME.textSizeRatio, 0);
+    // The short edge is the height in landscape, so that case is unchanged.
+    expect(sizeOf(FRAME)).toBeCloseTo(1080 * CHARACTER_LEFT_THEME.textSizeRatio, 0);
+  });
+
+  it("leaves landscape composition untouched", () => {
+    // The guard on the whole change: a landscape frame must draw exactly what it
+    // drew before orientation existed as a concept.
+    const drawn = images(draw(SCENE, FRAME))[0];
+    expect(drawn.x).toBeLessThan(1920 * CHARACTER_LEFT_THEME.characterColumnRatio);
+    for (const line of texts(draw(SCENE, FRAME))) {
+      expect(line.x).toBeGreaterThanOrEqual(1920 * CHARACTER_LEFT_THEME.characterColumnRatio);
+    }
   });
 });

@@ -3,6 +3,8 @@ import { DM_Sans, Space_Grotesk } from "next/font/google";
 import "./globals.css";
 import { ClerkProvider, UserButton } from "@clerk/nextjs";
 import { ROUGH_CUT_URL } from "@/lib/env";
+import Link from "next/link";
+import { NavLinks } from "./nav-links";
 
 const dmSans = DM_Sans({
   variable: "--font-dm-sans",
@@ -41,32 +43,52 @@ export default function RootLayout({
           }}
         >
           <header
-            className="sticky top-0 z-10"
+            className="sticky top-0 z-30 shrink-0"
             style={{
-              background: "var(--broll-background)",
+              background: "rgba(0, 0, 0, 0.85)",
+              backdropFilter: "blur(12px)",
               borderBottom: "1px solid rgba(255,255,255,0.08)",
             }}
           >
-            <div className="max-w-[1200px] mx-auto px-8 h-16 flex items-center justify-between">
-              <span
-                className="font-bold text-[17px] tracking-tight"
-                style={{ fontFamily: "var(--font-space-grotesk)" }}
-              >
-                B-Roll Generator
-              </span>
-              <div className="flex items-center gap-6">
+            <div className="w-full max-w-[1600px] mx-auto px-6 sm:px-8 h-14 flex items-center justify-between">
+              <div className="flex items-center gap-8">
+                <Link href="/dashboard" className="flex items-center gap-2.5 group">
+                  <span
+                    className="w-6 h-6 rounded-md flex items-center justify-center font-black text-xs shrink-0 transition-transform group-hover:scale-105"
+                    style={{
+                      background: "var(--broll-accent)",
+                      color: "var(--broll-accent-foreground)",
+                      boxShadow: "0 0 12px var(--broll-brand-muted)",
+                    }}
+                  >
+                    B
+                  </span>
+                  <span
+                    className="font-bold text-[15px] tracking-tight text-white"
+                    style={{ fontFamily: "var(--font-space-grotesk)" }}
+                  >
+                    B-Roll Generator
+                  </span>
+                </Link>
+
+                <NavLinks />
+              </div>
+
+              <div className="flex items-center gap-5">
                 <a
                   href={ROUGH_CUT_URL}
-                  className="text-sm font-medium transition-colors"
+                  className="text-xs font-medium transition-colors hover:text-white"
                   style={{ color: "var(--broll-muted)" }}
                 >
                   ← Back to Ruff Cut
                 </a>
-                <UserButton />
+                <div className="flex items-center">
+                  <UserButton />
+                </div>
               </div>
             </div>
           </header>
-          <main className="flex-1">{children}</main>
+          <main className="flex-1 flex flex-col">{children}</main>
         </body>
       </html>
     </ClerkProvider>

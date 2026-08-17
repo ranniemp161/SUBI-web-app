@@ -142,7 +142,28 @@ const VTT = `WEBVTT
 Hello there
 `;
 
+/**
+ * A Rough Cut handoff carrying real speech.
+ *
+ * The segment is load bearing rather than decoration: intake now refuses a
+ * document with none, so a fixture with an empty `segments` array would make
+ * every happy path below assert the refusal instead of the handoff.
+ */
 function handoffJson(projectId = "rough-cut-project-1"): string {
+  return JSON.stringify(
+    buildTranscriptDocument({
+      segments: [{ start: 0, end: 2, text: "Hello there" }],
+      duration: 4,
+      fps: { numerator: 30, denominator: 1 },
+      wordsAligned: true,
+      generatedAt: "2026-08-09T12:00:00.000Z",
+      source: { kind: "rough-cut", projectId, edlFingerprint: "abc123" },
+    })
+  );
+}
+
+/** The same handoff with every line cut: valid, and impossible to plan against. */
+function emptyHandoffJson(): string {
   return JSON.stringify(
     buildTranscriptDocument({
       segments: [],
@@ -150,7 +171,7 @@ function handoffJson(projectId = "rough-cut-project-1"): string {
       fps: { numerator: 30, denominator: 1 },
       wordsAligned: true,
       generatedAt: "2026-08-09T12:00:00.000Z",
-      source: { kind: "rough-cut", projectId, edlFingerprint: "abc123" },
+      source: { kind: "rough-cut", projectId: "rough-cut-project-1", edlFingerprint: "abc123" },
     })
   );
 }
@@ -286,31 +307,76 @@ describe("createProjectFromUpload — input validation", () => {
     expect(state.created).toBeNull();
   });
 
-  it("PINS CURRENT BEHAVIOUR: text with no cues in it creates an empty project", async () => {
-    // Not an endorsement. `importSrt` finds zero cues in text that is not a
-    // subtitle file, and `documentFromCues` turns zero cues into a valid
-    // document with no segments and duration 0 rather than throwing. So a user
-    // who picks the wrong file gets a successfully created, silently empty
-    // project instead of being told the file was wrong.
-    //
-    // The document contract genuinely permits zero segments (the export path
-    // relies on it: a project with everything cut still exports a valid empty
-    // document), so the parser alone cannot tell "empty subtitle file" from
-    // "not a subtitle file". The check that could tell them apart belongs at
-    // this intake boundary, and does not exist yet.
-    //
-    // Change this test when that check lands; do not delete it quietly.
+  // This pair replaces a test that used to PIN the opposite behaviour: text with
+  // no cues in it created a successfully empty project. `importSrt` finds zero
+  // cues in a file that is not a subtitle file, and `documentFromCues` turns
+  // zero cues into a valid document with no segments rather than throwing, so
+  // the parser alone cannot tell "empty subtitle file" from "not a subtitle
+  // file" — and the contract genuinely needs zero segments to stay legal,
+  // because Rough Cut's export relies on it. The check that CAN tell the user
+  // now sits at this intake boundary, which is where the old test said it
+  // belonged.
+  it("refuses text with no cues in it rather than creating an empty project", async () => {
+    const result = await createProjectFromUpload({
+      name: "Launch",
+      style: "anime",
+      format: "srt",
+      text: "this is not a subtitle file at all",
+    });
+    expect(result.error).toMatch(/no subtitles/i);
+    expect(state.created).toBeNull();
+  });
+
+  it("refuses a structurally valid document that carries no speech", async () => {
+    // Distinct from the case above: this file IS a transcript document and
+    // parses cleanly. It is refused for having nothing to plan against, not for
+    // being unparseable, which is why the guard is a segment count and not a
+    // second parser.
+    const result = await createProjectFromUpload({
+      name: "Launch",
+      style: "anime",
+      format: "json",
+      text: emptyHandoffJson(),
+    });
+    expect(result.error).toMatch(/nothing to plan scenes from/i);
+    expect(state.created).toBeNull();
+  });
+});
+
+describe("the frame a project is cut in", () => {
+  it("carries the picked ratio through to the stored dimensions", async () => {
     await redirectTargetOf(() =>
       createProjectFromUpload({
         name: "Launch",
         style: "anime",
+        aspectRatio: "portrait",
         format: "srt",
-        text: "this is not a subtitle file at all",
+        text: SRT,
       })
     );
-    const document = state.created?.document as { segments: unknown[]; duration: number };
-    expect(document.segments).toEqual([]);
-    expect(document.duration).toBe(0);
+    expect(state.created?.outputSize).toEqual({ width: 1080, height: 1920 });
+  });
+
+  it("carries it through the Ruff Cut path too", async () => {
+    state.fetchImpl = async () => response(200, handoffJson());
+    await redirectTargetOf(() =>
+      importFromRoughCut({
+        reference: VALID_REF,
+        name: "Launch",
+        style: "anime",
+        aspectRatio: "portrait",
+      })
+    );
+    expect(state.created?.outputSize).toEqual({ width: 1080, height: 1920 });
+  });
+
+  it("falls back to landscape when the form sends nothing", async () => {
+    // Every project created before the picker existed is landscape, so a client
+    // that does not know about the field has to keep getting that.
+    await redirectTargetOf(() =>
+      createProjectFromUpload({ name: "Launch", style: "anime", format: "srt", text: SRT })
+    );
+    expect(state.created?.outputSize).toEqual({ width: 1920, height: 1080 });
   });
 });
 
@@ -600,6 +666,16 @@ describe("importFromRoughCut — what Ruff Cut answers", () => {
     state.fetchImpl = async () => response(200, "{ not a document }");
     const result = await importFromRoughCut(valid);
     expect(result.error).toBeTruthy();
+    expect(state.created).toBeNull();
+  });
+
+  it("refuses a handoff whose transcript carries no speech", async () => {
+    // A cut that removed every line exports a document that is valid and
+    // unusable. Rough Cut is right to send it and this app is right to refuse
+    // it, so the wording points at the cut rather than at the file.
+    state.fetchImpl = async () => response(200, emptyHandoffJson());
+    const result = await importFromRoughCut(valid);
+    expect(result.error).toMatch(/nothing to plan scenes from/i);
     expect(state.created).toBeNull();
   });
 

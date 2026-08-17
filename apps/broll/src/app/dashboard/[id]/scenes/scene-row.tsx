@@ -7,33 +7,14 @@ import {
   strengthBand,
   strengthSteps,
 } from "@/lib/scene-strength";
-import { sceneDrawsChart } from "@/lib/scene-templates";
+import { sceneDrawsChart, type SceneBlocker } from "@/lib/scene-templates";
 import type { Renderable } from "@/lib/render/renderable";
+import { Badge } from "@/components/ui";
 import { SceneStill, StillPlaceholder } from "./scene-still";
 import type { ScenePhase } from "./use-render-queue";
 
-/**
- * One scene at rest, built to be judged in about two seconds
- * (spec `broll/0006` AC-97 to AC-100, AC-104, AC-108).
- *
- * The row answers four questions without being opened: when in the edit this
- * sits, what was said there, how strongly the planner rated it, and whether
- * anything unusual is true of it. Everything else belongs in the detail pane.
- *
- * **The source line is what makes a scene identifiable**, so it wraps over up to
- * three lines rather than truncating to a fragment (AC-97). A row reading "was
- * the deadline" identifies nothing, which is the failure the UI brief called out
- * by name. The full text is always in the detail pane, so the clamp loses
- * nothing that cannot be recovered by opening it.
- *
- * **No state is carried by colour or opacity alone** (AC-99). Every marker is a
- * word, and an excluded row stays exactly as legible as an included one. The
- * 55 percent dim the old list used made the scenes a creator had already judged
- * the hardest ones to read, which is backwards.
- */
-
 /** The still's width, at the project's output aspect ratio. */
-const STILL_WIDTH = 96;
+const STILL_WIDTH = 84;
 
 export function SceneRow({
   scene,
@@ -44,6 +25,7 @@ export function SceneRow({
   aspectWidth,
   aspectHeight,
   locked,
+  blocker,
   onSelect,
   onToggleInclude,
 }: {
@@ -58,6 +40,12 @@ export function SceneRow({
   aspectHeight: number;
   /** True while a plan run is in flight: the whole list is inert (AC-116). */
   locked: boolean;
+  /**
+   * Why this scene cannot render, or null (AC-138). Computed by the shell from
+   * the server's committed emotions, so it is settled before the first paint
+   * rather than arriving with the decoded bitmaps.
+   */
+  blocker: SceneBlocker | null;
   onSelect: () => void;
   onToggleInclude: (included: boolean) => void;
 }) {
@@ -66,23 +54,15 @@ export function SceneRow({
 
   return (
     <li
-      className="rounded-lg"
-      style={{
-        // The selected row is the one the detail pane is showing, so it is
-        // marked with the brand rather than with a shade of grey.
-        border: selected
-          ? "1px solid var(--broll-accent)"
-          : "1px solid rgba(255,255,255,0.08)",
-        background: selected ? "rgba(255,252,0,0.05)" : "rgba(255,255,255,0.02)",
-      }}
+      className={`rounded-xl transition-all duration-150 relative ${
+        selected
+          ? "bg-[#14151a] border border-[var(--broll-accent)] shadow-[0_0_20px_rgba(255,252,0,0.12)]"
+          : "bg-[#111215] border border-white/[0.07] hover:border-white/20"
+      }`}
     >
-      <div className="flex gap-3 px-3 py-3">
-        {/* The include toggle is deliberately outside the select button: a
-            creator scanning the list excludes weak scenes without ever opening
-            one, and nesting a checkbox inside a button is not clickable. Both
-            this and the detail pane's toggle write through the same PATCH, so
-            the two can never disagree (AC-104). */}
-        <label className="flex shrink-0 items-start pt-0.5">
+      <div className="flex gap-2.5 p-3 items-start">
+        {/* Custom checkbox */}
+        <label className="flex shrink-0 items-start pt-0.5 cursor-pointer">
           <input
             type="checkbox"
             checked={scene.included}
@@ -90,6 +70,7 @@ export function SceneRow({
             tabIndex={selected ? 0 : -1}
             onChange={(event) => onToggleInclude(event.target.checked)}
             aria-label={`Include scene ${position} at ${formatClock(scene.startMs)} in the export`}
+            className="broll-checkbox"
           />
         </label>
 
@@ -98,63 +79,76 @@ export function SceneRow({
           onClick={onSelect}
           tabIndex={selected ? 0 : -1}
           aria-current={selected ? "true" : undefined}
-          className="min-w-0 flex-1 text-left"
+          className="min-w-0 flex-1 text-left cursor-pointer focus:outline-none"
         >
-          <div className="flex items-baseline gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <span
-              className="broll-tabular text-sm font-semibold"
+              className="broll-tabular text-xs font-bold"
               style={{ color: "var(--broll-accent)" }}
             >
               {formatClock(scene.startMs)}
             </span>
-            <span className="broll-tabular text-xs" style={{ color: "var(--broll-muted)" }}>
+            <span className="broll-tabular text-[11px] text-zinc-400 font-medium">
               {(scene.durationMs / 1000).toFixed(1)}s
             </span>
-            <StrengthMeter band={band} steps={strengthSteps(scene.strength)} />
+            <StrengthBadge band={band} steps={strengthSteps(scene.strength)} />
           </div>
 
-          {/* Clamped to three lines, never to a single fragment (AC-97). */}
+          {/* Clamped to two or three lines */}
           <p
-            className="mt-1 text-sm leading-relaxed"
+            className="mt-1.5 text-xs leading-relaxed text-zinc-300"
             style={{
               display: "-webkit-box",
               WebkitBoxOrient: "vertical",
-              WebkitLineClamp: 3,
+              WebkitLineClamp: 2,
               overflow: "hidden",
             }}
           >
             {scene.sourceText ?? (
-              <span style={{ color: "var(--broll-muted)" }}>
+              <span className="text-zinc-500 italic">
                 A scene you added by hand
               </span>
             )}
           </p>
 
-          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-            {!scene.included && <Marker>Excluded</Marker>}
-            {scene.chartRejectionReason !== null && <Marker>Downgraded to text</Marker>}
-            {scene.origin === "manual" && <Marker>Added by hand</Marker>}
-            {drawsChart && <Marker accent>Chart traced</Marker>}
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            {!scene.included && <Badge size="sm" variant="neutral">Excluded</Badge>}
+            {scene.chartRejectionReason !== null && <Badge size="sm" variant="warning">Downgraded to text</Badge>}
+            {scene.origin === "manual" && <Badge size="sm" variant="neutral">Added by hand</Badge>}
+            {drawsChart && <Badge size="sm" variant="accent">Chart traced</Badge>}
+            {/* Stated on the row, not only when a render is attempted (AC-138):
+                the point is that a creator scanning the list can see which
+                scenes have nothing to draw before pressing Render all. */}
+            {blocker && (
+              <Badge size="sm" variant="warning" title={blocker.reason}>
+                Needs a character
+              </Badge>
+            )}
           </div>
         </button>
 
-        <div className="flex shrink-0 flex-col items-end gap-1">
-          {renderable ? (
-            <SceneStill
-              renderable={renderable}
-              width={STILL_WIDTH}
-              aspectWidth={aspectWidth}
-              aspectHeight={aspectHeight}
-              label={`Scene ${position} at ${formatClock(scene.startMs)}`}
-            />
-          ) : (
-            <StillPlaceholder
-              width={STILL_WIDTH}
-              aspectWidth={aspectWidth}
-              aspectHeight={aspectHeight}
-              template={scene.layoutTemplate}
-            />
-          )}
+        <div className="flex shrink-0 flex-col items-end gap-1.5">
+          <div className="rounded-md overflow-hidden border border-white/10 relative">
+            {renderable ? (
+              <SceneStill
+                renderable={renderable}
+                width={STILL_WIDTH}
+                aspectWidth={aspectWidth}
+                aspectHeight={aspectHeight}
+                label={`Scene ${position} at ${formatClock(scene.startMs)}`}
+              />
+            ) : (
+              <StillPlaceholder
+                width={STILL_WIDTH}
+                aspectWidth={aspectWidth}
+                aspectHeight={aspectHeight}
+                template={scene.layoutTemplate}
+              />
+            )}
+            <span className="absolute bottom-1 right-1 px-1 py-0.2 rounded text-[8px] font-bold tracking-wider uppercase bg-black/80 text-zinc-300 border border-white/10">
+              {drawsChart ? "CHART" : renderable ? "PREVIEW" : "NO PREVIEW"}
+            </span>
+          </div>
           <RenderState state={renderState} />
         </div>
       </div>
@@ -162,14 +156,8 @@ export function SceneRow({
   );
 }
 
-/**
- * The planner's score, as a short meter and the word for it (AC-98).
- *
- * A scene with no score shows neither, never a zero: the manual scenes were
- * never ranked, and an empty meter beside a full one would read as the planner
- * having judged this one worthless.
- */
-function StrengthMeter({
+/** Strength Badge */
+function StrengthBadge({
   band,
   steps,
 }: {
@@ -178,60 +166,45 @@ function StrengthMeter({
 }) {
   if (!band) return null;
 
+  const isStrong = band.toLowerCase() === "strong";
+  const isMedium = band.toLowerCase() === "medium";
+
   return (
-    <span className="flex items-center gap-1.5" title={`Planner strength: ${band}`}>
+    <span
+      className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+        isStrong
+          ? "bg-amber-400/10 text-amber-300 border border-amber-400/30"
+          : isMedium
+            ? "bg-orange-400/10 text-orange-300 border border-orange-400/30"
+            : "bg-zinc-800 text-zinc-400 border border-zinc-700"
+      }`}
+      title={`Planner strength: ${band}`}
+    >
       <span className="flex items-center gap-0.5" aria-hidden="true">
         {Array.from({ length: STRENGTH_METER_STEPS }, (_, i) => (
           <span
             key={i}
             className="rounded-[1px]"
             style={{
-              width: 4,
-              height: 10,
+              width: 2.5,
+              height: 7,
               background:
-                i < steps ? "var(--broll-accent)" : "rgba(255,255,255,0.15)",
+                i < steps
+                  ? isStrong
+                    ? "var(--broll-accent)"
+                    : isMedium
+                      ? "#fb923c"
+                      : "#a1a1aa"
+                  : "rgba(255,255,255,0.15)",
             }}
           />
         ))}
       </span>
-      {/* The word carries the state, not the bars. A meter alone is colour and
-          shape only, which AC-99 rules out. */}
-      <span className="text-xs" style={{ color: "var(--broll-muted)" }}>
-        {band}
-      </span>
+      <span>{band}</span>
     </span>
   );
 }
 
-/** A labelled state pill. Always a word, never a colour on its own (AC-99). */
-function Marker({
-  children,
-  accent = false,
-}: {
-  children: React.ReactNode;
-  accent?: boolean;
-}) {
-  return (
-    <span
-      className="rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide"
-      style={{
-        border: `1px solid ${accent ? "var(--broll-brand-muted)" : "rgba(255,255,255,0.15)"}`,
-        color: accent ? "var(--broll-accent)" : "var(--broll-muted)",
-      }}
-    >
-      {children}
-    </span>
-  );
-}
-
-/**
- * What this scene's encode is doing, read from the one queue that knows
- * (AC-108).
- *
- * Absent means not yet rendered this session, which is also what a reload
- * gives: the state is the browser's and is never stored, so the row cannot
- * claim a status the page has no way to know.
- */
 function RenderState({ state }: { state: ScenePhase | undefined }) {
   if (!state) return null;
 
@@ -242,14 +215,26 @@ function RenderState({ state }: { state: ScenePhase | undefined }) {
         ? `${Math.round(state.ratio * 100)}%`
         : state.phase === "done"
           ? "Rendered"
-          : "Failed";
+          : // "Skipped", not "Failed": nothing went wrong and retrying changes
+            // nothing, so the word has to point at the fix (AC-138).
+            state.phase === "blocked"
+            ? "Skipped"
+            : "Failed";
 
   return (
     <span
-      className="broll-tabular text-[10px]"
+      className="broll-tabular text-[10px] font-semibold"
       style={{
-        color: state.phase === "failed" ? "#ff6b6b" : "var(--broll-muted)",
+        color:
+          state.phase === "failed"
+            ? "#ff6b6b"
+            : state.phase === "done"
+              ? "#34d399"
+              : state.phase === "blocked"
+                ? "#fbbf24"
+                : "var(--broll-muted)",
       }}
+      title={state.phase === "blocked" ? state.message : undefined}
       role={state.phase === "failed" ? "alert" : undefined}
     >
       {text}

@@ -1,7 +1,7 @@
 import "server-only";
 import { db } from "@repo/db";
 import { brollAssets, brollCharacters, brollProjects } from "@repo/db/schema";
-import { and, asc, desc, eq, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, isNotNull, sql, type SQL } from "drizzle-orm";
 import { BROLL_STALE_HOLD_MS } from "@repo/billing/pricing";
 import { reportError } from "@repo/server-shared/observability";
 import { MAX_CHARACTERS_PER_USER } from "./character-prompt";
@@ -416,6 +416,44 @@ export async function listProjectsUsingCharacter(
 }
 
 /**
+ * `listProjectsUsingCharacter` for every character a user owns, grouped, so a
+ * library page runs one statement rather than one per character. See
+ * `listAssetsByCharacter` in `assets.ts` for why that mattered.
+ *
+ * Scoped to the caller in the statement, exactly like the single character
+ * version, so it can never name somebody else's project. Projects with no
+ * character are excluded in SQL rather than skipped afterwards: a creator's
+ * unattached projects are most of the table and none of the answer.
+ */
+export async function listProjectsByCharacter(
+  userId: string
+): Promise<Map<string, CharacterUsage[]>> {
+  const rows = await db
+    .select({
+      characterId: brollProjects.brollCharacterId,
+      id: brollProjects.id,
+      name: brollProjects.name,
+    })
+    .from(brollProjects)
+    .where(
+      and(
+        eq(brollProjects.userId, userId),
+        isNotNull(brollProjects.brollCharacterId)
+      )
+    )
+    .orderBy(asc(brollProjects.createdAt));
+
+  const byCharacter = new Map<string, CharacterUsage[]>();
+  for (const { characterId, ...project } of rows) {
+    if (!characterId) continue;
+    const list = byCharacter.get(characterId) ?? [];
+    list.push(project);
+    byCharacter.set(characterId, list);
+  }
+  return byCharacter;
+}
+
+/**
  * The one attach statement. The `guard` is what the two callers differ by, and
  * nothing else: the join, the two ownership predicates and the style copy are
  * shared so neither caller can lose one of them on its own.
@@ -441,4 +479,125 @@ async function attach(
   `);
 
   return ((result as unknown as { rows: unknown[] }).rows?.length ?? 0) > 0;
+}
+
+/**
+ * Rename a character (spec `broll/0007` AC-135).
+ *
+ * Owner scoped inside the `UPDATE`, like every other write here, so another
+ * user's character id matches no row and answers false rather than 403 — which
+ * would confirm the character exists. The name is free text and not unique: two
+ * characters called "Demo" is a thing a creator is allowed to have.
+ *
+ * Trimming and the length cap belong to the caller, because the route is where
+ * a rejection can be given a message.
+ */
+export async function renameCharacter(
+  userId: string,
+  characterId: string,
+  name: string
+): Promise<boolean> {
+  const rows = await db
+    .update(brollCharacters)
+    .set({ name })
+    .where(and(eq(brollCharacters.id, characterId), eq(brollCharacters.userId, userId)))
+    .returning({ id: brollCharacters.id });
+
+  return rows.length > 0;
+}
+
+/**
+ * Delete a character nothing is using, and report the stored objects that are
+ * now unreferenced (AC-136).
+ *
+ * **The in-use refusal is inside the statement, not a read before it.** A
+ * `DELETE` guarded by `NOT EXISTS (a project pointing here)` cannot be raced by
+ * an attach landing between the check and the delete; reading first and then
+ * deleting can, and losing that race deletes the face out from under a project
+ * that just claimed it. So a caller that gets `in_use` re-reads to find out
+ * which projects, and pays that second query only on the refusal path.
+ *
+ * **The pathnames come back from the `RETURNING` of the asset delete, before
+ * the character row goes.** They are what the route hands to storage afterwards,
+ * best effort: an object whose row is already gone is referenced by nothing,
+ * which is exactly what the sweep cron collects, so a failed object delete is
+ * picked up on the next run rather than stranded forever.
+ */
+export async function deleteUnusedCharacter(
+  userId: string,
+  characterId: string
+): Promise<{ status: "deleted"; pathnames: string[] } | "in_use" | "not_found"> {
+  // Scoped by the join to `broll_characters`, so this cannot reach the assets of
+  // a character the caller does not own even though `broll_assets` carries no
+  // `user_id` of its own.
+  const assets = await db.execute(sql`
+    DELETE FROM broll_assets a
+    USING broll_characters c
+    WHERE a.broll_character_id = c.id
+      AND c.id = ${characterId}
+      AND c.user_id = ${userId}
+      AND NOT EXISTS (
+        SELECT 1 FROM broll_projects p WHERE p.broll_character_id = c.id
+      )
+    RETURNING a.r2_key AS "r2Key"
+  `);
+
+  const deleted = await db.execute(sql`
+    DELETE FROM broll_characters c
+    WHERE c.id = ${characterId}
+      AND c.user_id = ${userId}
+      AND NOT EXISTS (
+        SELECT 1 FROM broll_projects p WHERE p.broll_character_id = c.id
+      )
+    RETURNING c.id
+  `);
+
+  const rows = (deleted as unknown as { rows: { id?: string }[] }).rows ?? [];
+  if (rows.length > 0 && rows[0]?.id) {
+    const assetRows =
+      (assets as unknown as { rows: { r2Key?: string }[] }).rows ?? [];
+    return {
+      status: "deleted",
+      pathnames: assetRows
+        .map((row) => row.r2Key)
+        .filter((key): key is string => typeof key === "string"),
+    };
+  }
+
+  // Nothing was deleted: either it is not the caller's character, or a project
+  // holds it. The owner scoped read tells the two apart, and a caller that owns
+  // it gets to be told which projects.
+  const existing = await getBrollCharacter(userId, characterId);
+  return existing ? "in_use" : "not_found";
+}
+
+/**
+ * Detach a project from its character, leaving the character alone (AC-137).
+ *
+ * **Moves no money and deletes nothing.** The project keeps its character scenes
+ * and they say what they need; attaching another character makes them renderable
+ * again with no re-plan. The style column is deliberately left as it was: it
+ * records the style the existing scenes were planned against, and blanking it
+ * would lose that with nothing to replace it.
+ *
+ * False means the project has no character or is not this caller's — the route
+ * has already proven which.
+ */
+export async function detachCharacterFromProject(
+  userId: string,
+  projectId: string
+): Promise<boolean> {
+  const rows = await db
+    .update(brollProjects)
+    .set({ brollCharacterId: null })
+    .where(
+      and(
+        eq(brollProjects.id, projectId),
+        eq(brollProjects.userId, userId),
+        isNotNull(brollProjects.brollCharacterId)
+      )
+    )
+    .returning({ id: brollProjects.id });
+
+  return rows.length > 0;
 }

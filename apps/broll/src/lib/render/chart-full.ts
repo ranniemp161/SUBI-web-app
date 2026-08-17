@@ -1,5 +1,7 @@
 import { formatChartValue } from "./chart-label";
 import type { Render2DContext } from "./context";
+import { typeScale } from "./layout";
+import { BRAND, SERIES, TYPEFACE, drawBackdrop } from "./theme";
 
 /**
  * The `chart-full` template: the chart fills the frame (`design-prompt.md`).
@@ -27,14 +29,16 @@ import type { Render2DContext } from "./context";
 
 /** Every visual constant in one object, so restyling touches nothing else. */
 export const CHART_FULL_THEME = {
-  background: "#0b0f19",
-  bar: "#5b8cff",
-  barMuted: "#2a3a63",
-  title: "#f4f6fb",
-  valueLabel: "#f4f6fb",
-  categoryLabel: "#94a3c4",
-  /** The palette pie slices cycle through, in order. */
-  slices: ["#5b8cff", "#8b6bff", "#3fc4a5", "#f2a65a", "#e5688f", "#4fa3e3"],
+  background: BRAND.background,
+  /** The figure is Key Yellow: it is the one thing on screen worth looking at. */
+  bar: BRAND.accent,
+  /** The unfilled remainder of a bar — a divider tone, not a second series. */
+  barMuted: BRAND.surfaceAlt,
+  title: BRAND.foreground,
+  valueLabel: BRAND.foreground,
+  categoryLabel: BRAND.muted,
+  /** The palette pie slices cycle through, in order. See `SERIES`. */
+  slices: SERIES,
   /** Fraction of the frame's shorter edge used as the outer margin. */
   marginRatio: 0.08,
   /** Fraction of a bar slot taken by the gap between bars. */
@@ -151,6 +155,14 @@ interface Layout {
   width: number;
   height: number;
   margin: number;
+  /**
+   * The frame's short edge, which every type size and stroke width is measured
+   * against. Equal to `height` in landscape, so nothing about 1920x1080 output
+   * changed when this was introduced; in a 9:16 frame it is the width, and
+   * without it `bigNumberSizeRatio` (0.26) sets a 499px number in a 1080px
+   * frame, which is not a layout problem but a number running off the screen.
+   */
+  scale: number;
   grown: number;
 }
 
@@ -170,8 +182,7 @@ export function drawChartFullFrame(
 
   // Background first, every frame: the encoder gets a fully painted frame and
   // never inherits whatever the previous one left behind.
-  ctx.fillStyle = theme.background;
-  ctx.fillRect(0, 0, width, height);
+  drawBackdrop(ctx, frame);
 
   const values = scene.values.filter((value) => Number.isFinite(value));
   if (values.length === 0) {
@@ -187,6 +198,7 @@ export function drawChartFullFrame(
     width,
     height,
     margin: Math.min(width, height) * theme.marginRatio,
+    scale: typeScale(frame),
     grown: entranceProgress(elapsedMs),
   };
 
@@ -206,9 +218,9 @@ export function drawChartFullFrame(
 
 /** The heading, top left, for every shape except the single big number. */
 function drawTitle(ctx: Chart2DContext, title: string, layout: Layout): void {
-  const size = layout.height * CHART_FULL_THEME.titleSizeRatio;
+  const size = layout.scale * CHART_FULL_THEME.titleSizeRatio;
   ctx.fillStyle = CHART_FULL_THEME.title;
-  ctx.font = `600 ${size}px sans-serif`;
+  ctx.font = `600 ${size}px ${TYPEFACE}`;
   ctx.textAlign = "left";
   ctx.textBaseline = "top";
   ctx.fillText(title, layout.margin, layout.margin);
@@ -231,20 +243,20 @@ function drawBigNumber(
   const target = values[0];
   const shown = target * layout.grown;
 
-  const numberSize = layout.height * theme.bigNumberSizeRatio;
-  const captionSize = layout.height * theme.bigNumberCaptionRatio;
+  const numberSize = layout.scale * theme.bigNumberSizeRatio;
+  const captionSize = layout.scale * theme.bigNumberCaptionRatio;
   const centerX = layout.width / 2;
   const centerY = layout.height / 2;
 
   ctx.fillStyle = theme.valueLabel;
-  ctx.font = `700 ${numberSize}px sans-serif`;
+  ctx.font = `700 ${numberSize}px ${TYPEFACE}`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillText(formatChartValue(shown, scene.unit), centerX, centerY);
 
   const caption = scene.labels[0] ?? scene.title;
   ctx.fillStyle = theme.categoryLabel;
-  ctx.font = `400 ${captionSize}px sans-serif`;
+  ctx.font = `400 ${captionSize}px ${TYPEFACE}`;
   ctx.textBaseline = "top";
   ctx.fillText(caption, centerX, centerY + numberSize * 0.6);
 }
@@ -252,8 +264,8 @@ function drawBigNumber(
 /** Plot area shared by the bar and line shapes. */
 function plotArea(layout: Layout) {
   const theme = CHART_FULL_THEME;
-  const titleSize = layout.height * theme.titleSizeRatio;
-  const categorySize = layout.height * theme.categorySizeRatio;
+  const titleSize = layout.scale * theme.titleSizeRatio;
+  const categorySize = layout.scale * theme.categorySizeRatio;
   const top = layout.margin + titleSize * 1.8;
   const bottom = layout.height - layout.margin - categorySize * 1.6;
   return {
@@ -273,7 +285,7 @@ function drawBars(
 ): void {
   const theme = CHART_FULL_THEME;
   const plot = plotArea(layout);
-  const valueSize = layout.height * theme.valueSizeRatio;
+  const valueSize = layout.scale * theme.valueSizeRatio;
 
   const slot = plot.width / values.length;
   const gap = slot * theme.barGapRatio;
@@ -299,7 +311,7 @@ function drawBars(
     // The value label, with its unit. This is AC-34 reaching the pixels: the
     // number is never drawn without the unit the speaker attached to it.
     ctx.fillStyle = theme.valueLabel;
-    ctx.font = `600 ${valueSize}px sans-serif`;
+    ctx.font = `600 ${valueSize}px ${TYPEFACE}`;
     ctx.textAlign = "center";
     ctx.textBaseline = "bottom";
     ctx.fillText(formatChartValue(value, scene.unit), x + barWidth / 2, y - valueSize * 0.25);
@@ -323,7 +335,7 @@ function drawLine(
 ): void {
   const theme = CHART_FULL_THEME;
   const plot = plotArea(layout);
-  const valueSize = layout.height * theme.valueSizeRatio;
+  const valueSize = layout.scale * theme.valueSizeRatio;
 
   const peak = Math.max(...values.map((value) => Math.abs(value)));
   const step = values.length > 1 ? plot.width / (values.length - 1) : 0;
@@ -340,7 +352,7 @@ function drawLine(
   const reach = (values.length - 1) * layout.grown;
 
   ctx.strokeStyle = theme.bar;
-  ctx.lineWidth = Math.max(1, layout.height * theme.lineWidthRatio);
+  ctx.lineWidth = Math.max(1, layout.scale * theme.lineWidthRatio);
   ctx.lineJoin = "round";
   ctx.lineCap = "round";
   ctx.beginPath();
@@ -361,7 +373,7 @@ function drawLine(
     if (index > reach) return;
     const point = pointAt(index);
     ctx.fillStyle = theme.valueLabel;
-    ctx.font = `600 ${valueSize}px sans-serif`;
+    ctx.font = `600 ${valueSize}px ${TYPEFACE}`;
     ctx.textAlign = "center";
     ctx.textBaseline = "bottom";
     ctx.fillText(formatChartValue(value, scene.unit), point.x, point.y - valueSize * 0.4);
@@ -390,7 +402,7 @@ function drawPie(
   const radius = Math.min(plot.width, plot.height) / 2;
   const centerX = layout.width / 2;
   const centerY = plot.top + plot.height / 2;
-  const valueSize = layout.height * theme.valueSizeRatio;
+  const valueSize = layout.scale * theme.valueSizeRatio;
 
   // Start at twelve o'clock: canvas angles start at three o'clock.
   let angle = -Math.PI / 2;
@@ -423,7 +435,7 @@ function drawPie(
 
     const labelRadius = radius * 1.12;
     ctx.fillStyle = theme.valueLabel;
-    ctx.font = `600 ${valueSize}px sans-serif`;
+    ctx.font = `600 ${valueSize}px ${TYPEFACE}`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText(
@@ -444,7 +456,7 @@ function drawCategory(
 ): void {
   if (!label) return;
   ctx.fillStyle = CHART_FULL_THEME.categoryLabel;
-  ctx.font = `400 ${size}px sans-serif`;
+  ctx.font = `400 ${size}px ${TYPEFACE}`;
   ctx.textAlign = "center";
   ctx.textBaseline = "top";
   ctx.fillText(label, x, baseline + size * 0.5);

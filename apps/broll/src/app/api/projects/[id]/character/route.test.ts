@@ -27,6 +27,8 @@ const state = vi.hoisted(() => ({
     | { status: "incomplete" },
   attached: true,
   attachArgs: [] as unknown[][],
+  detached: true,
+  detachArgs: [] as unknown[][],
   // The character this project currently draws with (GET, and the AC-149
   // refusal). Null is a project that has none yet.
   projectCharacter: null as Record<string, unknown> | null,
@@ -81,6 +83,11 @@ vi.mock("@/lib/characters", async () => {
       state.calls.push("attach");
       state.attachArgs.push(args);
       return state.attached;
+    }),
+    detachCharacterFromProject: vi.fn(async (...args: unknown[]) => {
+      state.calls.push("detach");
+      state.detachArgs.push(args);
+      return state.detached;
     }),
     getProjectCharacter: vi.fn(async () => state.projectCharacter),
     listProjectsUsingCharacter: vi.fn(async () => state.usedBy),
@@ -186,6 +193,8 @@ beforeEach(() => {
     character: { id: CHARACTER_ID, name: "Fuel imports", style: "3d-render" },
   };
   state.attached = true;
+  state.detached = true;
+  state.detachArgs = [];
   state.attachArgs = [];
   state.projectCharacter = null;
   state.usedBy = [];
@@ -614,5 +623,44 @@ describe("PATCH — attach", () => {
     state.writeAllowed = false;
     expect((await patch({ characterId: CHARACTER_ID })).status).toBe(429);
     expect(state.calls).toEqual([]);
+  });
+});
+
+describe("PATCH — detach (AC-137)", () => {
+  it("clears the project's character and answers with none", async () => {
+    const response = await patch({ characterId: null });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ character: null });
+    expect(state.detachArgs[0]).toEqual(["user-db", PROJECT_ID]);
+  });
+
+  it("moves no money and deletes nothing", async () => {
+    // The whole criterion. A detach that touched the ledger would be charging
+    // for undoing something that was free to do.
+    await patch({ characterId: null });
+    expect(state.calls).not.toContain("reserve");
+    expect(state.calls).not.toContain("settle");
+    expect(state.calls).not.toContain("reclaim");
+  });
+
+  it("never reaches the attach path", async () => {
+    await patch({ characterId: null });
+    expect(state.calls).not.toContain("attach");
+  });
+
+  it("answers 404 when there is nothing to detach", async () => {
+    // Either the project has no character or it is not this caller's. Both
+    // answer the same way, so a project id is never confirmed to a stranger.
+    state.detached = false;
+    expect((await patch({ characterId: null })).status).toBe(404);
+  });
+
+  it("tells an explicit null apart from a missing field", async () => {
+    // `{}` is a malformed request; `{characterId: null}` is an intention. The
+    // two must not collapse, or a broken client silently detaches.
+    const response = await patch({});
+    expect(response.status).toBe(422);
+    expect(state.calls).not.toContain("detach");
   });
 });

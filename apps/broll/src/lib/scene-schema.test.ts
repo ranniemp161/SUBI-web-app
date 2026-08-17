@@ -4,10 +4,12 @@ import {
   buildSceneResponseSchema,
   normalizeModelScene,
   LAYOUT_TEMPLATES,
+  PLANNABLE_TEMPLATES,
   MIN_SCENE_DURATION_MS,
   MAX_SCENE_DURATION_MS,
 } from "./scene-schema";
 import { CHARACTER_EMOTIONS } from "./emotions";
+import { RENDERABLE_TEMPLATES, isRenderableTemplate } from "./render/renderable";
 
 function validScene() {
   return {
@@ -221,7 +223,12 @@ describe("buildSceneResponseSchema", () => {
   });
 
   it("passes the enums through, so the model is told the vocabulary", () => {
-    expect(properties.layout_template.enum).toEqual([...LAYOUT_TEMPLATES]);
+    // **This used to assert `LAYOUT_TEMPLATES` and the change is deliberate.**
+    // The model is told the templates it may propose, which is the subset that
+    // has a renderer — offering `split-compare` or `character-plus-chart` spent
+    // a scene slot on something the creator could never export. The full list
+    // still governs `visual_type`, the PATCH route, and rows already planned.
+    expect(properties.layout_template.enum).toEqual([...PLANNABLE_TEMPLATES]);
     expect(properties.emotion.enum ?? []).toEqual(
       expect.arrayContaining([...CHARACTER_EMOTIONS])
     );
@@ -248,5 +255,33 @@ describe("buildSceneResponseSchema", () => {
     expect(serialized).not.toContain("$schema");
     expect(serialized).not.toContain("additionalProperties");
     expect(serialized).not.toContain("exclusiveMinimum");
+  });
+});
+
+describe("PLANNABLE_TEMPLATES", () => {
+  it("is exactly the set that has a renderer", () => {
+    // The link between two lists that deliberately do not import each other:
+    // `RENDERABLE_TEMPLATES` sits beside the drawing `switch` and pulls in every
+    // template drawer, which has no business in the planner's server bundle.
+    // This assertion is what stops them drifting — add a renderer without
+    // adding it here and the planner will never propose it.
+    expect([...PLANNABLE_TEMPLATES].sort()).toEqual([...RENDERABLE_TEMPLATES].sort());
+  });
+
+  it("offers the model no template it cannot render", () => {
+    // The actual guarantee. A scene the model proposes must be one a creator can
+    // export, or the slot is wasted on something permanently stuck.
+    for (const template of PLANNABLE_TEMPLATES) {
+      expect(isRenderableTemplate(template)).toBe(true);
+    }
+  });
+
+  it("is a subset of the full template list, not a replacement for it", () => {
+    // `visual_type` derives over all six, the PATCH route validates against all
+    // six, and rows planned before this existed may hold either of the other two.
+    for (const template of PLANNABLE_TEMPLATES) {
+      expect(LAYOUT_TEMPLATES).toContain(template);
+    }
+    expect(PLANNABLE_TEMPLATES.length).toBeLessThan(LAYOUT_TEMPLATES.length);
   });
 });

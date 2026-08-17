@@ -1,27 +1,12 @@
 "use client";
 
 import { useState } from "react";
+import { Badge, Button } from "@/components/ui";
 
 /**
  * The bar: what this plan is, and every way to leave it
  * (spec `broll/0006` AC-106, AC-114, AC-116).
- *
- * Three regions, one job each: the bar is state and departure, the list is
- * judgement, the detail pane is the single scene. Because the page body never
- * scrolls, this is reachable from any scroll position without being sticky
- * about it, which is half of the feature's own definition of done: finishing
- * should never be a hunt.
- *
- * Two refusals live here rather than in the shell, because both are things a
- * creator presses and must be told about:
- *
- * - **Export with nothing included** is disabled and says what is needed
- *   (spec `0005` AC-90). An empty archive is not an export.
- * - **A plan run while a render is in flight** is refused with a reason
- *   (AC-116). Encoding clips for scenes a re-run is about to replace wastes the
- *   creator's laptop on work that is already void.
  */
-
 export function StudioBar({
   sceneCount,
   includedCount,
@@ -30,6 +15,7 @@ export function StudioBar({
   manualCount,
   plannerCount,
   exportableCount,
+  blockedCount,
   readyCount,
   isRerun,
   rerunPrice,
@@ -49,24 +35,27 @@ export function StudioBar({
   sceneCount: number;
   includedCount: number;
   droppedCharts: number;
-  /** Planner scenes carrying a creator's edits, from `user_edited_at` (AC-89). */
   touchedCount: number;
   manualCount: number;
   plannerCount: number;
-  /** Included scenes whose template can actually be drawn. */
   exportableCount: number;
+  /**
+   * Included scenes that cannot render because the project has no character for
+   * them (AC-138). Stated **before** Render all rather than discovered after it:
+   * the batch skips them and still zips the rest, which is silent unless the bar
+   * says so, and eleven clips arriving when twelve were asked for is exactly the
+   * kind of thing a creator notices only on the timeline.
+   */
+  blockedCount: number;
   readyCount: number;
   isRerun: boolean;
-  /** Formatted server side: the price env override is not public. */
   rerunPrice: string;
   planPhaseLabel: string | null;
   planning: boolean;
   rendering: boolean;
   atManualCap: boolean;
-  /** The Ruff Cut edit has moved since this transcript was taken (AC-114). */
   stale: boolean;
   adding: boolean;
-  /** Why the last zip could not be built, or null (from the render queue). */
   zipError: string | null;
   onPlan: () => void;
   onAddScene: () => void;
@@ -80,21 +69,12 @@ export function StudioBar({
   const startPlan = () => {
     if (planning) return;
     if (rendering) {
-      // Named rather than silently disabled: a button that does nothing when
-      // pressed teaches nothing about why.
       setRefusal(
         "Clips are still encoding. Wait for the render to finish, or stop it, before re-running the plan — a re-run would replace the scenes those clips are being made from."
       );
       return;
     }
     setRefusal(null);
-    // Gated on `isRerun` alone, which is `plan_runs > 0`: the same fact the
-    // server charges on. It used to also require `sceneCount > 0`, and those
-    // two come apart in a real case — a creator who adds a scene by hand before
-    // ever planning has scenes and no prior run, so the confirm was skipped and
-    // the button below still quoted them a price for a run the server treats as
-    // the free first one. A money label has to key on the thing that decides
-    // the money.
     if (isRerun) {
       setConfirming(true);
       return;
@@ -102,109 +82,128 @@ export function StudioBar({
     onPlan();
   };
 
+  const unrenderedCount = Math.max(0, includedCount - readyCount);
+
   return (
     <div>
       <div
-        className="flex flex-wrap items-center gap-x-4 gap-y-2 px-6"
-        style={{ minHeight: 56 }}
+        className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-6 py-2.5"
+        style={{ minHeight: 52 }}
       >
-        <p className="broll-tabular text-sm" role="status" aria-live="polite">
-          {planning ? (
-            <span style={{ color: "var(--broll-accent)" }}>
-              {planPhaseLabel ?? "Working"}…
-            </span>
-          ) : sceneCount === 0 ? (
-            <span style={{ color: "var(--broll-muted)" }}>No scenes yet</span>
-          ) : (
-            <>
-              {sceneCount} scene{sceneCount === 1 ? "" : "s"}
-              <span style={{ color: "var(--broll-muted)" }}>
-                {" · "}
-                {includedCount} included
-                {droppedCharts > 0 &&
-                  ` · ${droppedCharts} chart${droppedCharts === 1 ? "" : "s"} dropped`}
-                {readyCount > 0 && ` · ${readyCount} rendered`}
+        <div className="flex items-center gap-2.5 text-xs flex-wrap">
+          <p className="broll-tabular font-medium" role="status" aria-live="polite">
+            {planning ? (
+              <span className="font-bold" style={{ color: "var(--broll-accent)" }}>
+                {planPhaseLabel ?? "Working"}…
               </span>
-            </>
+            ) : sceneCount === 0 ? (
+              <span style={{ color: "var(--broll-muted)" }}>No scenes yet</span>
+            ) : (
+              <span className="text-zinc-300">
+                <strong className="text-white">{sceneCount}</strong> scenes ·{" "}
+                <strong className="text-white">{includedCount}</strong> included
+                {droppedCharts > 0 && (
+                  <span className="text-zinc-400">
+                    {" · "}
+                    <strong className="text-zinc-300">{droppedCharts}</strong> chart{droppedCharts === 1 ? "" : "s"} dropped
+                  </span>
+                )}
+                {blockedCount > 0 && (
+                  <span className="text-amber-300/90">
+                    {" · "}
+                    <strong>{blockedCount}</strong> need{blockedCount === 1 ? "s" : ""} a character
+                  </span>
+                )}
+                {readyCount > 0 && (
+                  <span className="text-zinc-400">
+                    {" · "}
+                    <strong className="text-emerald-400">{readyCount}</strong> rendered
+                  </span>
+                )}
+              </span>
+            )}
+          </p>
+
+          {stale && (
+            <Badge
+              variant="warning"
+              title="The Ruff Cut edit has changed since this transcript was taken, so these timecodes may no longer match it."
+            >
+              Timecodes may be stale
+            </Badge>
           )}
-        </p>
+        </div>
 
-        {stale && (
-          <span
-            className="rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide"
-            style={{ border: "1px solid var(--broll-accent)", color: "var(--broll-accent)" }}
-            title="The Ruff Cut edit has changed since this transcript was taken, so these timecodes may no longer match it."
-          >
-            Timecodes may be stale
-          </span>
-        )}
+        <div className="flex flex-wrap items-center gap-2.5">
+          {includedCount > 0 && unrenderedCount > 0 && (
+            <span className="text-xs text-zinc-400 broll-tabular hidden sm:inline mr-1">
+              {unrenderedCount} clip{unrenderedCount === 1 ? "" : "s"} unrendered
+            </span>
+          )}
 
-        <div className="ml-auto flex flex-wrap items-center gap-2">
-          <button
+          <Button
             type="button"
-            onClick={startPlan}
-            disabled={planning}
-            className="rounded-lg px-3 py-1.5 text-sm font-semibold disabled:opacity-60"
-            style={{
-              background: "var(--broll-accent)",
-              color: "var(--broll-accent-foreground)",
-            }}
-          >
-            {/* The price shows exactly when a price is charged, which is
-                `plan_runs > 0` and not "this project has scenes". */}
-            {planning ? "Planning…" : isRerun ? `Re-run plan ${rerunPrice}` : "Plan scenes"}
-          </button>
-
-          <button
-            type="button"
+            variant="glass"
+            size="sm"
             onClick={onAddScene}
             disabled={planning || atManualCap || adding}
             title={
               atManualCap ? "You've added the maximum number of scenes by hand." : undefined
             }
-            className="broll-glass rounded-md px-3 py-1.5 text-xs disabled:opacity-60"
           >
-            {atManualCap ? "Manual scene limit reached" : "Add a scene"}
-          </button>
+            {atManualCap ? "Manual scene limit reached" : "Add scene"}
+          </Button>
+
+          <Button
+            type="button"
+            variant="glass"
+            size="sm"
+            onClick={startPlan}
+            disabled={planning}
+          >
+            {planning ? "Planning…" : isRerun ? `Re-run plan · ${rerunPrice}` : "Plan scenes"}
+          </Button>
 
           {rendering ? (
-            <button
+            <Button
               type="button"
+              variant="danger"
+              size="sm"
               onClick={onCancelRender}
-              className="broll-glass rounded-md px-3 py-1.5 text-xs"
             >
-              Stop after this one
-            </button>
+              Stop render
+            </Button>
           ) : (
-            <button
+            <Button
               type="button"
+              variant="primary"
+              size="sm"
               onClick={onRenderAll}
               disabled={planning || exportableCount === 0}
               title={exportGateReason(sceneCount, includedCount, exportableCount)}
-              className="broll-glass rounded-md px-3 py-1.5 text-xs disabled:opacity-60"
             >
-              Render all {exportableCount > 0 ? exportableCount : ""} clips
-            </button>
+              Render all {exportableCount > 0 ? exportableCount : ""}
+            </Button>
           )}
 
-          <button
-            type="button"
-            onClick={onDownload}
-            disabled={readyCount === 0 || rendering}
-            className="broll-glass rounded-md px-3 py-1.5 text-xs disabled:opacity-60"
-          >
-            Download zip
-          </button>
+          {readyCount > 0 && (
+            <Button
+              type="button"
+              variant="glass"
+              size="sm"
+              onClick={onDownload}
+              disabled={readyCount === 0 || rendering}
+            >
+              Download zip
+            </Button>
+          )}
         </div>
       </div>
 
-      {/* An empty archive is not an export, so the gate says what is missing
-          rather than handing over a zip with nothing in it (AC-90). */}
       {!planning && sceneCount > 0 && exportableCount === 0 && (
         <p
-          className="px-6 pb-2 text-xs"
+          className="px-6 pb-2 text-xs text-zinc-400"
           role="status"
-          style={{ color: "var(--broll-muted)" }}
         >
           {exportGateReason(sceneCount, includedCount, exportableCount)}
         </p>
@@ -216,8 +215,6 @@ export function StudioBar({
         </p>
       )}
 
-      {/* The archive refused itself, and the creator gets told rather than
-          watching a download button do nothing. */}
       {zipError && (
         <p className="px-6 pb-2 text-xs" role="alert" style={{ color: "#ff6b6b" }}>
           {zipError}
@@ -225,18 +222,12 @@ export function StudioBar({
       )}
 
       {confirming && (
-        <div className="broll-glow mx-6 mb-3 rounded-lg px-4 py-3">
-          <p className="text-sm">
+        <div className="broll-glow mx-6 mb-3 rounded-xl p-4">
+          <p className="text-xs leading-relaxed text-zinc-200">
             Re-running costs <strong>{rerunPrice}</strong>
-            {/* A re-run whose previous run produced nothing has nothing to
-                replace, and saying "replaces the 0 planned scenes" would read
-                as a bug in the sentence rather than as the truth about the
-                project. */}
             {plannerCount > 0
               ? ` and replaces the ${plannerCount} planned scene${plannerCount === 1 ? "" : "s"}.`
               : ". There are no planned scenes to replace."}
-            {/* Named, not implied: a creator deciding whether to spend needs to
-                know what the money buys and what it costs them (AC-89). */}
             {plannerCount > 0 &&
               (touchedCount > 0 ? (
                 <>
@@ -254,29 +245,26 @@ export function StudioBar({
               ? `The ${manualCount} scene${manualCount === 1 ? "" : "s"} you added by hand ${manualCount === 1 ? "is" : "are"} kept.`
               : "Scenes you add by hand are always kept."}
           </p>
-          <div className="mt-3 flex gap-2">
-            <button
+          <div className="mt-3 flex gap-2.5">
+            <Button
               type="button"
+              variant="primary"
+              size="sm"
               onClick={() => {
                 setConfirming(false);
                 onPlan();
               }}
-              className="rounded-lg px-3 py-1.5 text-sm font-semibold"
-              style={{
-                background: "var(--broll-accent)",
-                color: "var(--broll-accent-foreground)",
-              }}
             >
               Re-run for {rerunPrice}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="ghost"
+              size="sm"
               onClick={() => setConfirming(false)}
-              className="rounded-lg px-3 py-1.5 text-sm"
-              style={{ color: "var(--broll-muted)" }}
             >
               Cancel
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -284,7 +272,6 @@ export function StudioBar({
   );
 }
 
-/** Why nothing can be exported, in the creator's terms rather than the code's. */
 function exportGateReason(
   sceneCount: number,
   includedCount: number,

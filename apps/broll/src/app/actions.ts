@@ -12,6 +12,7 @@ import {
 } from "@repo/transcript";
 import { getAuthorizedDbUser } from "@repo/server-shared/authz";
 import { createBrollProject } from "@/lib/projects";
+import { outputSizeFor } from "@/lib/aspect-ratio";
 import { resolveCompleteCharacter } from "@/lib/characters";
 import { isCharacterStyle } from "@/lib/styles";
 import { isUuid } from "@/lib/ids";
@@ -35,6 +36,7 @@ const uploadSchema = z.object({
   name: z.string().trim().min(1).max(200),
   style: z.string().optional(),
   characterId: z.string().optional(),
+  aspectRatio: z.string().optional(),
   format: z.enum(["srt", "vtt", "json"]),
   text: z.string().min(1),
 });
@@ -45,6 +47,7 @@ export async function createProjectFromUpload(input: {
   format: string;
   text: string;
   characterId?: string;
+  aspectRatio?: string;
 }): Promise<{ error: string }> {
   const { userId: clerkId } = await auth();
   if (!clerkId) return { error: "You are not signed in." };
@@ -72,11 +75,21 @@ export async function createProjectFromUpload(input: {
           ? importVtt(parsed.data.text)
           : parseTranscriptDocument(parsed.data.text);
 
+    // A file that parses to nothing is the wrong file, not an empty project.
+    // See `hasSpeech` for why this check cannot live in the parser.
+    if (!hasSpeech(document)) {
+      return {
+        error:
+          "That file has no subtitles in it, so there is nothing to plan scenes from. Check you picked the right file.",
+      };
+    }
+
     id = await createBrollProject({
       userId: user.id,
       name: parsed.data.name,
       style: setup.style,
       characterId: setup.characterId,
+      outputSize: outputSizeFor(parsed.data.aspectRatio),
       document,
       // A subtitle upload has no Rough Cut project behind it, which is exactly
       // why `source_project_id` is nullable. A JSON handoff carries its origin
@@ -134,6 +147,26 @@ async function resolveSetup(
   return { style: resolved.character.style, characterId };
 }
 
+/**
+ * Whether a parsed transcript actually carries speech.
+ *
+ * **This check cannot live in `@repo/transcript`, and the reason is a real
+ * ambiguity rather than a layering preference.** Zero segments is structurally
+ * valid and the parser says so deliberately (`document.ts`): Rough Cut's export
+ * relies on it, since a project with every line cut still exports a valid empty
+ * document. So the parser genuinely cannot tell "an empty subtitle file" from
+ * "not a subtitle file at all" — `importSrt` finds no cues in a PDF and in an
+ * empty `.srt` alike, and neither is a parse failure.
+ *
+ * What the parser cannot decide, this app can: a b-roll project exists to plan
+ * scenes against speech, so zero segments is a dead end on **both** intake
+ * paths, and creating the project anyway hands the creator a silently empty
+ * studio instead of telling them.
+ */
+function hasSpeech(document: { segments: readonly unknown[] }): boolean {
+  return document.segments.length > 0;
+}
+
 /** Accepts a full studio URL or a bare id, because people paste the URL. */
 function projectIdFrom(input: string): string | null {
   const trimmed = input.trim();
@@ -162,6 +195,7 @@ export async function importFromRoughCut(input: {
   name: string;
   style: string;
   characterId?: string;
+  aspectRatio?: string;
 }): Promise<{ error: string }> {
   const { userId: clerkId, getToken } = await auth();
   if (!clerkId) return { error: "You are not signed in." };
@@ -217,11 +251,21 @@ export async function importFromRoughCut(input: {
 
     const document = parseTranscriptDocument(await response.text());
 
+    // Valid and unusable: a cut that removed every line exports a legal empty
+    // document, and there is nothing to plan scenes against in it.
+    if (!hasSpeech(document)) {
+      return {
+        error:
+          "That project's transcript is empty, so there is nothing to plan scenes from. Make at least one cut that keeps some speech, then try again.",
+      };
+    }
+
     id = await createBrollProject({
       userId: user.id,
       name,
       style: setup.style,
       characterId: setup.characterId,
+      outputSize: outputSizeFor(input.aspectRatio),
       document,
       // The real link, and the reason `source_project_id` exists at all.
       sourceProjectId: projectId,
