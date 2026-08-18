@@ -1,5 +1,6 @@
 import type { Render2DContext } from "./context";
 import { typeScale, wrapText } from "./layout";
+import { easeOutCubic } from "./motion";
 import { BRAND, TYPEFACE, drawBackdrop } from "./theme";
 
 /**
@@ -36,11 +37,6 @@ export const TEXT_CARD_THEME = {
 export interface TextCardScene {
   /** The words to burn on screen. */
   text: string | null;
-}
-
-function easeOutCubic(t: number): number {
-  const clamped = Math.min(1, Math.max(0, t));
-  return 1 - (1 - clamped) ** 3;
 }
 
 /** How far line `index` has arrived at `elapsedMs`, from 0 to 1. */

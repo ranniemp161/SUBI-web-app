@@ -75,6 +75,7 @@ export function ScenePreview({
       width: canvas.width,
       height: canvas.height,
       elapsedMs,
+      durationMs: durationRef.current,
     });
   }, []);
 

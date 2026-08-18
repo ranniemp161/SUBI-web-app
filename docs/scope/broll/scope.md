@@ -1440,11 +1440,19 @@ drawing.
 - [ ] Build it: /develop the clip's visual language. Milestones rolled up from
       spec [0009](../../specs/broll/0009-clip-visual-language/index.md)'s build
       plan; the atomic tasks stay there.
-  - [ ] **Motion and depth, shared by every template.** One `render/motion.ts`
-        replacing the four copies of the same easing, the slow push applied
-        centrally in `drawRenderable`, `durationMs` added to the frame object,
-        then the grid fade and the figure glow. Covers AC-173 to AC-179, AC-194,
-        AC-195.
+  - [x] **Motion and depth, shared by every template.** Done 2026-08-18. Code in
+        [render/motion.ts](../../../apps/broll/src/lib/render/motion.ts),
+        [render/theme.ts](../../../apps/broll/src/lib/render/theme.ts) and
+        [render/figure-frame.ts](../../../apps/broll/src/lib/render/figure-frame.ts).
+        One `render/motion.ts` replacing the copies of the same easing, the slow
+        push applied centrally in `drawRenderable`, `durationMs` added to the
+        frame object, then the grid fade and the figure glow. Covers AC-173 to
+        AC-179, AC-194, AC-195.
+
+        Three easing copies rather than the four the spec counted: spec `0008`'s
+        `figure-frame` extraction had already absorbed one, which is the reason
+        this slice waited for that PR to merge rather than consolidating the same
+        function twice.
   - [ ] **The chart, then measure.** Baseline rule, rounded caps, bar stagger,
         line dots, compact notation, title wrap, the formatter returning number
         and unit separately, and the donut as its own step. Then time an encode

@@ -1,7 +1,7 @@
 # 0009. The clip's visual language
 
 **Date**: 2026-08-18
-**Status**: Proposed
+**Status**: In Progress
 
 ## Summary
 
@@ -336,14 +336,34 @@ a frame looks right (see the note in `rationale.md`):
 Tracer Bullet, so the first slice is a thin thread through every layer that
 visibly changes every clip, and the rest thickens it.
 
-1. **The motion thread.** Add `render/motion.ts` with the easings, the stagger
-   helper and the push. Add `durationMs` to the frame object and pass it from the
-   still, the preview and the worker. Apply the push centrally in
-   `drawRenderable`. Delete the four easing copies. Satisfies **AC-173**,
-   **AC-174**, **AC-176**, **AC-177**, **AC-178**, **AC-179**, and **AC-175** by
-   confirming no exit is introduced.
-2. **Depth, shared by every template.** Grid fade in `drawBackdrop`, figure glow
-   in `figure-frame.ts`. Satisfies **AC-194**, **AC-195**.
+1. **The motion thread.** ✅ Done 2026-08-18. Add `render/motion.ts` with the
+   easings, the stagger helper and the push. Add `durationMs` to the frame object
+   and pass it from the still, the preview and the worker. Apply the push
+   centrally in `drawRenderable`. Delete the four easing copies. Satisfies
+   **AC-173**, **AC-174**, **AC-176**, **AC-177**, **AC-178**, **AC-179**, and
+   **AC-175** by confirming no exit is introduced.
+
+   **Three copies, not four.** Spec `0008`'s `figure-frame` extraction had
+   already absorbed one on its way through, which is exactly what this spec
+   predicted would happen if slice 1 ran first. `entranceAt` moved to
+   `render/motion.ts` and its five callers now import it from there, so
+   `figure-frame.ts` is a composition rather than a composition plus a curve.
+
+   `drawRenderable` applies the push in a `try`/`finally`: every case in that
+   switch returns and the default throws, so a restore placed after it would be
+   skipped and the transform would compound onto the next frame.
+2. **Depth, shared by every template.** ✅ Done 2026-08-18. Grid fade in
+   `drawBackdrop`, figure glow in `figure-frame.ts`. Satisfies **AC-194**,
+   **AC-195**.
+
+   The fade is **one radial gradient per frame**, built once and assigned to
+   `fillStyle` before the grid loop, so it costs a single allocation whether the
+   frame carries fifty lines or a hundred. Measured against the half diagonal
+   rather than an edge, so it lands on the corner in both orientations. The glow
+   is a radial gradient too, never `shadowBlur`: a real shadow would trace the
+   cutout's alpha edge and read as a sticker outline. Its colour is the brief's
+   `--accent-shadow` Key Yellow at 0.10 rather than the brief's 0.25, which is
+   the banding margin this spec asked for.
 3. **Chart marks, and the formatter split.** Baseline rule, rounded caps, bar
    stagger, line dots, compact notation, title wrap and trim. Change
    `formatChartValue` to return the number and unit separately as well as joined,

@@ -8,23 +8,18 @@ import {
   TYPEFACE,
   drawBackdrop,
 } from "./theme";
+import { type Recorder, recorder, rects } from "./test-recorder";
 import { CHART_FULL_THEME } from "./chart-full";
 import { TEXT_CARD_THEME } from "./text-card";
 import { CHARACTER_LEFT_THEME } from "./character-left";
 import { CHARACTER_CENTER_THEME } from "./character-center";
 
-type Rect = { x: number; y: number; width: number; height: number; style: string };
-
-function recorder() {
-  const rects: Rect[] = [];
-  return {
-    rects,
-    fillStyle: "" as string,
-    fillRect(x: number, y: number, width: number, height: number) {
-      rects.push({ x, y, width, height, style: String(this.fillStyle) });
-    },
-  };
-}
+/**
+ * The grid is filled with a gradient rather than a colour, so "what style was
+ * this line drawn in" is no longer a string comparison. The shared recorder
+ * hands back the gradient it built, and these read its stops instead.
+ */
+const gridLines = (ctx: Recorder) => rects(ctx).slice(1);
 
 /**
  * The palette discipline, and the backdrop every template opens with.
@@ -78,7 +73,7 @@ describe("drawBackdrop", () => {
     const ctx = recorder();
     drawBackdrop(ctx, frame);
 
-    expect(ctx.rects[0]).toEqual({
+    expect(rects(ctx)[0]).toMatchObject({
       x: 0,
       y: 0,
       width: 1920,
@@ -91,14 +86,51 @@ describe("drawBackdrop", () => {
     const ctx = recorder();
     drawBackdrop(ctx, frame);
 
-    const lines = ctx.rects.slice(1);
+    const lines = gridLines(ctx);
     expect(lines.length).toBeGreaterThan(0);
-    for (const line of lines) expect(line.style).toBe(GRID.line);
 
     // 1080 / 27 = 40px cells, which is the brief's figure rather than a number
     // chosen to make this pass.
     const verticals = lines.filter((line) => line.height === 1080);
     expect(verticals[1].x - verticals[0].x).toBeCloseTo(40, 0);
+  });
+
+  it("fades the grid out toward the frame edges", () => {
+    // On a pure black ground there is nothing for an ordinary vignette to
+    // darken, so the grid carries it. Full strength through the middle, gone by
+    // the corners.
+    const ctx = recorder();
+    drawBackdrop(ctx, frame);
+
+    expect(ctx.gradients).toHaveLength(1);
+    const [fade] = ctx.gradients;
+    expect(fade.kind).toBe("radial");
+    expect(fade.stops).toEqual([
+      { offset: 0, color: GRID.line },
+      { offset: 1, color: GRID.lineEdge },
+    ]);
+  });
+
+  it("builds the fade once for the whole frame, not once per line", () => {
+    // A gradient per grid line would be roughly a hundred allocations a frame
+    // at 1080p, thirty times a second, for a paint that never changes.
+    const ctx = recorder();
+    drawBackdrop(ctx, frame);
+    expect(gridLines(ctx).length).toBeGreaterThan(50);
+    expect(ctx.gradients).toHaveLength(1);
+  });
+
+  it("reaches the corners in both orientations", () => {
+    // Measured off the half diagonal rather than an edge, so the fade lands on
+    // the corner in a 9:16 frame as well as a 16:9 one.
+    const landscape = recorder();
+    const portrait = recorder();
+    drawBackdrop(landscape, { width: 1920, height: 1080 });
+    drawBackdrop(portrait, { width: 1080, height: 1920 });
+
+    const outerRadius = (ctx: Recorder) => ctx.gradients[0].coords[5];
+    expect(outerRadius(landscape)).toBeCloseTo(Math.hypot(1920, 1080) / 2, 5);
+    expect(outerRadius(portrait)).toBeCloseTo(Math.hypot(1080, 1920) / 2, 5);
   });
 
   it("keeps the same visual density in portrait", () => {
@@ -109,8 +141,8 @@ describe("drawBackdrop", () => {
     drawBackdrop(landscape, { width: 1920, height: 1080 });
     drawBackdrop(portrait, { width: 1080, height: 1920 });
 
-    const cellOf = (ctx: ReturnType<typeof recorder>, fullHeight: number) => {
-      const verticals = ctx.rects.slice(1).filter((line) => line.height === fullHeight);
+    const cellOf = (ctx: Recorder, fullHeight: number) => {
+      const verticals = gridLines(ctx).filter((line) => line.height === fullHeight);
       return verticals[1].x - verticals[0].x;
     };
 
@@ -122,13 +154,15 @@ describe("drawBackdrop", () => {
     // grid. This is the mitigation, and it is easy to undo by accident.
     const ctx = recorder();
     drawBackdrop(ctx, frame);
-    expect(ctx.rects[1].width).toBeGreaterThanOrEqual(2);
+    expect(gridLines(ctx)[0].width).toBeGreaterThanOrEqual(2);
   });
 
   it("survives a degenerate frame without looping forever", () => {
     const ctx = recorder();
     drawBackdrop(ctx, { width: 0, height: 0 });
-    expect(ctx.rects).toHaveLength(1);
+    expect(rects(ctx)).toHaveLength(1);
+    // The fade is built only once there is a grid to fade.
+    expect(ctx.gradients).toHaveLength(0);
   });
 });
 

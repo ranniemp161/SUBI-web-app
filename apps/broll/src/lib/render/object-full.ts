@@ -3,8 +3,8 @@ import {
   type FigureScene,
   type OverFigureTheme,
   drawFigureOver,
-  entranceAt,
 } from "./figure-frame";
+import { entranceAt } from "./motion";
 import { BRAND } from "./theme";
 
 /**

@@ -1,6 +1,7 @@
 import { formatChartValue } from "./chart-label";
 import type { Render2DContext } from "./context";
 import { typeScale } from "./layout";
+import { easeOutCubic } from "./motion";
 import { BODY_TYPEFACE, BRAND, SERIES, TYPEFACE, drawBackdrop } from "./theme";
 
 /**
@@ -88,6 +89,9 @@ export type Chart2DContext = Pick<
   | "stroke"
   | "fillRect"
   | "fillText"
+  // Not drawn with directly: `drawBackdrop` fades the grid toward the frame
+  // edges through one radial gradient, and this template opens with it.
+  | "createRadialGradient"
 >;
 
 /** The shapes the planner may ask for. */
@@ -127,12 +131,6 @@ export function resolveChartShape(type: string | null | undefined, valueCount: n
   if (key.includes("number") || key.includes("stat") || key.includes("figure")) return "number";
 
   return valueCount <= 1 ? "number" : "bar";
-}
-
-/** Ease out cubic: fast start, settled finish. The figure lands rather than snaps. */
-function easeOutCubic(t: number): number {
-  const clamped = Math.min(1, Math.max(0, t));
-  return 1 - (1 - clamped) ** 3;
 }
 
 /**

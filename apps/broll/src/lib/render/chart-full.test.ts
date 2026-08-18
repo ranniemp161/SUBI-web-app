@@ -18,7 +18,19 @@ type Call =
   | { op: "stroke"; style: string }
   | { op: "fill"; style: string };
 
-/** Records what was drawn, so the renderer can be asserted without a canvas. */
+/**
+ * Records what was drawn, so the renderer can be asserted without a canvas.
+ *
+ * **Still its own copy, unlike every other render test, and deliberately so
+ * for now.** The shared `test-recorder.ts` drops path building on purpose — it
+ * holds that asserting on `moveTo`/`lineTo`/`arc` is asserting on the
+ * implementation of a shape rather than on the shape. These tests do exactly
+ * that, because a line chart's segments are the only evidence it drew a line.
+ * Spec `broll/0009` slice 3 redraws every chart mark, which is the point at
+ * which these assertions are rewritten and this copy goes away. Until then,
+ * keeping it is honest and merging it would mean widening the shared recorder
+ * with the very thing it refuses to record.
+ */
 function recorder() {
   const calls: Call[] = [];
   const ctx: Chart2DContext & { calls: Call[] } = {
@@ -57,6 +69,15 @@ function recorder() {
     },
     fillText(text, x, y) {
       calls.push({ op: "fillText", text, x, y, style: String(this.fillStyle), font: this.font });
+    },
+    // Needed only because the template opens with `drawBackdrop`, which fades
+    // the grid through one radial gradient. Nothing in a chart mark uses it, so
+    // the stops are dropped rather than recorded; `theme.test.ts` owns proving
+    // the fade is right.
+    createRadialGradient() {
+      return {
+        addColorStop() {},
+      } as unknown as CanvasGradient;
     },
   };
   return ctx;

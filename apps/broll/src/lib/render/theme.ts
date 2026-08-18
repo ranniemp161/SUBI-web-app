@@ -1,3 +1,5 @@
+import type { Render2DContext } from "./context";
+
 /**
  * The palette and surface treatment every rendered clip draws with.
  *
@@ -73,6 +75,42 @@ export const GRID = {
   /** Line width as a share of the short edge, floored at 1 device pixel. */
   lineRatio: 2 / 1080,
   line: "rgba(255,255,255,0.08)",
+  /**
+   * Where the grid starts fading, as a share of the half diagonal.
+   *
+   * Full strength through the middle of the frame and gone by the corners. On
+   * a pure black ground an ordinary vignette has nothing to darken, so the grid
+   * is the only thing in the backdrop that can carry one — and fading it is
+   * what stops the grid reading as wallpaper rather than as depth.
+   */
+  fadeStartRatio: 0.55,
+  /** What the grid fades to at the corners: the same white, fully transparent. */
+  lineEdge: "rgba(255,255,255,0)",
+} as const;
+
+/**
+ * The soft glow that separates a figure from the ground behind it.
+ *
+ * A dark cutout on black loses its edges — dark hair against the backdrop is
+ * the case that shows it. The brief already sanctions this treatment: its
+ * `--accent-shadow` is "glow behind brand elements", in Key Yellow.
+ *
+ * **Key Yellow, written as `rgba` rather than referencing `BRAND.accent`,**
+ * because a gradient stop needs a per-stop alpha and the palette holds hex. The
+ * channels are `#fffc00` and a test holds them to it, so this stays one colour
+ * with the brand rather than becoming a second, drifting yellow.
+ *
+ * Alpha is well under the brief's 0.25. At the strength a screen can carry,
+ * an 8 bit H.264 encode bands a wide soft gradient on dark ground, and banding
+ * reads as a fault rather than as a choice.
+ */
+export const GLOW = {
+  /** Radius as a share of the short edge. Wide enough to separate a figure
+   *  without reading as a spotlight aimed at it. */
+  radiusRatio: 0.42,
+  alpha: 0.1,
+  color: "rgba(255,252,0,1)",
+  edge: "rgba(255,252,0,0)",
 } as const;
 
 /**
@@ -114,12 +152,46 @@ export const BODY_TYPEFACE = `"DM Sans", ${FALLBACK_STACK}`;
  */
 export const TYPEFACE = DISPLAY_TYPEFACE;
 
-/** Paints the ground and its grid. Every template opens with this. */
+/**
+ * The paint the grid lines are filled with: full strength through the middle of
+ * the frame, transparent by the corners.
+ *
+ * Measured against the **half diagonal** rather than the short edge, so the
+ * fade reaches the corners in both orientations instead of dying before them in
+ * one and short of them in the other.
+ */
+function gridPaint(
+  ctx: Pick<Render2DContext, "createRadialGradient">,
+  width: number,
+  height: number
+): CanvasGradient {
+  const cx = width / 2;
+  const cy = height / 2;
+  const halfDiagonal = Math.hypot(width, height) / 2;
+
+  const paint = ctx.createRadialGradient(
+    cx,
+    cy,
+    halfDiagonal * GRID.fadeStartRatio,
+    cx,
+    cy,
+    halfDiagonal
+  );
+  paint.addColorStop(0, GRID.line);
+  paint.addColorStop(1, GRID.lineEdge);
+  return paint;
+}
+
+/**
+ * Paints the ground and its grid. Every template opens with this.
+ *
+ * The grid is drawn through **one radial gradient per frame** rather than a
+ * flat colour, which is the whole of the frame's vignette. One gradient built
+ * once and assigned to `fillStyle` fades every line the same way, so this costs
+ * a single gradient regardless of how many lines the frame has.
+ */
 export function drawBackdrop(
-  ctx: {
-    fillStyle: string | CanvasGradient | CanvasPattern;
-    fillRect: (x: number, y: number, w: number, h: number) => void;
-  },
+  ctx: Pick<Render2DContext, "fillStyle" | "fillRect" | "createRadialGradient">,
   frame: { width: number; height: number }
 ): void {
   const { width, height } = frame;
@@ -132,7 +204,7 @@ export function drawBackdrop(
   if (cell <= 0) return;
 
   const lineWidth = Math.max(1, short * GRID.lineRatio);
-  ctx.fillStyle = GRID.line;
+  ctx.fillStyle = gridPaint(ctx, width, height);
 
   // Drawn as thin rects rather than stroked paths: a stroke centres on the
   // coordinate and lands on a half pixel, which is what makes a grid look like

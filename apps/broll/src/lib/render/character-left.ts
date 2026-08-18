@@ -3,8 +3,8 @@ import {
   type BesideFigureTheme,
   type FigureScene,
   drawFigureBeside,
-  entranceAt,
 } from "./figure-frame";
+import { entranceAt } from "./motion";
 import { BRAND } from "./theme";
 
 /**

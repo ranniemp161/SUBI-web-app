@@ -28,12 +28,20 @@ const SETTLED_MS = 2_000;
 export function SceneStill({
   renderable,
   width,
+  durationMs,
   aspectWidth,
   aspectHeight,
   label,
 }: {
   renderable: Renderable;
   width: number;
+  /**
+   * The scene's own length. A still draws one frame and never moves, but the
+   * push in is normalised to the clip's duration, so without this the thumbnail
+   * would sit at a different point of the push than the same moment of the
+   * exported file.
+   */
+  durationMs: number;
   /** The project's output size, used only for the aspect ratio here. */
   aspectWidth: number;
   aspectHeight: number;
@@ -62,8 +70,9 @@ export function SceneStill({
       width: canvas.width,
       height: canvas.height,
       elapsedMs: SETTLED_MS,
+      durationMs,
     });
-  }, [renderable, width, height, fontsSettled]);
+  }, [renderable, width, height, durationMs, fontsSettled]);
 
   return (
     <canvas
