@@ -76,25 +76,43 @@ export const GRID = {
 } as const;
 
 /**
- * The family every template draws with.
+ * What every family name here falls back to.
  *
- * **This is a stack, not the brand face, and that is a known gap rather than a
- * choice.** The brief asks for Space Grotesk on headings and DM Sans on body.
- * The app loads both through `next/font/google`, which self hosts them into the
- * build with no stable public URL — so the render **worker** cannot reach them.
- * A worker's `OffscreenCanvas` resolves fonts against `self.fonts`, which starts
- * empty and is not populated by anything the page has loaded, so naming
- * `"Space Grotesk"` here would render correctly in the on page preview and
- * silently fall back in the exported file. Preview and export disagreeing is the
- * one thing `renderable.ts` exists to prevent, so the honest answer until the
- * woff2 files are served from `public/` is a stack that resolves the same way in
- * both places.
- *
- * To finish it: put both faces in `public/fonts/`, register them with `FontFace`
- * in the worker *and* on the page, await `ready` before the first draw, and
- * change this one constant.
+ * Named rather than a bare `sans-serif` so a realm that failed to register the
+ * brand faces still lands somewhere deliberate, and so the preview and the
+ * encode fall back **identically** — the two run in different realms, and a
+ * fallback that resolved differently in each would be the exact preview/export
+ * divergence the brand faces are being loaded to avoid.
  */
-export const TYPEFACE = "system-ui, -apple-system, Segoe UI, Roboto, sans-serif";
+const FALLBACK_STACK = "system-ui, -apple-system, Segoe UI, Roboto, sans-serif";
+
+/**
+ * The two faces a clip is set in, per the brief's §A.
+ *
+ * **Registered by `render/fonts.ts`, on the page and in the worker both**, and
+ * awaited before the first draw. Until that landed these were one constant
+ * naming a system stack, because a worker's `OffscreenCanvas` resolves against
+ * `self.fonts` and nothing populated it — so naming a brand family rendered
+ * correctly in the preview and silently fell back in the exported file.
+ *
+ * The split follows the brief rather than being invented here: Space Grotesk on
+ * headings and on numeric data, DM Sans on body. In a clip, `DISPLAY` is the
+ * words the frame is *about* — the speaker's line burned on screen, a chart's
+ * title, the one big number — and `BODY` is what supports them, which is the
+ * labels around a chart's marks. A clip that used one face for both would be
+ * legible and would not look like the rest of the ecosystem.
+ */
+export const DISPLAY_TYPEFACE = `"Space Grotesk", ${FALLBACK_STACK}`;
+export const BODY_TYPEFACE = `"DM Sans", ${FALLBACK_STACK}`;
+
+/**
+ * The default family, kept under its original name so a template that has no
+ * opinion still draws in something brand-correct.
+ *
+ * Display rather than body: every existing call site was burning short, large,
+ * load-bearing text, which is what `DISPLAY_TYPEFACE` is for.
+ */
+export const TYPEFACE = DISPLAY_TYPEFACE;
 
 /** Paints the ground and its grid. Every template opens with this. */
 export function drawBackdrop(

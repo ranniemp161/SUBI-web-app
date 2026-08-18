@@ -1381,10 +1381,19 @@ back to it.
 **Intent**: Make the output look like it belongs to this ecosystem, and stop the
 cutout step being an unexplained multi-megabyte stall in front of a paid run.
 
-**Done when**: a rendered clip uses only ecosystem colour, and a creator's first
-character run explains what it is doing while it downloads.
+**Done when**: a rendered clip uses only ecosystem colour, a creator's first
+character run explains what it is doing while it downloads, and the clip's visual
+language is written down rather than being whatever someone typed to get a frame
+drawing.
 
-- [x] Build it, 2026-08-17.
+- [x] Design it (spec) [0009](../../specs/broll/0009-clip-visual-language/index.md),
+      2026-08-18. Settles motion, chart marks, text setting, depth, and the
+      vertical frame. Cross checked on a second model, which found seven gaps
+      including a real conflict between the safe area margin and the portrait
+      character band; all seven were resolved before acceptance.
+- [x] Foundations, done 2026-08-17. The three pieces below landed before the
+      design was written, because each was a correction of something plainly
+      wrong rather than a decision about how a clip should look.
   - [x] **One palette for the output.**
         [render/theme.ts](../../../apps/broll/src/lib/render/theme.ts) holds the
         brief's §A palette, a series ramp built from Key Yellow and Interactive
@@ -1412,20 +1421,51 @@ character run explains what it is doing while it downloads.
         stuck on "no renderer yet". Kept as a literal rather than an import, so
         the planner's server bundle does not pull in canvas drawing code to read
         an array of strings; a test asserts the two lists match.
-- [ ] **Brand typography, blocked on assets rather than on work.** Templates now
-      draw with a named stack instead of bare `sans-serif`, but not with Space
-      Grotesk and DM Sans, and the reason is worth keeping: the app loads both
-      through `next/font/google`, which self hosts into the build with no stable
-      public URL, and a render **worker** resolves fonts against `self.fonts`,
-      which nothing populates. Naming the brand face would render correctly in
-      the on page preview and silently fall back in the exported file — preview
-      and export disagreeing is the exact thing `renderable.ts` exists to
-      prevent. To finish: serve both woff2 files from `public/fonts/`, register
-      them with `FontFace` on the page **and** in the worker, await `ready`
-      before the first draw, and change `TYPEFACE`.
-- [ ] Verify it: /check verify the clip's design. This is the one feature on this
-      scope where a unit test can say almost nothing — every question is "does
-      the clip look right", which needs a real render watched at full size.
+- [x] **Brand typography, done 2026-08-17.** Clips are set in Space Grotesk and
+      DM Sans. The blocker was never the work: the app loads both through
+      `next/font/google`, which self hosts into the build with no stable public
+      URL, and a render **worker** resolves fonts against a set nothing
+      populates — so naming the brand face would have rendered correctly in the
+      on page preview and silently fallen back in the exported file. Fixed by
+      serving both woff2 from `public/fonts/` (the only reason that directory
+      exists) and registering them through one module, `render/fonts.ts`, that
+      the page and the worker both call. The worker **awaits** it before frame
+      zero, because an encode is a single pass; the page treats it as a repaint
+      trigger, so a scene appears immediately and sharpens a moment later. The
+      test that pinned the gap open now pins the opposite.
+
+      The split follows the brief rather than being invented: Space Grotesk on
+      the words a frame is about and on numeric data, DM Sans on the labels that
+      support them.
+- [ ] Build it: /develop the clip's visual language. Milestones rolled up from
+      spec [0009](../../specs/broll/0009-clip-visual-language/index.md)'s build
+      plan; the atomic tasks stay there.
+  - [ ] **Motion and depth, shared by every template.** One `render/motion.ts`
+        replacing the four copies of the same easing, the slow push applied
+        centrally in `drawRenderable`, `durationMs` added to the frame object,
+        then the grid fade and the figure glow. Covers AC-173 to AC-179, AC-194,
+        AC-195.
+  - [ ] **The chart, then measure.** Baseline rule, rounded caps, bar stagger,
+        line dots, compact notation, title wrap, the formatter returning number
+        and unit separately, and the donut as its own step. Then time an encode
+        against Phase 0's 1791ms, deliberately here rather than at the end.
+        Covers AC-180 to AC-188, AC-198.
+  - [ ] **Text setting and creator marked emphasis.** Optical centring off real
+        metrics, orphan control with the overflow guard, the gradient scrim, then
+        the asterisk syntax with run aware wrapping. Covers AC-189 to AC-193.
+  - [ ] **The vertical frame.** Safe area insets applied to text and marks but
+        deliberately not to figures, and the guide drawn on the preview only.
+        Covers AC-196, AC-197.
+- [ ] Verify it: /check verify the clip's design, against
+      [verify.md](../../specs/broll/0009-clip-visual-language/verify.md). This is
+      the one feature on this scope where a unit test can say almost nothing —
+      every question is "does the clip look right", which needs a real render
+      watched at full size. That sheet opens with the judgement step before any
+      criterion, for exactly that reason.
+- [ ] Test it: /test the clip's visual language. The suite locks the structural
+      proxies (no template defines its own easing, two durations reach the same
+      final scale, no portrait draw call enters the reserved margins) and can say
+      nothing about whether the result looks produced.
 
 **Still on a third party CDN, and now cheaper rather than fixed.** `@imgly`
 fetches its weights from `staticimgly.com` on every cold browser. `publicPath`

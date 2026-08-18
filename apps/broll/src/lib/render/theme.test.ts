@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { BRAND, GRID, SERIES, TYPEFACE, drawBackdrop } from "./theme";
+import {
+  BODY_TYPEFACE,
+  BRAND,
+  DISPLAY_TYPEFACE,
+  GRID,
+  SERIES,
+  TYPEFACE,
+  drawBackdrop,
+} from "./theme";
 import { CHART_FULL_THEME } from "./chart-full";
 import { TEXT_CARD_THEME } from "./text-card";
 import { CHARACTER_LEFT_THEME } from "./character-left";
@@ -124,15 +132,41 @@ describe("drawBackdrop", () => {
   });
 });
 
-describe("TYPEFACE", () => {
-  it("names no font the render worker cannot resolve", () => {
-    // The gap this constant documents: a worker's OffscreenCanvas resolves
-    // against `self.fonts`, which nothing populates, so naming the brand face
-    // here would render in the preview and silently fall back in the exported
-    // file. Until the woff2 files are served and registered, the stack has to be
-    // one both canvases resolve identically.
-    expect(TYPEFACE).not.toContain("Space Grotesk");
-    expect(TYPEFACE).not.toContain("DM Sans");
-    expect(TYPEFACE).toContain("sans-serif");
+describe("the brand faces", () => {
+  // This block used to assert the opposite — that no brand face was named —
+  // because a worker's OffscreenCanvas resolves against a font set nothing
+  // populated, so naming one rendered in the preview and silently fell back in
+  // the exported file. `render/fonts.ts` now registers both in *both* realms,
+  // so the assertion inverts. It is kept rather than deleted: what it pins is
+  // that the two sides agree, and that is still the property at risk.
+
+  it("names the brief's two faces", () => {
+    expect(DISPLAY_TYPEFACE).toContain("Space Grotesk");
+    expect(BODY_TYPEFACE).toContain("DM Sans");
+  });
+
+  it("quotes a family whose name has a space in it", () => {
+    // `600 40px Space Grotesk, sans-serif` is not a valid CSS font shorthand —
+    // the canvas parses it, silently fails, and keeps whatever font was set
+    // before. That failure is invisible until you look at an exported frame.
+    expect(DISPLAY_TYPEFACE).toContain('"Space Grotesk"');
+    expect(BODY_TYPEFACE).toContain('"DM Sans"');
+  });
+
+  it("falls back to the same stack in both, so the two realms degrade alike", () => {
+    // The preview and the encode run in different realms. If a face fails to
+    // register in one of them, both have to land on the same substitute or the
+    // divergence this whole module exists to prevent is back.
+    const fallbackOf = (stack: string) => stack.split(",").slice(1).join(",").trim();
+    expect(fallbackOf(DISPLAY_TYPEFACE)).toBe(fallbackOf(BODY_TYPEFACE));
+    expect(DISPLAY_TYPEFACE).toContain("sans-serif");
+    expect(BODY_TYPEFACE).toContain("sans-serif");
+  });
+
+  it("keeps TYPEFACE meaning the display face", () => {
+    // Every call site that predates the split was burning short, large,
+    // load-bearing text, so the default has to be the display face — otherwise
+    // this change silently restyled every template it did not touch.
+    expect(TYPEFACE).toBe(DISPLAY_TYPEFACE);
   });
 });

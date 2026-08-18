@@ -6,83 +6,8 @@ import {
   textEntrance,
   type CharacterLeftScene,
 } from "./character-left";
-import type { DrawableImage, Render2DContext } from "./context";
-
-type Call =
-  | { op: "fillRect"; x: number; y: number; width: number; height: number; style: string }
-  | { op: "fillText"; text: string; x: number; y: number; alpha: number }
-  | {
-      op: "drawImage";
-      x: number;
-      y: number;
-      width: number;
-      height: number;
-      alpha: number;
-    };
-
-/**
- * Records draw calls. `measureText` charges a fixed width per character, which
- * is enough for the wrapper: the tests assert where breaks land, not glyph
- * metrics.
- */
-function recorder(charWidth = 10) {
-  const calls: Call[] = [];
-  const ctx: Render2DContext & { calls: Call[] } = {
-    calls,
-    fillStyle: "",
-    strokeStyle: "",
-    lineWidth: 0,
-    lineJoin: "round",
-    lineCap: "round",
-    font: "",
-    textAlign: "left",
-    textBaseline: "top",
-    globalAlpha: 1,
-    save() {},
-    restore() {},
-    translate() {},
-    beginPath() {},
-    closePath() {},
-    moveTo() {},
-    lineTo() {},
-    arc() {},
-    rect() {},
-    clip() {},
-    fill() {},
-    stroke() {},
-    fillRect(x, y, width, height) {
-      calls.push({ op: "fillRect", x, y, width, height, style: String(this.fillStyle) });
-    },
-    fillText(text, x, y) {
-      calls.push({ op: "fillText", text, x, y, alpha: this.globalAlpha });
-    },
-    measureText(text) {
-      return { width: text.length * charWidth };
-    },
-    drawImage(_image, dx, dy, dWidth, dHeight) {
-      calls.push({
-        op: "drawImage",
-        x: dx,
-        y: dy,
-        width: dWidth,
-        height: dHeight,
-        alpha: this.globalAlpha,
-      });
-    },
-  };
-  return ctx;
-}
-
-type Rec = ReturnType<typeof recorder>;
-
-/**
- * A stand in for a decoded cutout. `DrawableImage` is the browser's real image
- * source union, because a structural type could not be satisfied by an actual
- * canvas context, so a test stub has to be cast. The renderer only ever reads
- * `width` and `height` off it, which is what makes the cast safe here.
- */
-const bitmap = (width: number, height: number): DrawableImage =>
-  ({ width, height }) as unknown as DrawableImage;
+import type { DrawableImage } from "./context";
+import { bitmap, images, recorder, texts } from "./test-recorder";
 
 /** Matches a real stored cutout: portrait, cropped to its own bounding box. */
 const CUTOUT: DrawableImage = bitmap(686, 1126);
@@ -94,13 +19,9 @@ const SCENE: CharacterLeftScene = {
 
 const FRAME = { width: 1920, height: 1080, elapsedMs: 5_000 };
 
-const images = (ctx: Rec) =>
-  ctx.calls.filter((c): c is Extract<Call, { op: "drawImage" }> => c.op === "drawImage");
-const texts = (ctx: Rec) =>
-  ctx.calls.filter((c): c is Extract<Call, { op: "fillText" }> => c.op === "fillText");
 
 const draw = (scene: CharacterLeftScene, frame = FRAME) => {
-  const ctx = recorder();
+  const ctx = recorder({ charWidth: 10 });
   drawCharacterLeftFrame(ctx, scene, frame);
   return ctx;
 };

@@ -6,6 +6,7 @@ import {
   QUALITY_HIGH,
   canEncodeVideo,
 } from "mediabunny";
+import { loadBrandFonts } from "@/lib/render/fonts";
 import { drawRenderable } from "@/lib/render/renderable";
 import { frameDurationSeconds, frameElapsedMs, frameTimestampSeconds, renderFrameCount } from "@/lib/render/timing";
 import type {
@@ -108,6 +109,16 @@ async function renderScene(request: RenderSceneRequest): Promise<ArrayBuffer | n
   if (!ctx) {
     throw new RenderError("encode-failed", "Couldn't get a 2D drawing context for the render.");
   }
+
+  // **Before the first frame, not alongside it.** A worker's font set starts
+  // empty, so a frame drawn while these are still in flight is set in the
+  // fallback stack — and since the encode is a single pass, that frame ships
+  // that way. Awaiting here costs one round trip per render and is what makes
+  // the exported file agree with the preview.
+  //
+  // A failure is deliberately not fatal: it draws in the fallback stack rather
+  // than losing a render the creator has already waited for.
+  await loadBrandFonts();
 
   const target = new BufferTarget();
   const output = new Output({ format: new Mp4OutputFormat(), target });

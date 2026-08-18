@@ -22,6 +22,7 @@ import { CHARACTER_LEFT_THEME, drawCharacterLeftFrame } from "./character-left";
 import { CHARACTER_CENTER_THEME, drawCharacterCenterFrame } from "./character-center";
 import { BRAND } from "./theme";
 import type { DrawableImage, Render2DContext } from "./context";
+import { bitmap, images, recorder, texts, type Call } from "./test-recorder";
 
 /**
  * The three object templates (spec `broll/0008`), and the extraction that made
@@ -35,75 +36,6 @@ import type { DrawableImage, Render2DContext } from "./context";
  * really are the same composition, so a change to one that does not reach the
  * other is a bug rather than a divergence.
  */
-
-type Call =
-  | { op: "fillRect"; x: number; y: number; width: number; height: number; style: string; alpha: number }
-  | { op: "fillText"; text: string; x: number; y: number; alpha: number; font: string }
-  | { op: "drawImage"; x: number; y: number; width: number; height: number; alpha: number };
-
-function recorder() {
-  const calls: Call[] = [];
-  const ctx: Render2DContext & { calls: Call[] } = {
-    calls,
-    fillStyle: "",
-    strokeStyle: "",
-    lineWidth: 0,
-    lineJoin: "round",
-    lineCap: "round",
-    font: "",
-    textAlign: "left",
-    textBaseline: "top",
-    globalAlpha: 1,
-    save() {},
-    restore() {},
-    translate() {},
-    beginPath() {},
-    closePath() {},
-    moveTo() {},
-    lineTo() {},
-    arc() {},
-    rect() {},
-    clip() {},
-    fill() {},
-    stroke() {},
-    fillRect(x, y, width, height) {
-      calls.push({
-        op: "fillRect",
-        x,
-        y,
-        width,
-        height,
-        style: String(this.fillStyle),
-        alpha: this.globalAlpha,
-      });
-    },
-    fillText(text, x, y) {
-      calls.push({ op: "fillText", text, x, y, alpha: this.globalAlpha, font: this.font });
-    },
-    measureText(text) {
-      const size = Number(this.font.match(/(\d+(?:\.\d+)?)px/)?.[1] ?? 10);
-      return { width: text.length * size * 0.5 };
-    },
-    drawImage(_image, dx, dy, dWidth, dHeight) {
-      calls.push({
-        op: "drawImage",
-        x: dx,
-        y: dy,
-        width: dWidth,
-        height: dHeight,
-        alpha: this.globalAlpha,
-      });
-    },
-  };
-  return ctx;
-}
-
-type Rec = ReturnType<typeof recorder>;
-const texts = (c: Rec) => c.calls.filter((x): x is Extract<Call, { op: "fillText" }> => x.op === "fillText");
-const images = (c: Rec) => c.calls.filter((x): x is Extract<Call, { op: "drawImage" }> => x.op === "drawImage");
-
-const bitmap = (width: number, height: number): DrawableImage =>
-  ({ width, height }) as unknown as DrawableImage;
 
 /** Square, because that is the ratio the object prompt asks Gemini for. */
 const OBJECT = bitmap(1024, 1024);

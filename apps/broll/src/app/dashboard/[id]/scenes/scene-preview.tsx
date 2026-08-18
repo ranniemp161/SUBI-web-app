@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { drawRenderable, type Renderable } from "@/lib/render/renderable";
 import { Button } from "@/components/ui";
+import { useBrandFonts } from "./use-brand-fonts";
 
 const SETTLED_MS = 2_000;
 
@@ -50,6 +51,7 @@ export function ScenePreview({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const frameRef = useRef<number | null>(null);
   const [playing, setPlaying] = useState(false);
+  const fontsSettled = useBrandFonts();
 
   const renderableRef = useRef(renderable);
   const durationRef = useRef(durationMs);
@@ -78,7 +80,9 @@ export function ScenePreview({
 
   useEffect(() => {
     if (!playing) paint(SETTLED_MS);
-  }, [paint, playing, renderable, previewWidth, height]);
+    // `fontsSettled` is here for the idle case only. While playing, the loop is
+    // already repainting every frame and picks the faces up on its own.
+  }, [paint, playing, renderable, previewWidth, height, fontsSettled]);
 
   useEffect(() => {
     if (!playing) return;

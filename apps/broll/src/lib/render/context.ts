@@ -11,6 +11,16 @@
  * One interface for all templates on purpose. Two interfaces describing the
  * same canvas drift, and the preview and the encoder both have to accept
  * whatever this says.
+ *
+ * **Narrow by default, widened deliberately.** This started as the twenty-odd
+ * primitives the first four templates happened to need, and that narrowness is
+ * a feature: every method here is one more thing the test recorder has to
+ * implement, so the list should describe what the renderers draw with rather
+ * than everything a canvas can do. It gained gradients, shadows, `roundRect`,
+ * curves, transforms and real text metrics when the clip design pass needed
+ * them — nothing in a rounded bar, a gradient scrim, a vignette or an optically
+ * centred line is expressible without those. Add to it when a template needs
+ * something, not in anticipation.
  */
 export interface Render2DContext {
   fillStyle: string | CanvasGradient | CanvasPattern;
@@ -22,21 +32,97 @@ export interface Render2DContext {
   textAlign: CanvasTextAlign;
   textBaseline: CanvasTextBaseline;
   globalAlpha: number;
+  /**
+   * Soft shadows and glows. Four properties rather than one because that is how
+   * the canvas models it, and `shadowColor` must be set before `shadowBlur` has
+   * any effect — a blur with a transparent colour draws nothing, which is an
+   * easy way to spend fill time on an invisible result.
+   *
+   * **Every use has to be undone.** These are context state, not draw
+   * parameters, so a shadow left set bleeds onto everything drawn afterwards,
+   * including the next frame — the same class of bug as a stray `globalAlpha`.
+   * Set them inside a `save()`/`restore()` pair.
+   */
+  shadowColor: string;
+  shadowBlur: number;
+  shadowOffsetX: number;
+  shadowOffsetY: number;
   save(): void;
   restore(): void;
   translate(x: number, y: number): void;
+  /** Radians, about the current origin — so it is almost always paired with `translate`. */
+  rotate(angle: number): void;
+  scale(x: number, y: number): void;
   beginPath(): void;
   closePath(): void;
   moveTo(x: number, y: number): void;
   lineTo(x: number, y: number): void;
   arc(x: number, y: number, radius: number, startAngle: number, endAngle: number): void;
+  /** Quadratic curve, for rounding a polyline without a second path library. */
+  quadraticCurveTo(cpx: number, cpy: number, x: number, y: number): void;
+  bezierCurveTo(
+    cp1x: number,
+    cp1y: number,
+    cp2x: number,
+    cp2y: number,
+    x: number,
+    y: number
+  ): void;
   rect(x: number, y: number, width: number, height: number): void;
+  /**
+   * A rounded rectangle in one call.
+   *
+   * The browser's signature takes a number **or** a list of radii, which is what
+   * lets a bar be rounded at the top and square where it meets its baseline.
+   */
+  roundRect(
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    radii?: number | number[]
+  ): void;
   clip(): void;
   fill(): void;
   stroke(): void;
   fillRect(x: number, y: number, width: number, height: number): void;
   fillText(text: string, x: number, y: number): void;
-  measureText(text: string): { width: number };
+  /**
+   * Text metrics.
+   *
+   * `width` is what wrapping needs. The two ascent fields are what **optical**
+   * vertical centring needs: `textBaseline` alignment centres on the font's
+   * declared box, which is not where the ink actually sits, so a line of caps
+   * centred that way reads low. Both are optional because the structural
+   * recorder in the tests supplies only `width`, and because a browser may omit
+   * them for a font it had to synthesise.
+   */
+  measureText(text: string): {
+    width: number;
+    actualBoundingBoxAscent?: number;
+    actualBoundingBoxDescent?: number;
+  };
+  /**
+   * A linear gradient between two points, in the current user space.
+   *
+   * Returned rather than applied: it is assigned to `fillStyle` or
+   * `strokeStyle`, so a caller builds one and uses it like any other paint.
+   */
+  createLinearGradient(
+    x0: number,
+    y0: number,
+    x1: number,
+    y1: number
+  ): CanvasGradient;
+  /** A radial gradient, for a vignette or a glow behind a figure. */
+  createRadialGradient(
+    x0: number,
+    y0: number,
+    r0: number,
+    x1: number,
+    y1: number,
+    r1: number
+  ): CanvasGradient;
   drawImage(
     image: DrawableImage,
     dx: number,

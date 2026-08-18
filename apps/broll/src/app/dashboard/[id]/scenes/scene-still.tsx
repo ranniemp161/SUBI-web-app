@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { drawRenderable, type Renderable } from "@/lib/render/renderable";
+import { useBrandFonts } from "./use-brand-fonts";
 
 /**
  * One frame of a scene, in its row (spec `broll/0006` AC-100, AC-101).
@@ -40,6 +41,9 @@ export function SceneStill({
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const height = Math.max(1, Math.round((width * aspectHeight) / aspectWidth));
+  // Not a gate on the first paint — a dependency, so the one frame this canvas
+  // ever draws is redrawn once the brand faces land.
+  const fontsSettled = useBrandFonts();
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -59,7 +63,7 @@ export function SceneStill({
       height: canvas.height,
       elapsedMs: SETTLED_MS,
     });
-  }, [renderable, width, height]);
+  }, [renderable, width, height, fontsSettled]);
 
   return (
     <canvas
