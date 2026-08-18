@@ -1,8 +1,13 @@
-import { LAYOUT_TEMPLATES, type LayoutTemplate, type VisualType } from "./scene-schema";
+import {
+  LAYOUT_TEMPLATES,
+  isCharacterTemplate,
+  isObjectTemplate,
+  type LayoutTemplate,
+} from "./scene-schema";
 import { RENDERABLE_TEMPLATES } from "./render/renderable";
 
 /**
- * Which template a scene may become, and what `visual_type` follows from it
+ * Which template a scene may become, and what follows from that choice
  * (spec `broll/0005` AC-75, AC-76, AC-93).
  *
  * Pure and browser safe, like `scene-limits.ts` and for the same reason: the
@@ -10,14 +15,22 @@ import { RENDERABLE_TEMPLATES } from "./render/renderable";
  * offerable, and the only way to guarantee that is one module both import.
  * A picker that offers what the route refuses is a control that fails after the
  * click, which is worse than not offering it.
+ *
+ * **What is here and what is not.** The groupings and the `visual_type`
+ * derivation are facts about templates that need no knowledge of what can be
+ * drawn, and they live in `scene-schema.ts` so the planner can read them without
+ * pulling `RENDERABLE_TEMPLATES` — and with it every canvas drawer — into its
+ * server bundle. They are re-exported here, so a caller still has one module to
+ * look in and there is still one definition. What genuinely belongs here is the
+ * part that has to know which templates render: the offer gate and the blocker.
  */
-
-/** The templates that composite a character, and therefore carry an emotion. */
-export const CHARACTER_TEMPLATES = ["character-left", "character-center"] as const;
-
-export function isCharacterTemplate(template: string): boolean {
-  return (CHARACTER_TEMPLATES as readonly string[]).includes(template);
-}
+export {
+  CHARACTER_TEMPLATES,
+  OBJECT_TEMPLATES,
+  isCharacterTemplate,
+  isObjectTemplate,
+  visualTypeForTemplate,
+} from "./scene-schema";
 
 export function isLayoutTemplate(value: string): value is LayoutTemplate {
   return (LAYOUT_TEMPLATES as readonly string[]).includes(value);
@@ -48,55 +61,45 @@ export function sceneDrawsChart(scene: {
 }
 
 /**
- * What is on screen, derived from the layout (AC-76).
- *
- * **`visual_type` is never accepted from a client.** Two writable fields
- * encoding the same fact is a contradiction waiting to be stored: a request
- * could say `text-card` and `character` together, and every later reader would
- * have to guess which one meant it.
- *
- * Total over all six templates, including the two with no renderer, because the
- * planner writes those and a derivation with a hole in it is a derivation that
- * cannot be trusted as one.
- */
-export function visualTypeForTemplate(template: LayoutTemplate): VisualType {
-  switch (template) {
-    case "character-left":
-    case "character-center":
-    case "character-plus-chart":
-      return "character";
-    case "chart-full":
-    case "split-compare":
-      return "infographic";
-    default:
-      return "text";
-  }
-}
-
-/**
  * The templates this particular scene can actually be drawn as (AC-75).
  *
  * Three gates, and each one exists because the alternative is a scene that
  * renders to nothing:
  *
  * - `RENDERABLE_TEMPLATES` — a template with no drawer is never offered. Two of
- *   the six have none today.
+ *   the nine have none today.
  * - a chart — `chart-full` with no chart draws an empty frame. A scene whose
  *   chart the honesty check dropped is exactly this case, which is why the
  *   downgrade note matters (AC-87).
  * - a committed character set — a character template with no cutout draws its
  *   text alone, which is a text card wearing the wrong name.
+ * - a traced subject — an object template on a scene that names nothing has
+ *   nothing to illustrate, and no prompt to generate from.
+ *
+ * **The object gate is the subject, not the image** (spec `broll/0008`). An
+ * illustration is generated on demand, so gating on the image would hide the
+ * template that carries the button that generates it, and no creator could ever
+ * reach one. A missing image is a *blocker* with a way out, which is a different
+ * thing from a template that could never work — the same split a character
+ * template already has between "no character set" and "no emotion picked".
  *
  * Offering rather than rejecting is the point: a creator never picks something
  * that then fails. The route re-checks anyway, because a list rendered a minute
  * ago is not an authorization.
  */
-export function templateOptionsFor(input: {
+export type TemplateCapabilities = {
   hasChart: boolean;
   hasCharacterSet: boolean;
-}): LayoutTemplate[] {
+  /** Whether this scene carries a subject that survived the trace. */
+  hasObject: boolean;
+};
+
+export function templateOptionsFor(input: TemplateCapabilities): LayoutTemplate[] {
   return RENDERABLE_TEMPLATES.filter((template) => {
     if (template === "chart-full") return input.hasChart;
+    // Checked before the character gate, so `character-plus-object` has to
+    // satisfy both rather than whichever is asked first.
+    if (isObjectTemplate(template) && !input.hasObject) return false;
     if (isCharacterTemplate(template)) return input.hasCharacterSet;
     return true;
   });
@@ -105,7 +108,7 @@ export function templateOptionsFor(input: {
 /** Whether this scene may be switched to this template. The route's own gate. */
 export function canUseTemplate(
   template: LayoutTemplate,
-  input: { hasChart: boolean; hasCharacterSet: boolean }
+  input: TemplateCapabilities
 ): boolean {
   return templateOptionsFor(input).includes(template);
 }
@@ -134,18 +137,44 @@ export function canUseTemplate(
  */
 export type SceneBlocker = {
   /** For the UI to branch on without matching prose. */
-  code: "no_character" | "missing_emotion" | "no_emotion_chosen";
+  code:
+    | "no_character"
+    | "missing_emotion"
+    | "no_emotion_chosen"
+    /** The scene has a subject but no illustration generated for it yet. */
+    | "no_object_image";
   /** Shown to the creator, on the row and in the detail pane. */
   reason: string;
+  /**
+   * Whether the creator can clear this from the detail pane by spending, rather
+   * than by attaching a character or picking an emotion (spec `broll/0008`).
+   * The studio bar counts these to offer one batch generate before an export.
+   */
+  fixableByGenerating?: boolean;
 };
 
 export function sceneBlocker(
-  scene: { layoutTemplate: string; emotion: string | null },
+  scene: {
+    layoutTemplate: string;
+    emotion: string | null;
+    /** Null until an illustration has been generated for this scene. */
+    objectAssetPath?: string | null;
+  },
   project: { committedEmotions: readonly string[] }
 ): SceneBlocker | null {
-  // Only character templates can be blocked this way. A text card and a chart
-  // need nothing from the character set, which is what makes them the templates
-  // a faceless project can still cut b-roll with.
+  // An object template needs an image before it can draw, and unlike the
+  // character blocks below this one is cleared from the scene itself.
+  if (isObjectTemplate(scene.layoutTemplate) && !scene.objectAssetPath) {
+    return {
+      code: "no_object_image",
+      reason: "This scene draws an object, and none has been generated yet.",
+      fixableByGenerating: true,
+    };
+  }
+
+  // Only character templates can be blocked the remaining ways. A text card and
+  // a chart need nothing from the character set, which is what makes them the
+  // templates a faceless project can still cut b-roll with.
   if (!isCharacterTemplate(scene.layoutTemplate)) return null;
 
   if (project.committedEmotions.length === 0) {

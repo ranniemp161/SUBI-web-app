@@ -4,6 +4,10 @@ import {
   characterAssetPrefix,
   characterIdFromAssetPathname,
   isCharacterAssetPathname,
+  isObjectAssetPathname,
+  isObjectAssetPathnameForAttempt,
+  objectAssetPathname,
+  sceneIdFromObjectAssetPathname,
 } from "@/lib/asset-path";
 
 const CHARACTER = "3f7c1e2a-0b44-4d19-9a6e-8c5b21d0f7aa";
@@ -177,5 +181,95 @@ describe("characterIdFromAssetPathname", () => {
 describe("characterAssetPrefix", () => {
   it("ends with a slash so a sibling id cannot match by prefix", () => {
     expect(characterAssetPrefix(CHARACTER)).toBe(`broll/characters/${CHARACTER}/`);
+  });
+});
+
+/**
+ * Object illustration paths (spec `broll/0008`).
+ *
+ * The two shapes look alike enough to be confused by a reader skimming the
+ * regular expressions, and confusing them is a cross user read: a character path
+ * accepted as an object path would be authorized against the wrong table. So the
+ * cross rejections below are the point of this block, not an edge case in it.
+ */
+
+describe("object asset pathnames", () => {
+  const SCENE = "11111111-2222-3333-4444-555555555555";
+  const OTHER = "99999999-8888-7777-6666-555555555555";
+
+  it("mints a path under its own prefix", () => {
+    const path = objectAssetPathname(SCENE, 1, "00112233445566ff");
+    expect(path).toBe(`broll/objects/${SCENE}/1-00112233445566ff.png`);
+    expect(isObjectAssetPathname(path, SCENE)).toBe(true);
+  });
+
+  it("gives a redraw a new path rather than the old one", () => {
+    // Vercel's CDN caches blobs for up to a month, so writing in place would
+    // serve the creator back the very illustration they just paid to replace.
+    const first = objectAssetPathname(SCENE, 1);
+    const second = objectAssetPathname(SCENE, 2);
+    expect(first).not.toBe(second);
+  });
+
+  it("carries randomness, so knowing a scene id does not yield a key", () => {
+    expect(objectAssetPathname(SCENE, 1)).not.toBe(objectAssetPathname(SCENE, 1));
+  });
+
+  it("recovers the scene id, so the upload route can prove ownership", () => {
+    const path = objectAssetPathname(SCENE, 3, "aabbccddeeff0011");
+    expect(sceneIdFromObjectAssetPathname(path)).toBe(SCENE);
+  });
+
+  it("rejects a path belonging to another scene", () => {
+    expect(isObjectAssetPathname(objectAssetPathname(OTHER, 1), SCENE)).toBe(false);
+  });
+
+  it("admits no traversal, by shape rather than by filtering", () => {
+    for (const bad of [
+      `broll/objects/${SCENE}/../1-00112233445566ff.png`,
+      `broll/objects/${SCENE}/a/1-00112233445566ff.png`,
+      `broll/objects/${SCENE}/1-00112233445566ff.png.exe`,
+      `broll/objects/${SCENE}/1-nothex0011223344.png`,
+      `broll/objects/${SCENE}/x-00112233445566ff.png`,
+    ]) {
+      expect(isObjectAssetPathname(bad, SCENE)).toBe(false);
+      expect(sceneIdFromObjectAssetPathname(bad)).toBeNull();
+    }
+  });
+
+  it("never mistakes a character path for an object path", () => {
+    const characterPath = characterAssetPathname(SCENE, "neutral", 1, "00112233445566ff");
+    expect(isObjectAssetPathname(characterPath, SCENE)).toBe(false);
+    expect(sceneIdFromObjectAssetPathname(characterPath)).toBeNull();
+  });
+
+  it("never mistakes an object path for a character path", () => {
+    const objectPath = objectAssetPathname(SCENE, 1, "00112233445566ff");
+    expect(isCharacterAssetPathname(objectPath, SCENE)).toBe(false);
+    expect(characterIdFromAssetPathname(objectPath)).toBeNull();
+  });
+});
+
+describe("isObjectAssetPathnameForAttempt", () => {
+  const SCENE = "11111111-2222-3333-4444-555555555555";
+
+  it("accepts the attempt it was minted for", () => {
+    const path = objectAssetPathname(SCENE, 4, "00112233445566ff");
+    expect(isObjectAssetPathnameForAttempt(path, SCENE, 4)).toBe(true);
+  });
+
+  it("rejects a well formed path for a different attempt", () => {
+    // A stale upload from a request that lost a race. Pointing the row at it
+    // would show the creator an illustration they had already replaced.
+    const path = objectAssetPathname(SCENE, 3, "00112233445566ff");
+    expect(isObjectAssetPathnameForAttempt(path, SCENE, 4)).toBe(false);
+  });
+
+  it("does not let attempt 1 match attempt 10", () => {
+    // The separator is what makes this a whole-token check rather than a prefix
+    // one; without it `10-` starts with `1`.
+    const tenth = objectAssetPathname(SCENE, 10, "00112233445566ff");
+    expect(isObjectAssetPathnameForAttempt(tenth, SCENE, 1)).toBe(false);
+    expect(isObjectAssetPathnameForAttempt(tenth, SCENE, 10)).toBe(true);
   });
 });

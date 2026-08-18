@@ -31,7 +31,10 @@ vi.mock("@clerk/nextjs", () => ({ useAuth: () => ({ getToken }) }));
 // the project at a different character (spec `broll/0007` AC-129).
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 
-import { CharacterPanel, putPresignedWithRetry } from "./character-panel";
+import { CharacterPanel } from "./character-panel";
+// Moved out of the panel when object illustrations gained the same upload path
+// (spec `broll/0008`); the behaviour asserted below is unchanged.
+import { putPresignedWithRetry } from "@/lib/blob-upload";
 import { CHARACTER_EMOTIONS } from "@/lib/emotions";
 
 /**

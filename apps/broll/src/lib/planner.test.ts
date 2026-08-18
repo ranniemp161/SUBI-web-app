@@ -334,6 +334,8 @@ describe("applySurplusRule (spec 0005 AC-85)", () => {
       overlayText: null,
       chart: null,
       chartRejectionReason: null,
+      object: null,
+      objectRejectionReason: null,
       strength: 0.5,
       included: true,
       ...over,

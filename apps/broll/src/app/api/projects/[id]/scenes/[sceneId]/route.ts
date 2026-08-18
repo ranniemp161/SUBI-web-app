@@ -87,6 +87,7 @@ export async function PATCH(
         !canUseTemplate(body.layoutTemplate, {
           hasChart: context.hasChart,
           hasCharacterSet: context.committedEmotions.length > 0,
+          hasObject: context.hasObject,
         })
       ) {
         return NextResponse.json(

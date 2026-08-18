@@ -34,6 +34,8 @@ function scene(over: Partial<PlannedScene> = {}): PlannedScene {
     overlayText: null,
     chart: null,
     chartRejectionReason: null,
+    object: null,
+    objectRejectionReason: null,
     strength: 0.8,
     included: true,
     ...over,

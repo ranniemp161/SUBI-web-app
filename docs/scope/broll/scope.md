@@ -40,6 +40,7 @@ any, and mark a feature `done` when you decide it is._
 | 12 | Visual pass and the Renders view | Phase 7 | in-progress |
 | 13 | Vertical output, and the empty transcript guard | Phase 7 | in-progress |
 | 14 | The clip's own design, and the cutout download | Phase 7 | in-progress |
+| 15 | Object scenes | Phase 7 | in-progress |
 | 10 | Blocking and edge states | Phase 7 | planned |
 | 8 | Production deploy and error reporting | Deploy | in-progress |
 
@@ -1432,6 +1433,70 @@ can point at self hosted files; what stops it is that the weights are tens of
 megabytes, which is a hosting decision rather than a code one. Halving the
 download and explaining it buys time; it does not remove the dependency, and
 spec `0001` still does not record it as an accepted one.
+
+### 15. Object scenes · in-progress · from spec 0008
+
+Enrolled 2026-08-17, at the engineer's suggestion. The trigger was noticing that
+a speaker naming something concrete — "they built a castle on the hill" — got the
+app's *least* visual treatment: no numbers means no chart, the creator's face is
+not what the line is about, so it fell back to a text card restating the words.
+
+**Intent**: give a line that names a thing a picture of that thing, generated in
+the project's character style so it reads as one piece of work rather than as
+stock art dropped in — and hold it to the same honesty rule a chart is held to.
+
+**Done when**: a plan proposes object scenes, a creator can draw one from Scene
+Studio for a stated price, and it renders and exports like any other template.
+
+- [x] Build it, 2026-08-17. Spec
+      [0008](../../specs/broll/0008-object-scenes/index.md), AC-150 to AC-172.
+  - [x] **The subject is a claim, and is traced like one.** `traceObject` in
+        [honesty.ts](../../../apps/broll/src/lib/honesty.ts) requires every
+        content word of the subject inside the cited span — one word would let
+        "a medieval castle" pass on a line saying only "the medieval period".
+        A failed trace drops the object, records why, keeps the scene, and takes
+        the template down to `text-card` with it. The subject is read-only in
+        Scene Studio, so the "presentation is editable, claims are not" rule did
+        not have to widen.
+  - [x] **Three templates, built by extracting rather than copying.**
+        `object-full`, `object-left` and `character-plus-object`.
+        [figure-frame.ts](../../../apps/broll/src/lib/render/figure-frame.ts) now
+        owns the two compositions that place one cutout and some words, and
+        `character-left`/`character-center` draw through it too — their landscape
+        output is unchanged and their existing tests hold us to that.
+        `character-plus-object` is written out separately, being the first
+        two-figure composition in the app, and is the machinery
+        `character-plus-chart` will need.
+  - [x] **Drawn on demand, and the studio bar keeps that honest.** Generating at
+        plan time would charge for pictures on scenes the creator then excludes.
+        But on demand means a scene nobody opened has no image, which `Render
+        all` would skip in silence — against the product's own principle that
+        generate-then-export-all yields usable output. So the bar counts those
+        scenes and offers them as one action with its total price.
+  - [x] **One eager charge per illustration**, `chargeBrollObjectImage` in
+        `@repo/billing`, refunded before the route answers if the model delivers
+        nothing. Eager rather than a hold because this is one ~15 s call, not the
+        character set's ~110 s chain.
+  - [x] **`drawRenderable` is exhaustive now.** It used to `default` to
+        `chart-full`, so a template added without a case here silently drew a
+        chart in the one place preview and export must agree.
+- [ ] Verify it: /check verify object scenes against spec 0008's sheet.
+- [x] **Cutout quality on real objects, checked 2026-08-17.** Phase 0 had only
+      verified `@imgly` on generated people, so this was the open risk. Driven
+      live: an oil refinery — thin pipework, lattice towers, the hardest shape
+      this is likely to meet — cut out with no halo and no background rectangle,
+      compositing cleanly onto the grid backdrop. The contingency (prompt for a
+      flat keyable colour and key it inside `objects.ts`) is not needed.
+- [ ] **Nothing sweeps orphaned illustrations.** A scene deleted by hand, or
+      replaced by a plan re-run, leaves its image in the store. The character
+      sweep is the precedent, and the Hobby plan's daily cron cap applies here
+      too.
+
+**A pre-existing bug this feature deliberately did not fix.** A scene whose
+*chart* the honesty check drops keeps `chart-full` and previews as "no renderer
+yet", where an object scene now downgrades to `text-card`. The fix is one line
+beside the object one, but it changes planner behaviour on a path with its own
+tests, so it belongs in its own change rather than riding along in this one.
 
 ### 10. Blocking and edge states · planned · from spec 0006
 

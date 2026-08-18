@@ -134,6 +134,20 @@
       "when": 1786703612780,
       "tag": "0018_character_reuse",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1786966912577,
+      "tag": "0019_early_synch",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1786966921695,
+      "tag": "0020_colorful_rocket_racer",
+      "breakpoints": true
     }
   ]
 }

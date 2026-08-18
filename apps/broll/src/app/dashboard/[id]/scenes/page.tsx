@@ -1,7 +1,11 @@
 import { auth } from "@clerk/nextjs/server";
 import { redirect, notFound } from "next/navigation";
 import { getAuthorizedDbUser } from "@repo/server-shared/authz";
-import { formatUsd, BROLL_PLAN_RERUN_MICROS } from "@repo/billing/pricing";
+import {
+  formatUsd,
+  BROLL_OBJECT_IMAGE_MICROS,
+  BROLL_PLAN_RERUN_MICROS,
+} from "@repo/billing/pricing";
 import { getBrollProject } from "@/lib/projects";
 import { getProjectCharacter } from "@/lib/characters";
 import { listBrollScenes } from "@/lib/scenes";
@@ -74,6 +78,11 @@ export default async function SceneStudioPage({
       planRuns={project.planRuns}
       // Formatted here because the price env override is server side only.
       rerunPrice={formatUsd(BROLL_PLAN_RERUN_MICROS)}
+      // Raw micros rather than a formatted string: the studio multiplies it by
+      // however many illustrations are missing. Resolved here for the same
+      // reason — the override carries no `NEXT_PUBLIC_` prefix, so a browser
+      // read would silently resolve to the default.
+      objectImagePriceMicros={BROLL_OBJECT_IMAGE_MICROS}
       outputWidth={project.outputWidth}
       outputHeight={project.outputHeight}
       // Carried as a rational, never a decimal: 30000/1001 is not 29.97, and

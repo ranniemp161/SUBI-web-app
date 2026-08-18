@@ -196,7 +196,7 @@ that as an explained downgrade, not an error.
 
 ### B6. Layout template picker
 
-Six templates, shown as visual thumbnails:
+Nine templates, shown as visual thumbnails:
 
 | Template | Composition |
 |---|---|
@@ -206,6 +206,14 @@ Six templates, shown as visual thumbnails:
 | `character-plus-chart` | Chart main, character small bottom-right |
 | `text-card` | Large text only |
 | `split-compare` | Two elements side by side |
+| `object-full` | Generated illustration centered and inset, text below |
+| `object-left` | Illustration in a column, text beside it |
+| `character-plus-object` | Illustration on the stage, character standing right |
+
+The last three arrived with spec `0008`: a speaker who names a thing — a castle,
+an oil barrel — gets a picture of it, generated in the project's character style
+so it sits beside the character rather than reading as clip art. The subject is
+traced back to the transcript exactly as a chart's numbers are.
 
 A template is positions *plus motion* — entrance (character slides in, text fades
 up, chart bars grow from zero), a slow idle drift, optional exit. The thumbnails
