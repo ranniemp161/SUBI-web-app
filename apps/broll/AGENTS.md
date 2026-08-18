@@ -17,16 +17,21 @@ six emotion character set that is segmented, trimmed and stored, reuse a
 character they already own on a new project for free, review and edit the plan on
 a list and detail Scene Studio screen at `/dashboard/[id]/scenes`, and render
 scenes to MP4 in the browser, one at a time or as a whole batch downloaded as a
-zip. Four of the six planned templates draw today (`chart-full`,
-`character-left`, `character-center`, `text-card`).
+zip. **Seven of the nine templates draw today** (`chart-full`, `character-left`,
+`character-center`, `text-card`, and spec `0008`'s `object-full`, `object-left`,
+`character-plus-object`); `character-plus-chart` and `split-compare` are still
+listed and undrawn.
 
 **An unticked `/check verify` box does not mean the feature is unexercised, and
 reading it that way has already produced one wrong status report.** Seven
 `Verify it` boxes are open across the scope and the two written verify sheets are
 mostly unticked, but that records which **ritual** has been run, not which
 behaviour works. The engineer develops by driving each feature in the browser as
-it is built, and the character pipeline and the scene planner have both been run
-against **live Gemini** and work (confirmed 2026-08-16). What the open boxes
+it is built, and the character pipeline, the scene planner and **object scenes**
+have all been run against **live Gemini** and work (the first two confirmed
+2026-08-16, object scenes 2026-08-17: a plan proposed an `object-full` scene, the
+subject traced to "Africa's largest oil refinery in Lagos", and the generated
+illustration cut out and composited cleanly). What the open boxes
 genuinely mean is that no one has walked a written acceptance sheet criterion by
 criterion and recorded the evidence. Ask before describing anything here as
 untested. The scope is the live plan; check it before trusting this line.
@@ -50,7 +55,11 @@ untested. The scope is the live plan; check it before trusting this line.
 | `src/app/api/projects/[id]/character/` | Generate (streamed, Edge), regenerate, commit, and signed read URLs |
 | `src/app/api/blob/upload/route.ts` | Presigns one character asset PUT. **The authorization inside `getSignedToken` is the whole security of this route** — without it this is an anonymous write endpoint into the store |
 | `src/app/dashboard/[id]/character-panel.tsx` | The pipeline's whole browser half: reads the stream, cuts out, trims, uploads straight to storage, and owns the review gate |
-| `src/lib/render/renderable.ts` | **The app's only `switch` on template.** The page preview and the encoder both draw through `drawRenderable`, which is what stops what a creator judges on screen differing from what lands in the file. A new template is one case here |
+| `src/lib/render/renderable.ts` | **The app's only `switch` on template.** The page preview and the encoder both draw through `drawRenderable`, which is what stops what a creator judges on screen differing from what lands in the file. A new template is one case here. Exhaustive with a `never` check since spec `0008` — it used to `default` to `chart-full`, so a template added to the union without a case here silently drew a chart |
+| `src/lib/render/figure-frame.ts` | The two compositions that put **one cutout and some words** on a frame, `drawFigureBeside` and `drawFigureOver`, and the only copy of either. `character-left`, `character-center`, `object-left` and `object-full` are each a theme plus one call into this. Extracted by spec `0008`; before it, two of those bodies were written out twice |
+| `src/lib/object-prompt.ts` / `src/lib/objects.ts` | The illustration's wording and its single Gemini call, split pure/server exactly like `character-prompt.ts` / `character.ts`. **`objects.ts` deliberately re-pins no model, size or cost** — `character-prompt.ts` owns those for the whole app, and a second pinned model id is how two paths start billing differently |
+| `src/lib/object-generate.ts` | The browser half of drawing one illustration — charge, cut out, upload, commit — shared by the scene pane's button and the studio bar's batch. Browser only |
+| `src/lib/blob-upload.ts` | `putPresignedWithRetry` and `base64ToPngBlob`, used by both generated-asset paths. Lifted out of `character-panel.tsx` by spec `0008` so the Scene Studio bundle does not pull that component in to reach three functions |
 | `src/lib/render/context.ts` | The narrow 2D surface every template draws through, assignable from both canvas context types. One interface for all templates, so the tests can pass a recorder and assert draw calls with no canvas and no browser. Widened for the clip design pass with gradients, shadows, `roundRect`, curves, transforms and real text metrics — **add to it when a template needs something, not in anticipation**, because every method is one more the recorder has to implement |
 | `src/lib/render/fonts.ts` | Registers Space Grotesk and DM Sans as `FontFace`s, in **whichever realm is drawing**. The page and the worker both go through it and both await it, because a worker's font set starts empty and cannot inherit the page's — that gap is why clips used to export in `system-ui` |
 | `src/lib/render/test-recorder.ts` | The `Render2DContext` the render tests draw onto. One copy, shared: three inline copies is how three recorders start disagreeing about what a draw call looks like. Not named `*.test.ts` so vitest treats it as a helper |
@@ -142,6 +151,42 @@ npm -w @repo/broll typecheck
   that the rule; spec `broll/0005` found the line drawn in the wrong place and
   widened it, because template and emotion decide nothing about what the scene
   asserts. Do not narrow it back by reading an older note.
+
+  Spec `broll/0008` added a scene kind and did **not** widen it again. An object
+  scene's `subject` is a claim — traced to the cited line by `traceObject`, the
+  same way a chart's numbers are — so it is rendered read-only in Scene Studio
+  and the PATCH schema still names exactly four fields. A text box there would be
+  the fabrication the trace exists to prevent, with an extra step. What *is*
+  editable is the template and whether to redraw, which assert nothing.
+- **The honesty check covers pictures too, not only numbers.** `honesty.ts` holds
+  two traces against one rule: `traceChart` on every value and unit,
+  `traceObject` on the thing a scene is about to illustrate. An object's subject
+  must be a concrete noun found inside the cited span, and **every** content word
+  of it must be there — one word would let "a medieval castle" pass on a line
+  that only says "the medieval period". Articles and joining words are dropped
+  first because those are the model's grammar, not the speaker's content, and
+  singular/plural are folded because a speaker saying "castles" plainly named a
+  castle. A failed trace **drops the object and keeps the scene**, and the
+  planner takes the template down with it to `text-card` — an object template
+  with no subject has nothing to draw and no prompt to draw it from, so leaving
+  it would strand the scene on a treatment that can never render.
+- **An object illustration is drawn on demand, and the studio bar is what keeps
+  that honest.** Generating at plan time would charge for pictures on scenes the
+  creator then excludes, so nothing is drawn until they ask. But the product's
+  own principle is that a creator who clicks generate and then export all gets
+  usable output, and on demand means a scene nobody opened has no image, which
+  `Render all` would skip in silence. So the bar counts the included scenes
+  blocked only for want of an illustration and offers them as **one action with
+  its total price** before the export. That is why `SceneBlocker` carries
+  `fixableByGenerating`: a missing character is not in that set, because it is
+  fixed on the project page rather than by spending here. If that button is ever
+  removed, "export all" quietly returns fewer clips than the creator asked for.
+- **The object templates are gated on the subject, never on the image.** An
+  illustration is drawn from the button on the template that needs it, so
+  `templateOptionsFor` gating on `objectAssetPath` would hide the only route to
+  generating one. `hasObject` means "this scene named something"; a missing image
+  is a `sceneBlocker` with a way out. Same split the character templates already
+  have between "no character set" and "no emotion picked".
 - **A scene write proves ownership inside the statement, never before it.** The
   `UPDATE` joins through `broll_projects` on `user_id`, so another user's scene
   id changes nothing and answers 404. Reading the row to check the owner and
@@ -179,7 +224,11 @@ npm -w @repo/broll typecheck
 - **No image byte crosses one of our Functions on a path the browser can take
   itself** (spec `0004` AC-17). Generated PNGs go browser to store by presigned
   PUT, and the review gate reads them by presigned GET. A route that proxies
-  image bytes undoes this.
+  image bytes undoes this. Object illustrations take the same path, which is why
+  `api/blob/upload/route.ts` now authorizes **two** pathname shapes: a character
+  asset through `broll_characters`, an object through
+  `broll_scenes → broll_projects.user_id`. Each is recognised only by its own
+  literal prefix segment, so neither can be reached through the other's check.
 - **A pathname is a server value, never a client one.** The generate route mints
   it and streams it down; the upload and commit routes both re-derive and re-check
   it anyway. Two checks for one property is deliberate — a client supplied string
@@ -339,8 +388,12 @@ npm -w @repo/broll typecheck
 - `docs/specs/broll/0002-data-model/index.md` — every column of `broll_projects`,
   `broll_assets` and `broll_scenes`, reconstructed after the original spec was
   lost. Its `rationale.md` marks each part Decided or Inferred.
+- `docs/specs/broll/0008-object-scenes/index.md` — the object scene kind: the
+  subject trace, the on-demand illustration and its money path, and the
+  `figure-frame` extraction the three new templates are built on.
 - `docs/specs/broll/design-prompt.md` — the UI brief: eight screens, the exact
-  palette, and the one UX principle everything follows.
+  palette, and the one UX principle everything follows. **Its six-template table
+  is now nine**, see spec `0008`.
 
 _Drafted by /develop from the scaffolding change, worth a quick human pass._
 

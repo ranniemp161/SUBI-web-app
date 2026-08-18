@@ -2,24 +2,40 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useAuth } from "@clerk/nextjs";
 import type { VideoFps } from "@repo/transcript";
+import { formatUsd } from "@repo/billing/pricing";
+import { drawSceneObject } from "@/lib/object-generate";
 import type { SceneSummary } from "@/lib/scenes";
 import type { CharacterEmotion } from "@/lib/emotions";
 import { MAX_MANUAL_SCENES_PER_PROJECT } from "@/lib/scene-limits";
-import { sceneBlocker, sceneDrawsChart, type SceneBlocker } from "@/lib/scene-templates";
+import {
+  isCharacterTemplate,
+  isObjectTemplate,
+  sceneBlocker,
+  sceneDrawsChart,
+  type SceneBlocker,
+} from "@/lib/scene-templates";
 import { loadCharacterBitmaps } from "@/lib/render/character-assets";
-import { toRenderable } from "@/lib/render/to-renderable";
+import { loadObjectBitmaps } from "@/lib/render/object-assets";
+import { toRenderable, type SceneBitmaps } from "@/lib/render/to-renderable";
 import { formatClock } from "@/lib/utterances";
 import { AddScene, type TranscriptChoice } from "./add-scene";
 import { PHASE_LABELS, readPlanStream, type PlanRejection } from "./plan-stream";
 import { SceneDetail } from "./scene-detail";
 import { SceneRow } from "./scene-row";
-import type { ScenePatch } from "./scene-overrides";
 import { StudioBar } from "./studio-bar";
 import { ONE_PANE_QUERY, REDUCED_MOTION_QUERY, useMediaQuery } from "./use-media-query";
 import { useRenderQueue, type RenderJob } from "./use-render-queue";
 
-type FilterKey = "all" | "included" | "excluded" | "chart" | "text" | "manual";
+type FilterKey =
+  | "all"
+  | "included"
+  | "excluded"
+  | "chart"
+  | "object"
+  | "text"
+  | "manual";
 
 const FILTERS: { key: FilterKey; label: string; match: (scene: SceneSummary) => boolean }[] = [
   { key: "all", label: "All", match: () => true },
@@ -27,9 +43,18 @@ const FILTERS: { key: FilterKey; label: string; match: (scene: SceneSummary) => 
   { key: "excluded", label: "Excluded", match: (scene) => !scene.included },
   { key: "chart", label: "Chart on screen", match: sceneDrawsChart },
   {
+    key: "object",
+    label: "Object on screen",
+    match: (scene) => scene.object !== null && isObjectTemplate(scene.layoutTemplate),
+  },
+  {
+    // One chip for both downgrades. A creator scanning for "what did the honesty
+    // check take away from me" is asking one question, not two, and splitting it
+    // would put two nearly identical chips side by side.
     key: "text",
     label: "Downgraded to text",
-    match: (scene) => scene.chartRejectionReason !== null,
+    match: (scene) =>
+      scene.chartRejectionReason !== null || scene.objectRejectionReason !== null,
   },
   { key: "manual", label: "Added by hand", match: (scene) => scene.origin === "manual" },
 ];
@@ -44,6 +69,7 @@ export function SceneStudio({
   initialSceneId,
   planRuns,
   rerunPrice,
+  objectImagePriceMicros,
   outputWidth,
   outputHeight,
   fps,
@@ -58,6 +84,15 @@ export function SceneStudio({
   initialSceneId: string | null;
   planRuns: number;
   rerunPrice: string;
+  /**
+   * What one illustration costs, in micros, resolved **server side**.
+   *
+   * The raw figure rather than a formatted string, because the bar multiplies it
+   * by however many are missing. The env override carries no `NEXT_PUBLIC_`
+   * prefix, so reading it in the browser would silently resolve to the default —
+   * the same trap `rerunPrice` avoids by arriving pre-formatted.
+   */
+  objectImagePriceMicros: number;
   outputWidth: number;
   outputHeight: number;
   fps: VideoFps;
@@ -75,10 +110,17 @@ export function SceneStudio({
   const [phase, setPhase] = useState<string | null>(null);
   const [planError, setPlanError] = useState<string | null>(null);
   const [rejections, setRejections] = useState<PlanRejection[]>([]);
-  const [bitmaps, setBitmaps] = useState<Map<string, ImageBitmap>>(new Map());
+  const [characterBitmaps, setCharacterBitmaps] = useState<Map<string, ImageBitmap>>(
+    new Map()
+  );
+  const [objectBitmaps, setObjectBitmaps] = useState<Map<string, ImageBitmap>>(new Map());
+  const [drawingObjects, setDrawingObjects] = useState(false);
+  const [objectBatchError, setObjectBatchError] = useState<string | null>(null);
 
   const onePane = useMediaQuery(ONE_PANE_QUERY);
   const reducedMotion = useMediaQuery(REDUCED_MOTION_QUERY);
+  // Only ever handed to the upload retry, which refreshes a lapsed session.
+  const { getToken } = useAuth();
 
   const queue = useRenderQueue({ width: outputWidth, height: outputHeight, fps });
 
@@ -90,20 +132,41 @@ export function SceneStudio({
   const planning = phase !== null;
   const isRerun = planRuns > 0;
 
+  /**
+   * The emotions this plan actually composites, as one stable string.
+   *
+   * A string rather than an array because it is an effect dependency: a fresh
+   * array every render would re-download the whole character set on every
+   * keystroke. Read off `isCharacterTemplate` rather than a hardcoded pair, so
+   * `character-plus-object` pulls its cutout too.
+   */
   const emotionKey = useMemo(
     () =>
       Array.from(
         new Set(
           scenes
-            .filter(
-              (scene) =>
-                (scene.layoutTemplate === "character-left" ||
-                  scene.layoutTemplate === "character-center") &&
-                scene.emotion
-            )
+            .filter((scene) => isCharacterTemplate(scene.layoutTemplate) && scene.emotion)
             .map((scene) => scene.emotion as string)
         )
       )
+        .sort()
+        .join(" "),
+    [scenes]
+  );
+
+  /**
+   * The scenes that have an illustration to draw, as one stable string, for the
+   * same reason `emotionKey` is one.
+   *
+   * Keyed off `objectAssetPath` rather than off the template alone: a scene on
+   * an object template with nothing generated yet has nothing to fetch, and
+   * asking for it would spend a round trip to be told so.
+   */
+  const objectKey = useMemo(
+    () =>
+      scenes
+        .filter((scene) => isObjectTemplate(scene.layoutTemplate) && scene.objectAssetPath)
+        .map((scene) => scene.id)
         .sort()
         .join(" "),
     [scenes]
@@ -114,13 +177,26 @@ export function SceneStudio({
     let active = true;
     loadCharacterBitmaps(projectId, emotionKey.split(" "))
       .then((loaded) => {
-        if (active) setBitmaps(loaded);
+        if (active) setCharacterBitmaps(loaded);
       })
       .catch(() => {});
     return () => {
       active = false;
     };
   }, [projectId, emotionKey]);
+
+  useEffect(() => {
+    if (objectKey === "") return;
+    let active = true;
+    loadObjectBitmaps(projectId, objectKey.split(" "))
+      .then((loaded) => {
+        if (active) setObjectBitmaps(loaded);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [projectId, objectKey]);
 
   const selected =
     scenes.find((scene) => scene.id === selectedId) ?? scenes[0] ?? null;
@@ -140,6 +216,11 @@ export function SceneStudio({
     scenes.forEach((scene, i) => map.set(scene.id, i + 1));
     return map;
   }, [scenes]);
+
+  const bitmaps = useMemo<SceneBitmaps>(
+    () => ({ characters: characterBitmaps, objects: objectBitmaps }),
+    [characterBitmaps, objectBitmaps]
+  );
 
   const renderables = useMemo(() => {
     const map = new Map<string, ReturnType<typeof toRenderable>>();
@@ -208,7 +289,39 @@ export function SceneStudio({
     [scenes, blockers]
   );
 
-  const patchScene = useCallback((sceneId: string, patch: ScenePatch) => {
+  /**
+   * Included scenes blocked only for want of an illustration (spec `broll/0008`).
+   *
+   * **This list is what keeps the product's own principle true.** Illustrations
+   * are drawn on demand so a creator only pays for the ones they keep, but the
+   * brief also says a user who clicks generate and then export all should get
+   * usable output — and on demand means an object scene nobody opened has no
+   * image, which the batch would silently skip. So Render all offers to draw the
+   * missing ones first, once, with the total price on the button.
+   *
+   * Separate from `blockedCount` because these are the blocks a creator can
+   * clear from this screen by spending. A missing character is not; it needs a
+   * character attached on the project page.
+   */
+  const needingImages = useMemo(
+    () =>
+      scenes.filter(
+        (scene) =>
+          scene.included && blockers.get(scene.id)?.code === "no_object_image"
+      ),
+    [scenes, blockers]
+  );
+
+  /**
+   * Apply a change to one scene locally.
+   *
+   * Takes `Partial<SceneSummary>` rather than `ScenePatch`: every `ScenePatch` is
+   * one of these, but not every local change is a field the PATCH route accepts.
+   * A freshly drawn illustration is written by its own route and then reflected
+   * here, and typing this as the edit body would have meant either widening what
+   * the edit route claims to accept or keeping a second updater.
+   */
+  const patchScene = useCallback((sceneId: string, patch: Partial<SceneSummary>) => {
     setScenes((previous) =>
       previous.map((scene) => (scene.id === sceneId ? { ...scene, ...patch } : scene))
     );
@@ -243,6 +356,10 @@ export function SceneStudio({
         overlayText: created.overlayText,
         chart: null,
         chartRejectionReason: null,
+        object: null,
+        objectRejectionReason: null,
+        objectAssetPath: null,
+        objectAttempt: 0,
         strength: null,
         included: true,
         origin: "manual",
@@ -319,6 +436,49 @@ export function SceneStudio({
     },
     [renderables, positions, blockers]
   );
+
+  /**
+   * Draw every missing illustration, one at a time.
+   *
+   * **Sequential rather than parallel**, for the same reason scenes render one
+   * at a time: segmentation runs on the main thread, so a dozen at once is both
+   * slower than doing them in order and far likelier to kill the tab.
+   *
+   * One scene failing does not stop the rest, matching the batch export. The
+   * ones that succeed are recorded as they land, so a run that dies halfway
+   * leaves real progress rather than nothing.
+   */
+  const drawMissingObjects = useCallback(async () => {
+    if (drawingObjects || needingImages.length === 0) return;
+    setObjectBatchError(null);
+    setDrawingObjects(true);
+
+    let failed = 0;
+    try {
+      for (const scene of needingImages) {
+        try {
+          const { pathname } = await drawSceneObject({
+            projectId,
+            sceneId: scene.id,
+            getToken,
+          });
+          patchScene(scene.id, {
+            objectAssetPath: pathname,
+            objectAttempt: scene.objectAttempt + 1,
+          });
+        } catch {
+          failed += 1;
+        }
+      }
+    } finally {
+      setDrawingObjects(false);
+      if (failed > 0) {
+        setObjectBatchError(
+          `${failed} illustration${failed === 1 ? "" : "s"} couldn't be drawn. Nothing was charged for those; try them individually.`
+        );
+      }
+    }
+  }, [drawingObjects, needingImages, projectId, getToken, patchScene]);
 
   const renderAll = useCallback(() => {
     const jobs = exportable
@@ -429,6 +589,12 @@ export function SceneStudio({
             plannerCount={plannerCount}
             exportableCount={exportable.length}
             blockedCount={blockedCount}
+            needingImagesCount={needingImages.length}
+            missingImagesPrice={formatUsd(
+              objectImagePriceMicros * needingImages.length
+            )}
+            drawingObjects={drawingObjects}
+            objectBatchError={objectBatchError}
             readyCount={queue.readyCount}
             isRerun={isRerun}
             rerunPrice={rerunPrice}
@@ -447,6 +613,7 @@ export function SceneStudio({
             onRenderAll={renderAll}
             onCancelRender={queue.cancel}
             onDownload={() => queue.downloadZip(scenes.map((scene) => scene.id))}
+            onDrawMissingObjects={() => void drawMissingObjects()}
           />
 
           {planError && (
@@ -612,6 +779,13 @@ export function SceneStudio({
                   onDelete={() => removeScene(selected.id)}
                   onRender={() => renderOne(selected)}
                   onDownload={() => queue.downloadZip(scenes.map((scene) => scene.id))}
+                  objectImagePrice={formatUsd(objectImagePriceMicros)}
+                  onObjectGenerated={(pathname) =>
+                    patchScene(selected.id, {
+                      objectAssetPath: pathname,
+                      objectAttempt: selected.objectAttempt + 1,
+                    })
+                  }
                 />
               ) : null}
             </div>

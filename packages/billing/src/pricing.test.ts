@@ -1,10 +1,14 @@
 import { describe, it, expect, beforeEach } from "vitest";
 
 import {
+  BROLL_CHARACTER_SET_COST_MICROS,
   BROLL_CHARACTER_SET_MICROS,
+  BROLL_OBJECT_IMAGE_COST_MICROS,
+  BROLL_OBJECT_IMAGE_MICROS,
   BROLL_PLAN_RERUN_MICROS,
   BROLL_STALE_HOLD_MS,
   DEFAULT_BROLL_CHARACTER_SET_MICROS,
+  DEFAULT_BROLL_OBJECT_IMAGE_MICROS,
   DEFAULT_BROLL_PLAN_RERUN_MICROS,
   FALLBACK_HOLD_SECONDS,
   MICROS_PER_USD,
@@ -189,6 +193,31 @@ describe("b-roll prices", () => {
   it("resolves to the defaults when no env override is set", () => {
     expect(BROLL_CHARACTER_SET_MICROS).toBe(DEFAULT_BROLL_CHARACTER_SET_MICROS);
     expect(BROLL_PLAN_RERUN_MICROS).toBe(DEFAULT_BROLL_PLAN_RERUN_MICROS);
+    expect(BROLL_OBJECT_IMAGE_MICROS).toBe(DEFAULT_BROLL_OBJECT_IMAGE_MICROS);
+  });
+
+  it("defaults to $0.35 an object illustration (spec broll/0008)", () => {
+    expect(DEFAULT_BROLL_OBJECT_IMAGE_MICROS).toBe(350_000);
+    expect(formatUsd(DEFAULT_BROLL_OBJECT_IMAGE_MICROS)).toBe("$0.35");
+  });
+
+  it("holds roughly the character set's margin on a single image", () => {
+    // $2.00 buys six images costing $0.84, so ~2.4x. One image costs $0.134, and
+    // the price has to sit in the same neighbourhood or the two spends teach a
+    // creator different things about what this app charges for a picture.
+    const setMultiple = DEFAULT_BROLL_CHARACTER_SET_MICROS / BROLL_CHARACTER_SET_COST_MICROS;
+    const objectMultiple = DEFAULT_BROLL_OBJECT_IMAGE_MICROS / BROLL_OBJECT_IMAGE_COST_MICROS;
+
+    expect(objectMultiple).toBeGreaterThan(1.5);
+    expect(Math.abs(objectMultiple - setMultiple)).toBeLessThan(1);
+  });
+
+  it("costs exactly one image, with no multi-turn input to add", () => {
+    // The one cost figure here that is a single published rate rather than an
+    // estimate over one: there is no chain, so there is no anchor image being
+    // sent back in on every turn.
+    expect(BROLL_OBJECT_IMAGE_COST_MICROS).toBe(134_000);
+    expect(BROLL_OBJECT_IMAGE_COST_MICROS * 6).toBeLessThan(BROLL_CHARACTER_SET_COST_MICROS);
   });
 
   it("gives b-roll a far longer stale window than transcription", () => {

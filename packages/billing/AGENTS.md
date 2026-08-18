@@ -17,7 +17,7 @@ was dead code that no test covered. **Do not re-implement any of this app-side.*
 | File | Owns |
 |---|---|
 | `src/pricing.ts` | Rates, metering, conversions, and display — pure, no imports at all, safe in a client bundle. `MICROS_PER_USD`, `RETAIL_MICROS_PER_MINUTE` (env-overridable), `chargeMicrosForSeconds`, `formatUsd`, the per-second cost estimates that populate `credit_ledger.cost_micros`, hold sizing (`costSecondsForDurationMs`, `secondsFromDeepgramDuration`), and the member grant helpers. |
-| `src/ledger.ts` | Every statement that moves money. Rough-cut/wallet: `reserveCredits`, `reclaimStaleHold`, `settleHold`/`settleHoldQuietly`, `depositPurchase`, `chargeAiCut`, `refundAiCut`, `ensureMonthlyGrant`. B-roll: `reserveBrollHold`, `settleBrollHold`/`settleBrollHoldQuietly`, `reclaimStaleBrollHold`, `chargeBrollPlanRerun`, `refundBrollPlanRerun`. Server-only, enforced by an `import "server-only"` at the top. |
+| `src/ledger.ts` | Every statement that moves money. Rough-cut/wallet: `reserveCredits`, `reclaimStaleHold`, `settleHold`/`settleHoldQuietly`, `depositPurchase`, `chargeAiCut`, `refundAiCut`, `ensureMonthlyGrant`. B-roll: `reserveBrollHold`, `settleBrollHold`/`settleBrollHoldQuietly`, `reclaimStaleBrollHold`, `chargeBrollPlanRerun`, `refundBrollPlanRerun`, `chargeBrollObjectImage`/`refundBrollObjectImage`. Server-only, enforced by an `import "server-only"` at the top. |
 | `src/index.ts` | Barrel re-exporting both, for the common server-side case. |
 
 ## Conventions
@@ -62,6 +62,15 @@ was dead code that no test covered. **Do not re-implement any of this app-side.*
   Two shapes: a character set **holds first** (a ~110 s run of external image
   calls, so the money is reserved before the vendor is paid), a plan re-run
   **charges eagerly** like `chargeAiCut` (one synchronous call).
+- **Which of those two shapes a b-roll spend takes follows the shape of the
+  work, not the fact that it buys an image.** `chargeBrollObjectImage` (spec
+  `broll/0008`) is eager, beside `chargeBrollPlanRerun`, even though it buys a
+  Gemini image exactly like the character set does: it is *one* call of about
+  fifteen seconds, so a hold would add reserve, settle and reclaim paths to
+  protect a window barely longer than the request. It is also the simplest
+  statement here, because every illustration is charged — there is no bundled
+  first one, so no counter has to be incremented inside the charge. Its caller
+  refunds on failure rather than settling a hold.
 - **B-roll prices are flat per action, not per second.** `flatRateMicros` is the
   primitive; `chargeMicrosForSeconds` and the `*_PER_SECOND` constants price
   video duration and have no slot for a per-call price. `flatRateMicros` is

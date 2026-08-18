@@ -4,13 +4,18 @@ import {
   modelSceneSchema,
   buildSceneResponseSchema,
   normalizeModelScene,
+  isCharacterTemplate,
+  isObjectTemplate,
+  visualTypeForTemplate,
+  FALLBACK_TEMPLATE,
   MIN_SCENE_DURATION_MS,
   MAX_SCENE_DURATION_MS,
   type SceneChart,
+  type SceneObject,
   type VisualType,
   type LayoutTemplate,
 } from "./scene-schema";
-import { traceChart } from "./honesty";
+import { traceChart, traceObject } from "./honesty";
 import { formatUtterancesForPrompt, type Utterance } from "./utterances";
 import type { CharacterEmotion } from "./emotions";
 
@@ -75,6 +80,10 @@ export type PlannedScene = {
    * once `chart` is NULL, so the difference cannot be recovered on a reload.
    */
   chartRejectionReason: string | null;
+  /** The thing this scene illustrates, or null (spec `broll/0008`). */
+  object: SceneObject | null;
+  /** Why this scene's object was dropped, or null. Stored for the same reason. */
+  objectRejectionReason: string | null;
   strength: number;
   /**
    * Whether this scene starts checked (spec `0005` AC-85). Decided by
@@ -83,13 +92,13 @@ export type PlannedScene = {
   included: boolean;
 };
 
-/** Why one proposed scene, or one chart, did not survive (AC-24, AC-54). */
+/** Why one proposed scene, chart or object did not survive (AC-24, AC-54). */
 export type PlanRejection = {
   /** The utterance the model cited, when it named one we could resolve. */
   utteranceIndex: number | null;
   reason: string;
-  /** A dropped chart keeps its scene; a rejected scene does not (AC-53). */
-  kind: "scene" | "chart";
+  /** A dropped chart or object keeps its scene; a rejected scene does not (AC-53). */
+  kind: "scene" | "chart" | "object";
 };
 
 export type PlanResult = {
@@ -159,6 +168,22 @@ figure does not help the creator; it makes the video wrong under their name.
 When you do return a chart, set source_span to the character offsets, into the
 cited line's own text, of the words the figures come from. Count characters from
 zero at the first character of that line.
+
+THE SAME RULE APPLIES TO OBJECTS. A line often names something the viewer would
+rather see than read — a castle, an oil barrel, a rocket, a passport. When it
+does, return an object and prefer an object treatment over a plain text card:
+that is the whole reason the treatment exists, and a picture of the thing beats
+the words for it almost every time.
+
+But the subject must be something the speaker actually named. Use their own
+noun, and set source_span to the offsets where they said it. Do not add
+adjectives they did not say: "a castle" and "a ruined castle" are different
+pictures, and the second one is yours rather than theirs. Do not reach for an
+object when the line is abstract — "opportunity", "the economy", "momentum" are
+not things you can draw, and a picture invented for one is the same mistake as
+an invented number, just harder for the creator to spot. Every object is checked
+in code against the characters you cite, and one that is not found there is
+discarded.
 
 Prefer fewer, stronger scenes over covering every line. A line that is pure
 connective speech does not need a cutaway.
@@ -254,6 +279,34 @@ function assembleScene(
     }
   }
 
+  // Same shape, same reasoning, for the thing the scene was going to draw.
+  let object: SceneObject | null = null;
+  let objectRejectionReason: string | null = null;
+  if (parsed.object) {
+    const trace = traceObject(parsed.object, utterance.text);
+    if (trace.traced) {
+      object = parsed.object;
+    } else {
+      objectRejectionReason = trace.reason;
+      rejections.push({
+        utteranceIndex: utterance.index,
+        reason: `object dropped: ${trace.reason}`,
+        kind: "object",
+      });
+    }
+  }
+
+  // **A rejected subject takes its template with it.** An object template with
+  // no subject has nothing to illustrate and no prompt to generate from, so
+  // leaving it in place would strand the scene on a treatment it can never draw
+  // — visible to the creator only as a preview that never appears. Words are the
+  // one treatment that needs nothing but the line, which is what makes this an
+  // explained downgrade rather than a failure.
+  const layoutTemplate =
+    object === null && isObjectTemplate(parsed.layout_template)
+      ? FALLBACK_TEMPLATE
+      : parsed.layout_template;
+
   return {
     startMs: utterance.startMs,
     durationMs: Math.min(
@@ -263,14 +316,19 @@ function assembleScene(
     sourceText: utterance.text,
     sourceStartMs: utterance.startMs,
     sourceEndMs: utterance.endMs,
-    visualType: parsed.visual_type,
+    // Derived from the template that survived, not from what the model said, so
+    // a downgraded scene cannot claim to be an object scene in one column and a
+    // text card in another.
+    visualType: visualTypeForTemplate(layoutTemplate),
     // The column means "which character variant to composite", so it is null
     // whenever there is no character on screen — spec `0002`'s own definition.
-    emotion: parsed.visual_type === "character" ? parsed.emotion : null,
-    layoutTemplate: parsed.layout_template,
+    emotion: isCharacterTemplate(layoutTemplate) ? parsed.emotion : null,
+    layoutTemplate,
     overlayText: parsed.overlay_text,
     chart,
     chartRejectionReason,
+    object,
+    objectRejectionReason,
     strength: parsed.strength,
     // Provisional. `applySurplusRule` decides this once the whole plan is in,
     // because "beyond the target" is a fact about the plan, not about a scene.

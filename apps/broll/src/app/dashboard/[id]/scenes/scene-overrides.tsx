@@ -28,6 +28,7 @@ export function SceneOverrides({
   emotion,
   origin,
   hasChart,
+  hasObject,
   committedEmotions,
   disabled = false,
   firstControlRef,
@@ -47,6 +48,13 @@ export function SceneOverrides({
   origin: string;
   /** Gates `chart-full`: a scene with no chart cannot draw one (AC-75). */
   hasChart: boolean;
+  /**
+   * Gates the object templates: a scene that names nothing has nothing to
+   * illustrate (spec `broll/0008`). The *subject*, not the generated image — an
+   * image is made from the template that carries the button, so gating on it
+   * would make that template unreachable.
+   */
+  hasObject: boolean;
   /** Gates the character templates and fills the emotion picker (AC-77). */
   committedEmotions: CharacterEmotion[];
   /** Inert while a plan run is in flight (spec `0006` AC-116). */
@@ -161,6 +169,7 @@ export function SceneOverrides({
   const templates = templateOptionsFor({
     hasChart,
     hasCharacterSet: committedEmotions.length > 0,
+    hasObject,
   });
   const templateChoices = templates.includes(layoutTemplate)
     ? templates
@@ -343,6 +352,43 @@ function TemplateDiagram({ template }: { template: LayoutTemplate }) {
         <div className="w-2 h-7 rounded-t bg-[var(--broll-accent)]" />
         <div className="w-2 h-5 rounded-t bg-[var(--broll-accent)] opacity-90" />
         <div className="w-2 h-3 rounded-t bg-[var(--broll-accent)] opacity-70" />
+      </div>
+    );
+  }
+  if (template === "object-full") {
+    // A diamond rather than a circle, so an object never reads as a head.
+    return (
+      <div className="w-full h-full flex items-center justify-center">
+        <div className="w-6 h-6 rotate-45 rounded-sm bg-zinc-500 border border-zinc-400" />
+      </div>
+    );
+  }
+  if (template === "object-left") {
+    return (
+      <div className="w-full h-full flex items-center gap-1.5 px-1">
+        <div className="w-1/3 h-full flex items-center justify-center">
+          <div className="w-4 h-4 rotate-45 rounded-sm bg-zinc-500 border border-zinc-400" />
+        </div>
+        <div className="flex-1 flex flex-col gap-1">
+          <div className="w-full h-1 rounded bg-zinc-500" />
+          <div className="w-4/5 h-1 rounded bg-zinc-500" />
+          <div className="w-3/5 h-1 rounded bg-zinc-600" />
+        </div>
+      </div>
+    );
+  }
+  if (template === "character-plus-object") {
+    // The object on the stage, the character standing to its right — the
+    // landscape zoning the renderer actually uses.
+    return (
+      <div className="w-full h-full flex items-stretch gap-1 px-1">
+        <div className="flex-1 flex flex-col items-center justify-center gap-1">
+          <div className="w-4 h-4 rotate-45 rounded-sm bg-zinc-500 border border-zinc-400" />
+          <div className="w-3/4 h-1 rounded bg-zinc-500 mt-1" />
+        </div>
+        <div className="w-1/3 h-full rounded bg-zinc-600 flex items-start justify-center pt-1">
+          <div className="w-2.5 h-2.5 rounded-full bg-zinc-400" />
+        </div>
       </div>
     );
   }

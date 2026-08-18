@@ -64,6 +64,32 @@ export async function characterRegenRateLimit(
 }
 
 /**
+ * Per-user cap on generated object illustrations (spec `broll/0008`).
+ *
+ * Its own bucket rather than sharing the character regeneration one: they are
+ * different spends on different rows, and a creator who redrew a character six
+ * times should not find themselves unable to illustrate a scene.
+ *
+ * Sized against the batch action. A plan of twenty scenes where most name
+ * something could reasonably want fifteen illustrations in one go, so the cap
+ * has to sit above a legitimate whole-project generate and below a script. Sixty
+ * an hour is roughly three full projects.
+ *
+ * **Fails closed**, like every money path here.
+ */
+const OBJECT_IMAGE_LIMIT = 60;
+const OBJECT_IMAGE_WINDOW_SECONDS = 3600;
+
+export async function objectImageRateLimit(clerkId: string): Promise<RateLimitResult> {
+  return rateLimit(
+    `broll-object:${clerkId}`,
+    OBJECT_IMAGE_LIMIT,
+    OBJECT_IMAGE_WINDOW_SECONDS,
+    { failClosed: true }
+  );
+}
+
+/**
  * Per-user cap on Scene Studio edits.
  *
  * Deliberately generous and deliberately **fail open**, unlike the money paths

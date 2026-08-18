@@ -15,7 +15,7 @@ import { CHARACTER_EMOTIONS } from "./emotions";
  * types in the browser.
  */
 
-/** The six templates the planner may write, whether or not one renders yet (AC-57). */
+/** The templates the planner may write, whether or not one renders yet (AC-57). */
 export const LAYOUT_TEMPLATES = [
   "character-left",
   "character-center",
@@ -23,6 +23,11 @@ export const LAYOUT_TEMPLATES = [
   "character-plus-chart",
   "text-card",
   "split-compare",
+  // Spec `broll/0008`. An object scene draws a generated illustration of the
+  // thing the speaker named, in the project's character style.
+  "object-full",
+  "object-left",
+  "character-plus-object",
 ] as const;
 
 export type LayoutTemplate = (typeof LAYOUT_TEMPLATES)[number];
@@ -55,12 +60,89 @@ export const PLANNABLE_TEMPLATES = [
   "character-center",
   "chart-full",
   "text-card",
+  "object-full",
+  "object-left",
+  "character-plus-object",
 ] as const;
 
+/**
+ * The templates that composite a generated illustration (spec `broll/0008`).
+ *
+ * **Here rather than in `scene-templates.ts` because the planner needs it.**
+ * That module imports `RENDERABLE_TEMPLATES`, which sits beside the `switch` in
+ * `render/renderable.ts` and pulls in every template drawer; the planner reads
+ * this list to know when a rejected subject has to take its template down with
+ * it, and dragging canvas code into the planner's server bundle to answer that
+ * is the same trade `PLANNABLE_TEMPLATES` above already refuses.
+ * `scene-templates.ts` re-exports it, so there is still one list.
+ */
+export const OBJECT_TEMPLATES = [
+  "object-full",
+  "object-left",
+  "character-plus-object",
+] as const;
+
+export function isObjectTemplate(template: string): boolean {
+  return (OBJECT_TEMPLATES as readonly string[]).includes(template);
+}
+
+/** The templates that composite a character, and therefore carry an emotion. */
+export const CHARACTER_TEMPLATES = [
+  "character-left",
+  "character-center",
+  "character-plus-object",
+] as const;
+
+export function isCharacterTemplate(template: string): boolean {
+  return (CHARACTER_TEMPLATES as readonly string[]).includes(template);
+}
+
+/**
+ * Where a scene lands when what it was going to draw did not survive its trace.
+ *
+ * Words are the one treatment that needs nothing but the line itself, which is
+ * what makes it the honest fallback rather than a failure state.
+ */
+export const FALLBACK_TEMPLATE = "text-card" satisfies (typeof LAYOUT_TEMPLATES)[number];
+
 /** What is actually on screen. Mirrors `broll_scenes.visual_type`. */
-export const VISUAL_TYPES = ["character", "infographic", "text"] as const;
+export const VISUAL_TYPES = ["character", "infographic", "text", "object"] as const;
 
 export type VisualType = (typeof VISUAL_TYPES)[number];
+
+/**
+ * What is on screen, derived from the layout (AC-76).
+ *
+ * **`visual_type` is never accepted from a client.** Two writable fields
+ * encoding the same fact is a contradiction waiting to be stored: a request
+ * could say `text-card` and `character` together, and every later reader would
+ * have to guess which one meant it.
+ *
+ * Total over every template, including the two with no renderer, because the
+ * planner writes those and a derivation with a hole in it is a derivation that
+ * cannot be trusted as one.
+ *
+ * `character-plus-object` reads as `character` rather than `object`: a frame
+ * with the creator in it is a character scene to everyone looking at it, and the
+ * object is the prop. The same reading `character-plus-chart` already gets.
+ */
+export function visualTypeForTemplate(template: LayoutTemplate): VisualType {
+  switch (template) {
+    case "character-left":
+    case "character-center":
+    case "character-plus-chart":
+    case "character-plus-object":
+      return "character";
+    case "chart-full":
+    case "split-compare":
+      return "infographic";
+    case "object-full":
+    case "object-left":
+      return "object";
+    default:
+      return "text";
+  }
+}
 
 /**
  * How long a b-roll asset runs. Four to ten seconds.
@@ -124,6 +206,43 @@ const chartSchema = z.object({
 });
 
 /**
+ * A concrete thing the speaker named, with the span it was named in.
+ *
+ * **The sibling of `chartSchema`, and deliberately shaped like it** (spec
+ * `broll/0008`). A chart earns its place by tracing its numbers back to the
+ * cited line; an object earns its place the same way, one notch lighter — the
+ * subject has to be a noun that actually appears in the span. That gate is what
+ * stops the app illustrating a castle nobody mentioned, which is the same
+ * category of invention as a statistic nobody said, just in pictures.
+ *
+ * `source_span` holds character offsets rather than a quoted string, for the
+ * reason `chartSchema` gives: a model that misquotes its own citation would
+ * otherwise be indistinguishable from one that cited nothing.
+ */
+const objectSchema = z.object({
+  subject: z
+    .string()
+    .min(1)
+    .describe(
+      "The one concrete, depictable thing the speaker named — 'a medieval castle', " +
+        "'an oil barrel', 'a rocket'. Use the speaker's own noun, and keep it to a short " +
+        "noun phrase. Never a concept, never a mood, never a named person."
+    ),
+  source_span: z
+    .object({
+      start_char: z.int().nonnegative(),
+      end_char: z.int().nonnegative(),
+    })
+    .describe(
+      "Character offsets into the cited utterance's text, marking where the speaker named " +
+        "that thing. This is checked in code: a subject that cannot be found inside these " +
+        "offsets is discarded and the scene falls back to text."
+    ),
+});
+
+export type SceneObject = z.infer<typeof objectSchema>;
+
+/**
  * One proposed scene, exactly as the model returns it.
  *
  * Note what is absent: no timecode, and no source text. Both are resolved from
@@ -140,7 +259,9 @@ export const modelSceneSchema = z.object({
     .describe(
       `How long the cutaway should hold, between ${MIN_SCENE_DURATION_MS} and ${MAX_SCENE_DURATION_MS} milliseconds.`
     ),
-  visual_type: z.enum(VISUAL_TYPES).describe("Whether this scene is character, infographic, or text led."),
+  visual_type: z
+    .enum(VISUAL_TYPES)
+    .describe("Whether this scene is character, infographic, object, or text led."),
   emotion: z
     .enum(CHARACTER_EMOTIONS)
     .nullable()
@@ -158,6 +279,14 @@ export const modelSceneSchema = z.object({
       "The quantified claim in this line, or null. Null is the right answer far more often " +
         "than not: a line that says 'most of it' or 'a huge share' has no chart in it, and " +
         "inventing a number for one is the single worst thing you can do here."
+    ),
+  object: objectSchema
+    .nullable()
+    .describe(
+      "The one concrete thing this line names and asks the viewer to picture, or null. " +
+        "Null far more often than not: a line has an object only when the speaker names " +
+        "something you could draw, and picking one they did not name is as bad as " +
+        "inventing a number. Prefer an object over a plain text card when the line has one."
     ),
   strength: z
     .number()
@@ -222,6 +351,20 @@ export function normalizeModelScene(candidate: unknown): unknown {
     scene.chart = hasValues && hasSpan ? c : null;
   } else {
     scene.chart = null;
+  }
+
+  // Same leniency, same reasoning: an object with no subject, or with nowhere
+  // cited to check it against, is not an object. Reading it as "no object" keeps
+  // the scene and stores no claim.
+  const object = scene.object;
+  if (object && typeof object === "object" && !Array.isArray(object)) {
+    const o = { ...(object as Record<string, unknown>) };
+    const subject = typeof o.subject === "string" ? o.subject.trim() : "";
+    const hasSpan = Boolean(o.source_span) && typeof o.source_span === "object";
+    if (subject !== "") o.subject = subject;
+    scene.object = subject !== "" && hasSpan ? o : null;
+  } else {
+    scene.object = null;
   }
 
   return scene;
