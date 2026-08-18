@@ -1453,11 +1453,19 @@ drawing.
         `figure-frame` extraction had already absorbed one, which is the reason
         this slice waited for that PR to merge rather than consolidating the same
         function twice.
-  - [ ] **The chart, then measure.** Baseline rule, rounded caps, bar stagger,
-        line dots, compact notation, title wrap, the formatter returning number
-        and unit separately, and the donut as its own step. Then time an encode
-        against Phase 0's 1791ms, deliberately here rather than at the end.
-        Covers AC-180 to AC-188, AC-198.
+  - [ ] **The chart, then measure.** Drawing done 2026-08-18, **the measurement
+        is still owed**. Baseline rule, rounded caps, bar stagger, line dots,
+        compact notation, title wrap, the formatter returning number and unit
+        separately, and the donut as its own step: all built, in
+        [render/chart-full.ts](../../../apps/broll/src/lib/render/chart-full.ts)
+        and [render/chart-label.ts](../../../apps/broll/src/lib/render/chart-label.ts).
+        Covers AC-180 to AC-188.
+
+        The box stays open on AC-198 alone. Timing a 6 second 1080p30 encode
+        against Phase 0's 1791ms needs a real browser, so it is a `/check verify`
+        step rather than a `/develop` one. **The two milestones below are
+        deliberately not started until it has been run**, which is the whole
+        point of the spec putting the measurement here rather than at the end.
   - [ ] **Text setting and creator marked emphasis.** Optical centring off real
         metrics, orphan control with the overflow guard, the gradient scrim, then
         the asterisk syntax with run aware wrapping. Covers AC-189 to AC-193.

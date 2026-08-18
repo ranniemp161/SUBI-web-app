@@ -1,7 +1,7 @@
-import { formatChartValue } from "./chart-label";
+import { formatChartParts, formatChartValue } from "./chart-label";
 import type { Render2DContext } from "./context";
-import { typeScale } from "./layout";
-import { easeOutCubic } from "./motion";
+import { typeScale, wrapText } from "./layout";
+import { easeOutCubic, entranceAt, staggerDelayMs } from "./motion";
 import { BODY_TYPEFACE, BRAND, SERIES, TYPEFACE, drawBackdrop } from "./theme";
 
 /**
@@ -44,6 +44,37 @@ export const CHART_FULL_THEME = {
   marginRatio: 0.08,
   /** Fraction of a bar slot taken by the gap between bars. */
   barGapRatio: 0.28,
+  /**
+   * Bar corner rounding: a share of the bar's own width, capped so one wide bar
+   * does not turn into a lozenge. Rounded at the top, square where it meets the
+   * baseline — a bar rounded at both ends stops looking like it stands on zero.
+   */
+  barCornerRatio: 0.35,
+  /** The cap, as a share of the short edge: 12px at 1080. */
+  barCornerMaxRatio: 12 / 1080,
+  /**
+   * The rule the marks stand on, and the only horizontal line in the frame.
+   *
+   * **There are deliberately no value gridlines.** The 40px backdrop grid is
+   * decorative and lines up with no value, so value lines drawn over it would
+   * imply the backdrop meant something. One grid in a frame is the most a
+   * viewer can read.
+   */
+  baseline: BRAND.surfaceAlt,
+  /** Baseline thickness as a share of the short edge, floored at a pixel. */
+  baselineThicknessRatio: 2 / 1080,
+  /** A line chart's dot radius, as a multiple of the line's own width. */
+  dotRadiusRatio: 1.8,
+  /** How much of the donut's radius is hole. */
+  donutInnerRatio: 0.58,
+  /** The gap between slices, in degrees. Separation without distorting a share. */
+  donutSliceGapDegrees: 1.5,
+  /** The figure in the hole, as a share of the hole's own diameter. */
+  donutHoleTextRatio: 0.3,
+  /** A big number's unit, as a share of the number's size. */
+  unitSizeRatio: 0.42,
+  /** How many lines a title may wrap to before it is trimmed. */
+  titleMaxLines: 2,
   titleSizeRatio: 0.062,
   valueSizeRatio: 0.044,
   categorySizeRatio: 0.034,
@@ -92,6 +123,11 @@ export type Chart2DContext = Pick<
   // Not drawn with directly: `drawBackdrop` fades the grid toward the frame
   // edges through one radial gradient, and this template opens with it.
   | "createRadialGradient"
+  // A bar rounded at the top and square at the baseline, in one call.
+  | "roundRect"
+  | "globalAlpha"
+  // Wrapping a title, and setting a unit beside a number it has to measure.
+  | "measureText"
 >;
 
 /** The shapes the planner may ask for. */
@@ -162,6 +198,16 @@ interface Layout {
    */
   scale: number;
   grown: number;
+  /** Time since the scene started, for anything that staggers per mark. */
+  elapsedMs: number;
+  /**
+   * How many lines the title wraps to, 0 to `titleMaxLines`.
+   *
+   * Carried on the layout rather than recomputed where it is needed, because
+   * measuring text means setting the font, and a plot area that measured with
+   * whatever font happened to be set would move depending on what drew last.
+   */
+  titleLineCount: number;
 }
 
 /**
@@ -192,12 +238,17 @@ export function drawChartFullFrame(
   ctx.save();
   ctx.translate(0, idleDrift(elapsedMs, height));
 
+  const margin = Math.min(width, height) * theme.marginRatio;
+  const scale = typeScale(frame);
+
   const layout: Layout = {
     width,
     height,
-    margin: Math.min(width, height) * theme.marginRatio,
-    scale: typeScale(frame),
+    margin,
+    scale,
     grown: entranceProgress(elapsedMs),
+    elapsedMs,
+    titleLineCount: countTitleLines(ctx, scene.title, width - margin * 2, scale),
   };
 
   const shape = resolveChartShape(scene.type, values.length);
@@ -214,14 +265,102 @@ export function drawChartFullFrame(
   ctx.restore();
 }
 
-/** The heading, top left, for every shape except the single big number. */
+/**
+ * The heading, top left, for every shape except the single big number.
+ *
+ * **Wrapped to two lines and trimmed past that**, because a planner writes a
+ * title from the speaker's framing and has no idea how wide the frame is. A
+ * long one used to be drawn as a single `fillText` that ran straight off the
+ * right edge — a live bug rather than a matter of taste, and invisible until
+ * someone rendered a scene whose title happened to be long.
+ */
 function drawTitle(ctx: Chart2DContext, title: string, layout: Layout): void {
-  const size = layout.scale * CHART_FULL_THEME.titleSizeRatio;
-  ctx.fillStyle = CHART_FULL_THEME.title;
+  const theme = CHART_FULL_THEME;
+  const size = layout.scale * theme.titleSizeRatio;
+
+  ctx.fillStyle = theme.title;
   ctx.font = `600 ${size}px ${TYPEFACE}`;
   ctx.textAlign = "left";
   ctx.textBaseline = "top";
-  ctx.fillText(title, layout.margin, layout.margin);
+
+  const maxWidth = layout.width - layout.margin * 2;
+  const lines = titleLines(ctx, title, maxWidth);
+
+  lines.forEach((line, index) => {
+    ctx.fillText(line, layout.margin, layout.margin + index * size * TITLE_LINE_HEIGHT);
+  });
+}
+
+/** Line height of a wrapped title, as a multiple of its type size. */
+const TITLE_LINE_HEIGHT = 1.2;
+
+/**
+ * How many lines the title takes, measured in the font it will be drawn in.
+ *
+ * Sets the font before measuring and is called before any mark is drawn, so
+ * the answer never depends on what the context happened to be set to.
+ */
+function countTitleLines(
+  ctx: Chart2DContext,
+  title: string,
+  maxWidth: number,
+  scale: number
+): number {
+  ctx.font = `600 ${scale * CHART_FULL_THEME.titleSizeRatio}px ${TYPEFACE}`;
+  return titleLines(ctx, title, maxWidth).length;
+}
+
+/**
+ * A title as the lines it will actually be drawn on.
+ *
+ * Exported so the plot area can be measured against the title that will be
+ * drawn rather than against an assumed one line. A two line title that pushed
+ * the marks down without the plot knowing would overlap them.
+ */
+export function titleLines(
+  ctx: Pick<Chart2DContext, "measureText">,
+  title: string,
+  maxWidth: number
+): string[] {
+  const theme = CHART_FULL_THEME;
+  const text = title.trim();
+  if (text === "") return [];
+
+  const wrapped = wrapText(ctx, text, maxWidth);
+  if (wrapped.length <= theme.titleMaxLines) return wrapped;
+
+  // Past the limit the last kept line absorbs an ellipsis, and words are
+  // dropped from it until the ellipsis fits too. Trimming without re-measuring
+  // is how an ellipsis ends up hanging off the edge it was added to prevent.
+  const kept = wrapped.slice(0, theme.titleMaxLines);
+  let last = kept[kept.length - 1];
+
+  while (last.length > 0 && ctx.measureText(`${last}…`).width > maxWidth) {
+    const words = last.split(" ");
+    if (words.length === 1) {
+      last = last.slice(0, -1);
+      continue;
+    }
+    words.pop();
+    last = words.join(" ");
+  }
+
+  kept[kept.length - 1] = `${last}…`;
+  return kept;
+}
+
+/**
+ * The rule the marks stand on.
+ *
+ * One hairline, so a bar stands on something and zero is visible. Drawn as a
+ * thin rect rather than a stroked path for the same reason the grid is: a
+ * stroke centres on its coordinate and lands on a half pixel.
+ */
+function drawBaseline(ctx: Chart2DContext, layout: Layout, y: number): void {
+  const theme = CHART_FULL_THEME;
+  const thickness = Math.max(1, layout.scale * theme.baselineThicknessRatio);
+  ctx.fillStyle = theme.baseline;
+  ctx.fillRect(layout.margin, Math.round(y), layout.width - layout.margin * 2, thickness);
 }
 
 /**
@@ -246,12 +385,46 @@ function drawBigNumber(
   const centerX = layout.width / 2;
   const centerY = layout.height / 2;
 
+  // **The number and its unit are drawn separately**, so the unit can be set
+  // smaller and in the muted tone while the figure carries the frame. Where the
+  // unit sits relative to the number is still decided in one place, by
+  // `formatChartParts`, rather than being worked out a second time here.
+  const parts = formatChartParts(shown, scene.unit);
+  const unitSize = numberSize * theme.unitSizeRatio;
+
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+
+  ctx.font = `700 ${numberSize}px ${TYPEFACE}`;
+  const numberWidth = ctx.measureText(parts.number).width;
+  ctx.font = `500 ${unitSize}px ${BODY_TYPEFACE}`;
+  // A word unit takes a space on either side of the join; a symbol hugs.
+  const spacing = parts.unit.length > 1 ? unitSize * 0.35 : 0;
+  const unitWidth = parts.unit === "" ? 0 : ctx.measureText(parts.unit).width + spacing;
+
+  // Centre the pair, not the number, or a long unit pushes the figure off axis.
+  const totalWidth = numberWidth + unitWidth;
+  let cursor = centerX - totalWidth / 2;
+
+  if (parts.where === "prefix" && parts.unit !== "") {
+    ctx.fillStyle = theme.categoryLabel;
+    ctx.font = `500 ${unitSize}px ${BODY_TYPEFACE}`;
+    ctx.fillText(parts.unit, cursor, centerY);
+    cursor += unitWidth;
+  }
+
   ctx.fillStyle = theme.valueLabel;
   ctx.font = `700 ${numberSize}px ${TYPEFACE}`;
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText(formatChartValue(shown, scene.unit), centerX, centerY);
+  ctx.fillText(parts.number, cursor, centerY);
+  cursor += numberWidth;
 
+  if (parts.where === "suffix" && parts.unit !== "") {
+    ctx.fillStyle = theme.categoryLabel;
+    ctx.font = `500 ${unitSize}px ${BODY_TYPEFACE}`;
+    ctx.fillText(parts.unit, cursor + spacing, centerY);
+  }
+
+  ctx.textAlign = "center";
   const caption = scene.labels[0] ?? scene.title;
   ctx.fillStyle = theme.categoryLabel;
   // Body face: the caption supports the number rather than being the claim.
@@ -265,7 +438,10 @@ function plotArea(layout: Layout) {
   const theme = CHART_FULL_THEME;
   const titleSize = layout.scale * theme.titleSizeRatio;
   const categorySize = layout.scale * theme.categorySizeRatio;
-  const top = layout.margin + titleSize * 1.8;
+  // Measured against the lines the title will actually occupy, so a two line
+  // title pushes the marks down instead of being drawn over them.
+  const titleHeight = titleSize * (0.8 + TITLE_LINE_HEIGHT * layout.titleLineCount);
+  const top = layout.margin + titleHeight;
   const bottom = layout.height - layout.margin - categorySize * 1.6;
   return {
     top,
@@ -296,16 +472,45 @@ function drawBars(
   // chart carrying someone's spoken statistic is its own kind of fabrication.
   const peak = Math.max(...values.map((value) => Math.abs(value)));
 
+  // The rule the bars stand on, drawn before them so a bar's square foot sits
+  // on the line rather than the line cutting across it.
+  drawBaseline(ctx, layout, plot.bottom);
+
+  // Rounded at the top, square at the baseline. A share of the bar's own width
+  // so it reads as rounded at any bar count, capped so one wide bar does not
+  // become a lozenge, and never more than half the bar's height or the corners
+  // would meet and swallow a short bar whole.
+  const corner = Math.min(
+    barWidth * theme.barCornerRatio,
+    layout.scale * theme.barCornerMaxRatio
+  );
+
   values.forEach((value, index) => {
     const ratio = peak === 0 ? 0 : Math.abs(value) / peak;
     // Leave room above the tallest bar for its value label.
     const fullHeight = plot.height * ratio * 0.86;
-    const barHeight = fullHeight * layout.grown;
+
+    // **Arrivals are staggered in array order, which is spoken order.** Never
+    // sorted by size: the sequence a viewer watches is the sequence the speaker
+    // said, and reordering it would be the chart telling a story of its own.
+    const arrived = barArrival(layout.elapsedMs, index);
+    const barHeight = fullHeight * arrived;
     const x = layout.margin + slot * index + gap / 2;
     const y = plot.bottom - barHeight;
 
-    ctx.fillStyle = value < 0 ? theme.barMuted : theme.bar;
-    ctx.fillRect(x, y, barWidth, barHeight);
+    if (barHeight > 0) {
+      ctx.fillStyle = value < 0 ? theme.barMuted : theme.bar;
+      ctx.beginPath();
+      const radius = Math.min(corner, barHeight / 2);
+      ctx.roundRect(x, y, barWidth, barHeight, [radius, radius, 0, 0]);
+      ctx.fill();
+    }
+
+    // The label fades with its own bar rather than with the chart, or a number
+    // hangs in the air above a bar that has not arrived yet.
+    if (arrived <= 0) return;
+    ctx.save();
+    ctx.globalAlpha = arrived;
 
     // The value label, with its unit. This is AC-34 reaching the pixels: the
     // number is never drawn without the unit the speaker attached to it.
@@ -316,7 +521,28 @@ function drawBars(
     ctx.fillText(formatChartValue(value, scene.unit), x + barWidth / 2, y - valueSize * 0.25);
 
     drawCategory(ctx, scene.labels[index], x + barWidth / 2, plot.bottom, plot.categorySize);
+    ctx.restore();
   });
+}
+
+/**
+ * How far the bar at `index` has arrived at `elapsedMs`.
+ *
+ * Worked out from elapsed time rather than from the chart's overall progress,
+ * because that progress is already eased: staggering it would ease an eased
+ * value and the gap between bars would stretch and compress along the curve
+ * rather than staying the 70ms the motion module states.
+ *
+ * The last bar of a five bar chart finishes 280ms after the first, well inside
+ * the planner's four second floor, so a staggered chart still settles long
+ * before its clip ends.
+ *
+ * Exported because "bars arrive in order, and all of them arrive" is a property
+ * worth asserting directly rather than inferring from drawn heights.
+ */
+export function barArrival(elapsedMs: number, index: number): number {
+  if (!Number.isFinite(elapsedMs) || elapsedMs <= 0) return 0;
+  return entranceAt(elapsedMs, staggerDelayMs(index), CHART_FULL_THEME.entranceMs);
 }
 
 /**
@@ -350,6 +576,8 @@ function drawLine(
   // How far along the polyline the reveal has travelled, in segments.
   const reach = (values.length - 1) * layout.grown;
 
+  drawBaseline(ctx, layout, plot.bottom);
+
   ctx.strokeStyle = theme.bar;
   ctx.lineWidth = Math.max(1, layout.scale * theme.lineWidthRatio);
   ctx.lineJoin = "round";
@@ -368,24 +596,49 @@ function drawLine(
   }
   ctx.stroke();
 
+  // A dot at each measured value, and **only** at measured values. Straight
+  // segments between them with no smoothing: a curve drawn through measured
+  // points asserts values between them that nobody measured, which on a chart
+  // built from someone's spoken claim is a number the app invented.
+  const dotRadius = ctx.lineWidth * theme.dotRadiusRatio;
   values.forEach((value, index) => {
     if (index > reach) return;
     const point = pointAt(index);
+
+    ctx.fillStyle = theme.bar;
+    ctx.beginPath();
+    ctx.arc(point.x, point.y, dotRadius, 0, Math.PI * 2);
+    ctx.fill();
+
     ctx.fillStyle = theme.valueLabel;
     ctx.font = `600 ${valueSize}px ${TYPEFACE}`;
     ctx.textAlign = "center";
     ctx.textBaseline = "bottom";
-    ctx.fillText(formatChartValue(value, scene.unit), point.x, point.y - valueSize * 0.4);
+    ctx.fillText(
+      formatChartValue(value, scene.unit),
+      point.x,
+      point.y - valueSize * 0.4 - dotRadius
+    );
     drawCategory(ctx, scene.labels[index], point.x, plot.bottom, plot.categorySize);
   });
 }
 
 /**
- * Shares of a whole, sweeping in clockwise from twelve o'clock.
+ * Shares of a whole as a **donut**, sweeping in clockwise from twelve o'clock.
  *
  * Negative values are drawn by magnitude: a share of a whole has no meaningful
  * negative, and dropping the slice would silently lose a number the speaker
  * said.
+ *
+ * **The hole carries the largest traced value, never a total.** Summing the
+ * values produces a figure the speaker never said, and putting an invented
+ * number in the largest type on the frame is exactly what the honesty check
+ * exists to prevent. `Math.max` over the values is a number that was actually
+ * spoken; `reduce((a, b) => a + b)` is not, however natural it looks in a hole.
+ *
+ * This is a rewrite rather than a restyle: wedges from the centre outward
+ * became an annulus with angular gaps, which is different geometry rather than
+ * different colour.
  */
 function drawPie(
   ctx: Chart2DContext,
@@ -399,6 +652,7 @@ function drawPie(
 
   const plot = plotArea(layout);
   const radius = Math.min(plot.width, plot.height) / 2;
+  const innerRadius = radius * theme.donutInnerRatio;
   const centerX = layout.width / 2;
   const centerY = plot.top + plot.height / 2;
   const valueSize = layout.scale * theme.valueSizeRatio;
@@ -406,21 +660,33 @@ function drawPie(
   // Start at twelve o'clock: canvas angles start at three o'clock.
   let angle = -Math.PI / 2;
   const sweep = Math.PI * 2 * layout.grown;
+  const gap = (theme.donutSliceGapDegrees * Math.PI) / 180;
 
   magnitudes.forEach((magnitude, index) => {
     const share = total === 0 ? 0 : magnitude / total;
     const slice = sweep * share;
     if (slice <= 0) return;
 
+    // Half the gap is taken off each end, so the separation between two slices
+    // is one gap rather than two. A slice narrower than its own gap keeps a
+    // sliver instead of inverting into a negative sweep.
+    const inset = Math.min(gap / 2, slice / 3);
+    const from = angle + inset;
+    const to = angle + slice - inset;
+
     ctx.fillStyle = theme.slices[index % theme.slices.length];
     ctx.beginPath();
-    ctx.moveTo(centerX, centerY);
-    ctx.arc(centerX, centerY, radius, angle, angle + slice);
+    ctx.arc(centerX, centerY, radius, from, to);
+    // Back along the inner edge to close the annulus. Drawn as a second arc
+    // rather than a straight line so the hole stays round at every slice.
+    ctx.arc(centerX, centerY, innerRadius, to, from, true);
     ctx.closePath();
     ctx.fill();
 
     angle += slice;
   });
+
+  drawDonutHole(ctx, scene, values, { centerX, centerY, innerRadius }, layout);
 
   // Labels sit outside the circle, at each slice's midpoint, and only once the
   // sweep has passed them.
@@ -443,6 +709,50 @@ function drawPie(
       centerY + Math.sin(mid) * labelRadius
     );
   });
+}
+
+/**
+ * The figure set in the donut's hole.
+ *
+ * **`Math.max`, never a sum.** See `drawPie`. This is the one place in the
+ * renderer where the obvious arithmetic would put a number on screen that
+ * nobody said, so the rule is stated at both ends.
+ *
+ * Sized to the **hole** rather than to the frame: it has to fit inside 0.58 of
+ * the radius, so it cannot reuse the big number's frame relative ratio.
+ */
+function drawDonutHole(
+  ctx: Chart2DContext,
+  scene: ChartFullScene,
+  values: number[],
+  hole: { centerX: number; centerY: number; innerRadius: number },
+  layout: Layout
+): void {
+  const theme = CHART_FULL_THEME;
+  if (values.length === 0 || hole.innerRadius <= 0) return;
+
+  const largest = Math.max(...values);
+  const label = formatChartValue(largest * layout.grown, scene.unit);
+  if (label === "") return;
+
+  const diameter = hole.innerRadius * 2;
+  let size = diameter * theme.donutHoleTextRatio;
+
+  // Step down until it fits the hole it is sitting in. A long label with a word
+  // unit is what overflows here, and a number spilling over the ring reads as
+  // broken rather than as emphasis.
+  const maxWidth = diameter * 0.82;
+  for (let step = 0; step < 8; step += 1) {
+    ctx.font = `700 ${size}px ${TYPEFACE}`;
+    if (ctx.measureText(label).width <= maxWidth) break;
+    size *= 0.9;
+  }
+
+  ctx.fillStyle = theme.valueLabel;
+  ctx.font = `700 ${size}px ${TYPEFACE}`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(label, hole.centerX, hole.centerY);
 }
 
 /** A category label under a data point, when the chart named one. */

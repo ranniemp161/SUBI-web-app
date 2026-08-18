@@ -57,7 +57,19 @@ export interface Render2DContext {
   closePath(): void;
   moveTo(x: number, y: number): void;
   lineTo(x: number, y: number): void;
-  arc(x: number, y: number, radius: number, startAngle: number, endAngle: number): void;
+  /**
+   * `counterclockwise` is what makes an annulus expressible: a donut slice is
+   * an outer arc one way and an inner arc back the other, and without the flag
+   * the return leg sweeps the long way round and the fill closes over the hole.
+   */
+  arc(
+    x: number,
+    y: number,
+    radius: number,
+    startAngle: number,
+    endAngle: number,
+    counterclockwise?: boolean
+  ): void;
   /** Quadratic curve, for rounding a polyline without a second path library. */
   quadraticCurveTo(cpx: number, cpy: number, x: number, y: number): void;
   bezierCurveTo(
