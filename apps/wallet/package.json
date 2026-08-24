@@ -11,22 +11,22 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@clerk/nextjs": "^7.7.1",
+    "@clerk/nextjs": "^7.8.0",
     "@repo/billing": "*",
     "@repo/db": "*",
     "@repo/server-shared": "*",
     "@repo/ui": "*",
     "@sentry/nextjs": "^10.69.0",
-    "@stripe/react-stripe-js": "^6.8.0",
-    "@stripe/stripe-js": "^9.13.0",
+    "@stripe/react-stripe-js": "^6.8.2",
+    "@stripe/stripe-js": "^9.14.0",
     "@upstash/ratelimit": "^2.0.8",
     "@upstash/redis": "^1.38.2",
     "drizzle-orm": "^0.45.2",
-    "lucide-react": "^1.30.0",
-    "next": "16.3.0",
+    "lucide-react": "^1.33.0",
+    "next": "16.3.2",
     "react": "19.2.8",
     "react-dom": "19.2.8",
-    "stripe": "^22.4.0",
+    "stripe": "^22.5.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
