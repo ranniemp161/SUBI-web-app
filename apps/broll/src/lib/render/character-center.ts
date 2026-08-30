@@ -26,8 +26,7 @@ import { BRAND } from "./theme";
 export const CHARACTER_CENTER_THEME = {
   background: BRAND.background,
   text: BRAND.foreground,
-  /** The scrim behind the words, so they read against any cutout. */
-  scrim: BRAND.background,
+  /** How strong the scrim behind the words is, so they read against any cutout. */
   scrimAlpha: 0.72,
   /** Share of frame height the scrim covers, measured from the bottom. */
   scrimHeightRatio: 0.3,

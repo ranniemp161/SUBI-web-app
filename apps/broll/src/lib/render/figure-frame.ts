@@ -1,7 +1,15 @@
 import type { DrawableImage, Render2DContext } from "./context";
-import { type FitAnchor, fitFigure, isPortrait, typeScale, wrapText } from "./layout";
+import { type FitAnchor, fitFigure, isPortrait, typeScale } from "./layout";
 import { entranceAt, figureTravelAt } from "./motion";
-import { GLOW, TYPEFACE, drawBackdrop } from "./theme";
+import {
+  bottomBaseline,
+  centeredFirstBaseline,
+  drawRunLine,
+  measureRunLine,
+  parseRuns,
+  wrapRuns,
+} from "./text";
+import { GLOW, TYPEFACE, drawBackdrop, drawScrim } from "./theme";
 
 /**
  * The two compositions that put **one cutout and some words** on a frame, and
@@ -104,8 +112,10 @@ export interface BesideFigureTheme {
 /** The knobs the "words over the figure" composition turns. */
 export interface OverFigureTheme {
   text: string;
-  /** The scrim behind the words, so they read against any cutout. */
-  scrim: string;
+  /**
+   * How strong the scrim behind the words is. Its colour and its ramp are
+   * shared (`SCRIM` in `theme.ts`); only the strength is a per template call.
+   */
   scrimAlpha: number;
   /** Share of frame height the scrim covers, measured from the bottom. */
   scrimHeightRatio: number;
@@ -249,22 +259,26 @@ function drawBesideText(
 
   ctx.save();
   ctx.globalAlpha = arrived;
-  ctx.fillStyle = theme.text;
   ctx.font = `700 ${size}px ${TYPEFACE}`;
   ctx.textAlign = "left";
-  ctx.textBaseline = "middle";
+  // Alphabetic: the block is placed on its own ink, not on the font's box.
+  ctx.textBaseline = "alphabetic";
 
-  const lines = wrapText(ctx, text.trim(), maxWidth);
+  const lines = wrapRuns(ctx, parseRuns(text.trim()), maxWidth);
   // Rises as it fades in, so the two read as one movement.
   const rise = geo.height * theme.textRiseRatio * (1 - arrived);
   // Centred in the space the words actually have: the whole frame beside the
   // figure, only the area above the band when stacked above it. Centring on the
   // frame in portrait would sit the block on top of the figure.
   const textAreaHeight = geo.portrait ? geo.height - geo.bandHeight : geo.height;
-  const blockTop = textAreaHeight / 2 - ((lines.length - 1) * lineHeight) / 2;
+  const firstBaseline = centeredFirstBaseline(ctx, lines, {
+    centerY: textAreaHeight / 2,
+    lineHeight,
+    size,
+  });
 
   lines.forEach((line, index) => {
-    ctx.fillText(line, left, blockTop + index * lineHeight + rise);
+    drawRunLine(ctx, line, left, firstBaseline + index * lineHeight + rise, theme.text);
   });
 
   ctx.restore();
@@ -341,7 +355,7 @@ function drawOverText(
 
   ctx.save();
   ctx.font = `700 ${size}px ${TYPEFACE}`;
-  const lines = wrapText(ctx, text.trim(), maxWidth);
+  const lines = wrapRuns(ctx, parseRuns(text.trim()), maxWidth);
   if (lines.length === 0) {
     ctx.restore();
     return;
@@ -354,18 +368,27 @@ function drawOverText(
     lines.length * lineHeight + margin * 2
   );
   ctx.globalAlpha = arrived * theme.scrimAlpha;
-  ctx.fillStyle = theme.scrim;
-  ctx.fillRect(0, frame.height - scrimHeight, frame.width, scrimHeight);
+  drawScrim(ctx, {
+    x: 0,
+    y: frame.height - scrimHeight,
+    width: frame.width,
+    height: scrimHeight,
+  });
 
   ctx.globalAlpha = arrived;
-  ctx.fillStyle = theme.text;
-  ctx.textAlign = "center";
-  ctx.textBaseline = "bottom";
+  // Left, always: a run starts where the one before it ended, so a centred line
+  // is drawn by handing the cursor the left edge worked out here.
+  ctx.textAlign = "left";
+  ctx.textBaseline = "alphabetic";
 
-  const bottom = frame.height - margin;
+  const lastBaseline = bottomBaseline(ctx, lines[lines.length - 1], {
+    bottomY: frame.height - margin,
+    size,
+  });
   lines.forEach((line, index) => {
     const fromBottom = (lines.length - 1 - index) * lineHeight;
-    ctx.fillText(line, frame.width / 2, bottom - fromBottom);
+    const left = (frame.width - measureRunLine(ctx, line)) / 2;
+    drawRunLine(ctx, line, left, lastBaseline - fromBottom, theme.text);
   });
 
   ctx.restore();

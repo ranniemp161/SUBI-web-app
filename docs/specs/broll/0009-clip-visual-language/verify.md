@@ -20,6 +20,29 @@ but the encoder is the thing a creator publishes, and H.264 is where fine detail
 dies. Every step below that says "watch" means open the exported MP4 at full
 size, not the canvas in the studio.
 
+## Closed without being run, 2026-08-31
+
+The scope's `Verify it` box for this feature was ticked on 2026-08-31 at the
+engineer's direction, after they drove the render path by hand and found it
+working. **Not one box on this sheet was ticked**, because none was walked. The
+tick records a decision to move on, which is the engineer's to make, and not a
+pass.
+
+Two things this sheet exists for are therefore still open, and both are worth
+picking up the next time you are in here:
+
+- **AC-198's number.** Time a 6 second 1080p30 render against Phase 0's 1791ms.
+  The DevTools Performance panel gives it from the worker track span. The machine
+  to record beside it, taken 2026-08-31: Intel Core i5-1235U, 10 cores, 12
+  threads, 15.7 GB RAM, Windows 11 build 26200.
+- **The judgement at the top of this sheet.** Whether the clips read as produced
+  or as generated. Phase 0 deferred that call, this sheet was meant to close it,
+  and it is still deferred.
+
+Supporting evidence recorded that day: the b-roll suite ran green (42 files, 697
+tests), and the dev server on port 3003 answered `GET /` with HTTP 200 signed
+out, against the dev branch `ep-holy-hall-aoe13azt` this sheet requires.
+
 ## The judgement, first
 
 Do this before the criterion by criterion steps, while the clips are new to you.

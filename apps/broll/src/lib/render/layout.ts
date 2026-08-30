@@ -1,4 +1,5 @@
 import type { Render2DContext } from "./context";
+import { runLineText, wrapRuns } from "./text";
 
 /**
  * Layout maths shared by every template.
@@ -42,6 +43,11 @@ export function isPortrait(frame: { width: number; height: number }): boolean {
 /**
  * Breaks `text` into lines that fit `maxWidth`, measured through the context.
  *
+ * The plain string face of `text.ts`'s run wrapper, for the text a creator never
+ * marks up: a chart's title, a label. It wraps by exactly the same rule, orphan
+ * control included, because a second wrapping implementation is how two parts of
+ * one frame start breaking lines differently.
+ *
  * A word longer than the line is left on its own line rather than split: these
  * are the speaker's own words burned on screen, so an overhang reads better
  * than a hyphen, and dropping it would lose what was said.
@@ -51,23 +57,7 @@ export function wrapText(
   text: string,
   maxWidth: number
 ): string[] {
-  const words = text.split(/\s+/).filter(Boolean);
-  if (words.length === 0) return [];
-
-  const lines: string[] = [];
-  let current = words[0];
-
-  for (const word of words.slice(1)) {
-    const candidate = `${current} ${word}`;
-    if (ctx.measureText(candidate).width <= maxWidth) {
-      current = candidate;
-    } else {
-      lines.push(current);
-      current = word;
-    }
-  }
-  lines.push(current);
-  return lines;
+  return wrapRuns(ctx, [{ text, emphasis: false }], maxWidth).map(runLineText);
 }
 
 /**

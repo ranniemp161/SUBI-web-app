@@ -110,6 +110,31 @@ one, and it is worth the most on the criteria that fail silently while the happy
 path looks fine (AC-22 and AC-61 in feature 3 are the two clearest). Do not read
 an unticked box here as an untested feature; ask.
 
+**Where it stands, 2026-08-31.** `main` now carries everything this scope
+describes: PRs #145, #146, #147, #149, #150 and #153 have all merged, and the
+only open pull request in the repo is a Dependabot bump (#154). The working tree
+is clean and level with `origin/main`. Two `Build it` boxes were ticked today by
+`/scope` rather than by new work: feature 11 (all four milestones were ticked and
+the parent was not) and feature 12 (its three sub items still said "uncommitted",
+which stopped being true at PR #147).
+
+So the shape of the queue has not changed since 2026-08-16, only its size. Build
+work is open in exactly one place, feature 14, where three milestones wait behind
+one browser measurement (AC-198, the 6 second 1080p30 encode timed against Phase
+0's 1791ms). Everything else open is the verification tail: **ten `Verify it`
+boxes**, one on each of features 3, 4, 5, 6, 7, 9, 11, 12, 13 and 15 (14's was
+closed on 2026-08-31, see that row), plus the `Test it`
+boxes on 3, 4, 6, 11, 12 and 14. Feature 10 is still the only `planned` row and
+still needs `/architect` first. Feature 8, the production deploy, has Sentry done
+and the four infrastructure boxes untouched, so this app still has no production
+deploy.
+
+The four verifications owed since 2026-08-12 have now been deferred six times,
+once each for features 9, 11, 12, 13, 14 and 15. Each deferral was reasoned. The
+count is the point: the same warning has been written five times and the render
+path has grown every time. Read the note above about what an unticked box means
+here before treating this as untested work.
+
 ## Phase 0
 
 ### 1. Spikes: client-side encode + segmentation · done
@@ -1019,7 +1044,7 @@ costs the full price.
       its character. A commit that stored and settled and then died would have
       left a paid for character with no project pointing at it, and every retry
       would have returned early without fixing it.
-- [ ] Build it: /develop character reuse
+- [x] Build it: /develop character reuse. All four milestones landed; merged to `main` in PR #147 on 2026-08-17.
   - [x] The ownership move, end to end: migration `0018`, the
         `broll/characters/` storage path and the upload route's authorization,
         the new `characters.ts` query module, and generate plus commit creating
@@ -1244,23 +1269,23 @@ from one shared set rather than from ad hoc classes, a creator can reach
 Characters and Renders from anywhere in the app, and the Renders view answers
 "what have I made so far" across all projects.
 
-- [ ] Build it: /develop visual pass and renders view
-  - [ ] The shared set and the restyle. Uncommitted as of 2026-08-16, in
+- [x] Build it: /develop visual pass and renders view. Merged to `main` in PR #147 on 2026-08-17, so the "uncommitted" wording below was true when written and is not now.
+  - [x] The shared set and the restyle. Written 2026-08-16, on `main` since PR #147, in
         [apps/broll/src/components/ui/](../../../apps/broll/src/components/ui/)
         (`button`, `card`, `badge`, `switch`, `stat-chip`) with the restyle
         rippling through [globals.css](../../../apps/broll/src/app/globals.css),
         [layout.tsx](../../../apps/broll/src/app/layout.tsx), the dashboard, the
         new project form and every Scene Studio file. About 1,568 lines added
         across 18 changed files and 10 new ones.
-  - [ ] Top level navigation:
+  - [x] Top level navigation:
         [nav-links.tsx](../../../apps/broll/src/app/nav-links.tsx), Projects plus
         Characters plus Renders, with the active state derived from the path. It
         is `hidden md:flex` today, so on a phone the app has no navigation at all,
         which is feature 10's small screen refusal arriving as a gap rather than
         as a message.
-  - [ ] The Renders view:
+  - [x] The Renders view:
         [dashboard/renders/page.tsx](../../../apps/broll/src/app/dashboard/renders/page.tsx),
-        scenes across every project the caller owns. Uncommitted.
+        scenes across every project the caller owns. On `main` since PR #147.
 - [ ] Verify it: /check verify visual pass and renders view
 - [ ] Test it: /test visual pass and renders view
 
@@ -1466,13 +1491,43 @@ drawing.
         step rather than a `/develop` one. **The two milestones below are
         deliberately not started until it has been run**, which is the whole
         point of the spec putting the measurement here rather than at the end.
-  - [ ] **Text setting and creator marked emphasis.** Optical centring off real
-        metrics, orphan control with the overflow guard, the gradient scrim, then
-        the asterisk syntax with run aware wrapping. Covers AC-189 to AC-193.
+  - [x] **Text setting and creator marked emphasis, done 2026-08-31.** Optical
+        centring off real metrics, orphan control with the overflow guard, the
+        gradient scrim, then the asterisk syntax with run aware wrapping. Covers
+        AC-189 to AC-193. Code in
+        [render/text.ts](../../../apps/broll/src/lib/render/text.ts) (new, the
+        whole of it), with `wrapText` in
+        [layout.ts](../../../apps/broll/src/lib/render/layout.ts) reduced to its
+        plain string face, `drawScrim` added to
+        [theme.ts](../../../apps/broll/src/lib/render/theme.ts), and the three
+        templates that set words rewired:
+        [text-card.ts](../../../apps/broll/src/lib/render/text-card.ts),
+        [figure-frame.ts](../../../apps/broll/src/lib/render/figure-frame.ts) and
+        [character-plus-object.ts](../../../apps/broll/src/lib/render/character-plus-object.ts).
+        The asterisk hint is on the Scene Studio field. B-roll went from 697
+        tests to 706.
+
+        **Built out of order, and knowingly.** Spec 0009 parks this slice behind
+        the AC-198 measurement, and that measurement still has no number. The
+        engineer closed feature 14's verify box on 2026-08-31 on their own report
+        rather than on the sheet, which cleared the gate by decision instead of
+        by reading. Nothing here is wrong because of that; what it means is that
+        if the encode has slowed, this slice is now sitting on top of the
+        slowdown rather than behind it.
   - [ ] **The vertical frame.** Safe area insets applied to text and marks but
         deliberately not to figures, and the guide drawn on the preview only.
         Covers AC-196, AC-197.
-- [ ] Verify it: /check verify the clip's design, against
+- [x] Verify it: **closed 2026-08-31 on the engineer's report, not on a walked
+      sheet.** The engineer drove the render path manually and found it working.
+      No criterion by criterion pass was made, no evidence was recorded, and
+      **AC-198's number was never taken**, so spec 0009's
+      [verify.md](../../specs/broll/0009-clip-visual-language/verify.md) still
+      stands at zero ticks. The judgement step at the top of that sheet, does the
+      clip read as produced or as generated, is also still unanswered. Read this
+      tick as "the engineer is satisfied and chose to move on", which is their
+      call to make, and not as "the sheet was run". Original wording follows.
+
+      /check verify the clip's design, against
       [verify.md](../../specs/broll/0009-clip-visual-language/verify.md). This is
       the one feature on this scope where a unit test can say almost nothing —
       every question is "does the clip look right", which needs a real render

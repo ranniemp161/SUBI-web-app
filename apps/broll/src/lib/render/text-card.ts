@@ -1,6 +1,15 @@
 import type { Render2DContext } from "./context";
-import { typeScale, wrapText } from "./layout";
+import { typeScale } from "./layout";
 import { easeOutCubic } from "./motion";
+import {
+  type RunLine,
+  centeredFirstBaseline,
+  drawRunLine,
+  inkMetrics,
+  parseRuns,
+  runLineText,
+  wrapRuns,
+} from "./text";
 import { BRAND, TYPEFACE, drawBackdrop } from "./theme";
 
 /**
@@ -28,6 +37,8 @@ export const TEXT_CARD_THEME = {
   maxTextSizeRatio: 0.11,
   minTextSizeRatio: 0.045,
   lineHeightRatio: 1.24,
+  /** How far the rule sits above the block's ink, as a share of the text size. */
+  ruleGapRatio: 0.7,
   entranceMs: 520,
   /** Each line follows the one above it, so the block reads in. */
   lineStaggerMs: 90,
@@ -59,7 +70,7 @@ export function fitTextSize(
   text: string,
   box: { width: number; height: number },
   frameScale: number
-): { size: number; lines: string[] } {
+): { size: number; lines: RunLine[] } {
   const theme = TEXT_CARD_THEME;
   // Sized against the **frame**, fitted against the **box**. Deriving the size
   // range from the box instead would silently shrink every card by the margin,
@@ -73,7 +84,12 @@ export function fitTextSize(
   const max = frameScale * theme.maxTextSizeRatio;
   const min = frameScale * theme.minTextSizeRatio;
 
-  let lines: string[] = [];
+  // Parsed once, outside the loop. The creator's marks decide colour, never
+  // where a line breaks, so re-parsing per step would be the same answer twelve
+  // times over.
+  const runs = parseRuns(text);
+
+  let lines: RunLine[] = [];
   let size = max;
 
   // Twelve steps from max to min is finer than the eye can tell and bounded, so
@@ -81,7 +97,7 @@ export function fitTextSize(
   for (let step = 0; step <= 12; step += 1) {
     size = max - ((max - min) * step) / 12;
     ctx.font = `700 ${size}px ${TYPEFACE}`;
-    lines = wrapText(ctx, text, box.width);
+    lines = wrapRuns(ctx, runs, box.width);
     if (lines.length * size * theme.lineHeightRatio <= box.height) break;
   }
 
@@ -113,33 +129,41 @@ export function drawTextCardFrame(
   }
 
   const lineHeight = size * theme.lineHeightRatio;
-  const blockHeight = lines.length * lineHeight;
-  const top = (height - blockHeight) / 2 + size / 2;
 
-  // The rule arrives with the first line, above the block.
+  ctx.font = `700 ${size}px ${TYPEFACE}`;
+  ctx.textAlign = "left";
+  // Alphabetic, because the block is placed on its own ink rather than on the
+  // font's declared box. `middle` would hand that placement back to the face.
+  ctx.textBaseline = "alphabetic";
+
+  const firstBaseline = centeredFirstBaseline(ctx, lines, {
+    centerY: height / 2,
+    lineHeight,
+    size,
+  });
+
+  // The rule arrives with the first line, above the block. Hung off the ink of
+  // that line rather than off the baseline, so it keeps its gap whether the line
+  // is all capitals or full of descenders.
   const ruleArrived = lineEntrance(elapsedMs, 0);
   if (ruleArrived > 0) {
+    const { ascent } = inkMetrics(ctx, runLineText(lines[0]), size);
     ctx.globalAlpha = ruleArrived;
     ctx.fillStyle = theme.rule;
     ctx.fillRect(
       margin,
-      top - size,
+      firstBaseline - ascent - size * theme.ruleGapRatio,
       width * theme.ruleWidthRatio * ruleArrived,
       Math.max(1, height * theme.ruleThicknessRatio)
     );
   }
-
-  ctx.fillStyle = theme.text;
-  ctx.font = `700 ${size}px ${TYPEFACE}`;
-  ctx.textAlign = "left";
-  ctx.textBaseline = "middle";
 
   lines.forEach((line, index) => {
     const arrived = lineEntrance(elapsedMs, index);
     if (arrived <= 0) return;
     ctx.globalAlpha = arrived;
     const rise = height * theme.riseRatio * (1 - arrived);
-    ctx.fillText(line, margin, top + index * lineHeight + rise);
+    drawRunLine(ctx, line, margin, firstBaseline + index * lineHeight + rise, theme.text);
   });
 
   ctx.restore();

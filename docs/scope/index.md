@@ -12,7 +12,7 @@ through every layer, working).
 | `_root` (ecosystem wide) | [_root/scope.md](_root/scope.md) | Beta | 1 done, 2 in-progress, 1 planned, 3 existing, 2 deferred, 1 open question |
 | `apps/rough-cut` | [rough-cut/scope.md](rough-cut/scope.md) | Beta | 3 done, 2 in-progress, 13 existing, 5 deferred |
 | `apps/founders-frame` | [founders-frame/scope.md](founders-frame/scope.md) | Alpha | 1 done, 1 planned, 2 existing |
-| `apps/broll` | [broll/scope.md](broll/scope.md) | Beta | 2 done, 9 in-progress (all built, none verified), 1 planned |
+| `apps/broll` | [broll/scope.md](broll/scope.md) | Beta | 2 done, 12 in-progress (all built, one still building, none verified), 1 planned |
 | `apps/wallet` | tracked under `_root` | see `_root` | the Wallet app **is** the ecosystem wide billing feature |
 
 ## Notes
@@ -42,6 +42,17 @@ through every layer, working).
   written verify sheets stand at 17 of 46 and 6 of 72 boxes ticked. Read the
   "landed" wording in that scope carefully, because **`main` stops at PR #143**
   and everything after it is in open pull requests #145 and #146.
+- **Reconciled again on 2026-08-31, and this time nothing was behind.** The count
+  moved from 9 in-progress to 12 because features 13, 14 and 15 were enrolled and
+  built between 2026-08-16 and 2026-08-30. Every pull request that scope was
+  waiting on has merged: #145, #146, #147, #149, #150 and #153 are all on `main`,
+  the tree is clean, and the only open pull request in the repo is a Dependabot
+  bump. **The "read every landed claim against `main`" warning below no longer
+  applies**, and the `main` stops at #143 line is history. What has not moved is
+  the verification tail: eleven `Verify it` boxes and six `Test it` boxes are open
+  across b-roll, and the four verifications owed since 2026-08-12 have now been
+  deferred six times. Open build work sits in exactly one feature, 14, behind one
+  browser measurement.
 - **One piece of work, three scopes, one set of boxes.** The transcript contract
   spans `_root` (a new shared package plus a shared schema migration),
   `apps/rough-cut` (a new export surface and route), and `apps/broll` (which drove
