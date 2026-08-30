@@ -1514,9 +1514,48 @@ drawing.
         by reading. Nothing here is wrong because of that; what it means is that
         if the encode has slowed, this slice is now sitting on top of the
         slowdown rather than behind it.
-  - [ ] **The vertical frame.** Safe area insets applied to text and marks but
-        deliberately not to figures, and the guide drawn on the preview only.
-        Covers AC-196, AC-197.
+  - [x] **The vertical frame, done 2026-08-31.** Safe area insets applied to
+        text and marks but deliberately not to figures, and the guide drawn on
+        the preview only. Covers AC-196, AC-197. Code in
+        [render/layout.ts](../../../apps/broll/src/lib/render/layout.ts)
+        (`SAFE_AREA`, `safeAreaInsets`, `safeContentBox`), taken up by the five
+        templates that set words or marks:
+        [chart-full.ts](../../../apps/broll/src/lib/render/chart-full.ts),
+        [text-card.ts](../../../apps/broll/src/lib/render/text-card.ts),
+        [figure-frame.ts](../../../apps/broll/src/lib/render/figure-frame.ts) and
+        [character-plus-object.ts](../../../apps/broll/src/lib/render/character-plus-object.ts).
+        The guide is
+        [scenes/safe-area-guide.ts](../../../apps/broll/src/app/dashboard/%5Bid%5D/scenes/safe-area-guide.ts),
+        drawn by `scene-preview.tsx` after `drawRenderable` returns. B-roll went
+        from 706 tests to 739.
+
+        **The guide is kept out of `render/` on purpose, and that is the whole
+        of AC-197.** The worker draws through `drawRenderable`, which reaches
+        only `render/`, and nothing in `render/` can name the guide, so there is
+        no import path from an encode to it. A `showGuide` flag on the frame
+        object would have been one boolean away from putting a dashed line in a
+        creator's exported file. A test walks every file in that directory to
+        hold the separation open.
+
+        **A scrim still runs to the frame's own bottom edge**, because a scrim
+        is ground rather than a mark. Ending it on the safe area line would draw
+        a visible horizontal edge across the character, which is the one thing a
+        scrim exists to avoid; the reserve is added to its height instead.
+
+        **Built out of order, same as the slice above.** Spec 0009 parks this
+        behind the AC-198 measurement and that measurement still has no number.
+        The spec's own build plan says slices 3, 4, 6, 7 and 8 can land in any
+        order once 1 and 2 are in, so this is not a contradiction, but it does
+        mean the last two slices of the feature now sit on top of an unmeasured
+        encode rather than behind it. This slice adds no per frame work: it
+        changes the numbers a layout is computed from and draws nothing extra in
+        an exported frame.
+
+        **One number here came from outside the repo and has not been
+        rechecked.** The 18% and 11% reserves are read off current Reels, Shorts
+        and TikTok layouts, and spec 0009's own follow-up asks for them to be
+        confirmed against the three apps before this lands. That check needs a
+        phone, not a test, so it belongs with the verify sheet.
 - [x] Verify it: **closed 2026-08-31 on the engineer's report, not on a walked
       sheet.** The engineer drove the render path manually and found it working.
       No criterion by criterion pass was made, no evidence was recorded, and

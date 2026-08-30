@@ -147,10 +147,24 @@ Do this before the criterion by criterion steps, while the clips are new to you.
 
 ## The vertical frame
 
-- [ ] Switch the project to vertical, render one clip per template, and watch
+**How the two ticked steps here were run, 2026-08-31.** Not by driving Scene
+Studio, which needs a signed in session nobody could give the run. Instead the
+app's own `drawRenderable` was bundled and driven in a real headless Chromium
+with the real Space Grotesk and DM Sans files registered, one 1080x1920 frame
+per template. Each frame was rendered twice, once normally and once with every
+`fillText` suppressed, and the pixels that differ between the two are exactly
+the text ink and nothing else, so the scrim, the grid and the figure cannot
+mask a word that strayed. The same trick with the chart's values emptied
+isolates every chart mark. That is stronger evidence than watching, but it is
+not the app, and the two steps left unticked below are the ones only the app
+can answer.
+
+- [x] Switch the project to vertical, render one clip per template, and watch
       each → no **text or chart mark** enters the bottom margin or the right
-      margin → AC-196
-- [ ] Watch a vertical character clip specifically → the figure **does** still
+      margin → AC-196. **Passed on all seven templates.** The safe box is
+      961.2 x 1574.4. Text ink reached at most x=885, y=1511; chart marks at
+      most x=883, y=1478. Zero pixels outside the box on any template.
+- [x] Watch a vertical character clip specifically → the figure **does** still
       reach the bottom edge, and that is correct. Figures are deliberately exempt,
       because a caption bar over shins is cosmetic and a caption bar over a word
       is not. If the figure has been inset too, the rule was applied too widely
@@ -287,3 +301,70 @@ catches a value read from the wrong place even when the frame looks right.
 - [ ] **Grid fade and glow ← the short edge and the half diagonal.** Switch a
       project between 16:9 and 9:16 and confirm neither the grid density nor the
       glow size jumps → AC-194, AC-195
+
+---
+
+## What is actually built, as of 2026-08-31
+
+Added by `/develop` after slice 8 landed. This does not replace the section above
+dated 2026-08-18, it corrects the part of it that has stopped being true.
+
+**The "not built yet, so skip" list up there is now wrong on two of its three
+items.** Slice 7 (text setting, optical centring, creator marked emphasis:
+AC-189 to AC-193) landed on 2026-08-31, and slice 8 (the portrait safe area and
+its studio guide: AC-196, AC-197) landed the same day. Every step in **Text
+setting** and in **The vertical frame** above is runnable now. Only AC-198 in
+**Cost** is still unbuilt work in the sense that section meant, and it is not
+work at all: it is a measurement nobody has taken.
+
+**The cost gate was overtaken rather than passed.** Slices 7 and 8 were both
+built while it stood open, at the engineer's call. Spec 0009's build plan does
+say slices 3, 4, 6, 7 and 8 can land in any order once 1 and 2 are in, so this
+is not a contradiction, but the gate's purpose was to keep a breached ceiling
+cheap to walk back and that is no longer as true as it was. Slice 8 in
+particular adds no per frame work: it changes the numbers a layout is computed
+from and draws nothing extra into an exported frame.
+
+### The two vertical frame steps that only a person can answer
+
+Both are already listed under **The vertical frame** above; they are repeated
+here because they are the ones the test suite genuinely cannot stand in for, and
+the automated proxies below might otherwise read as covering them.
+
+- [ ] **The guide is not in the file.** Export a vertical clip and step through
+      it frame by frame. The dashed guide and its wash must appear nowhere
+      → AC-197
+- [ ] **The reserves match real chrome.** Put a vertical clip on a phone, or lay
+      a screenshot of the Reels, Shorts and TikTok interfaces over a frame. The
+      18% bottom and 11% right must actually cover the caption block and the
+      action rail. These are the only numbers in this spec sourced from outside
+      the repo, and spec 0009's own follow-up asks for exactly this check
+      → AC-196
+
+### What the suite now locks, so do not spend the walkthrough on it
+
+Added with slice 8, in `src/lib/render/safe-area.test.ts` and
+`src/app/dashboard/[id]/scenes/safe-area-guide.test.ts`. Each was checked by
+breaking the code under it and confirming the test failed, so none of these is
+passing for the wrong reason.
+
+- [x] Every `fillText` and every mark in a portrait frame, across all seven
+      templates that draw, sits inside the safe box → AC-196
+- [x] A portrait figure **does** cross into the reserved band, which pins the
+      exemption open rather than leaving it to chance → AC-196
+- [x] A landscape frame reserves nothing on either axis, so 1920x1080 output is
+      unchanged → AC-196
+- [x] No file in `src/lib/render/` can name the guide, so no import path runs
+      from an encode to it → AC-197
+- [x] The guide draws nothing on a landscape preview, and marks both bands on a
+      portrait one → AC-197
+
+### Value sourcing, the row this slice adds
+
+- [ ] **Safe area insets ← the frame's orientation, each reserve off its own
+      axis.** Switch a project between 16:9 and 9:16 in Scene Studio. The 16:9
+      frame must be unchanged from what it rendered before; the 9:16 frame must
+      pull its words up off the bottom and in from the right. Then check a
+      non standard vertical shape (4:5 if the app offers one): the bottom
+      reserve should follow the height and the right reserve the width, not both
+      follow the short edge → AC-196

@@ -1,5 +1,5 @@
 import type { Render2DContext } from "./context";
-import { typeScale } from "./layout";
+import { safeContentBox, typeScale } from "./layout";
 import { easeOutCubic } from "./motion";
 import {
   type RunLine,
@@ -119,7 +119,12 @@ export function drawTextCardFrame(
   if (!text) return;
 
   const margin = Math.min(width, height) * theme.marginRatio;
-  const box = { width: width - margin * 2, height: height - margin * 2 };
+  // Words are the whole of this template, so the safe area is the whole of its
+  // box. In portrait the card is laid out against the frame the platform leaves
+  // rather than the frame we encode, which shrinks the type before it clips it:
+  // `fitTextSize` gets a smaller box and steps the size down to fit it.
+  const content = safeContentBox(frame);
+  const box = { width: content.width - margin * 2, height: content.height - margin * 2 };
 
   ctx.save();
   const { size, lines } = fitTextSize(ctx, text, box, typeScale(frame));
@@ -137,7 +142,7 @@ export function drawTextCardFrame(
   ctx.textBaseline = "alphabetic";
 
   const firstBaseline = centeredFirstBaseline(ctx, lines, {
-    centerY: height / 2,
+    centerY: content.height / 2,
     lineHeight,
     size,
   });
@@ -153,7 +158,7 @@ export function drawTextCardFrame(
     ctx.fillRect(
       margin,
       firstBaseline - ascent - size * theme.ruleGapRatio,
-      width * theme.ruleWidthRatio * ruleArrived,
+      content.width * theme.ruleWidthRatio * ruleArrived,
       Math.max(1, height * theme.ruleThicknessRatio)
     );
   }

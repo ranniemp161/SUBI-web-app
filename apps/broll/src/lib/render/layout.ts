@@ -120,3 +120,65 @@ export function fitCharacter(
 ): { x: number; y: number; width: number; height: number } {
   return fitFigure(image, box, "bottom");
 }
+
+/**
+ * The margins a portrait clip keeps clear, as shares of the frame.
+ *
+ * Reels, Shorts and TikTok all paint their own chrome over the bottom of a
+ * vertical video (the caption and the handle) and down its right hand side (the
+ * action rail). Neither is something this app can move, so the frame has to give
+ * way instead. Landscape is unaffected: nothing covers a 16:9 clip dropped into
+ * an NLE.
+ *
+ * 18% of the height covers the caption block across all three with a little
+ * room; 11% of the width covers the action rail, the densest chrome of the
+ * three (spec `broll/0009`).
+ */
+export const SAFE_AREA = {
+  bottomRatio: 0.18,
+  rightRatio: 0.11,
+} as const;
+
+/**
+ * How much of the frame the platform's own chrome is expected to cover.
+ *
+ * Zero on both axes in landscape, so every caller can apply this
+ * unconditionally and stay byte for byte identical at 1920x1080.
+ */
+export function safeAreaInsets(frame: { width: number; height: number }): {
+  bottom: number;
+  right: number;
+} {
+  if (!isPortrait(frame)) return { bottom: 0, right: 0 };
+  return {
+    bottom: frame.height * SAFE_AREA.bottomRatio,
+    right: frame.width * SAFE_AREA.rightRatio,
+  };
+}
+
+/**
+ * The part of the frame **text and chart marks** may use.
+ *
+ * **Figures are deliberately not held to this**, which is the one rule in the
+ * vertical frame that is a judgement rather than a measurement. A caption bar
+ * crossing a character's shins is cosmetic and the shot still reads; a caption
+ * bar crossing a word destroys the thing the frame was for. Holding a figure to
+ * the same margin would either shrink every portrait cutout by a fifth or crop
+ * it, and `character-left`'s portrait band deliberately stands the cutout on
+ * the frame edge so characters share a floor line across scenes.
+ *
+ * That is also why this is a box a template lays out against rather than a clip
+ * applied centrally the way the push is: a central clip cannot tell a word from
+ * a figure, so it would crop both.
+ *
+ * The origin stays at 0,0 — the reserve is on the bottom and the right only —
+ * so a caller substitutes this for the frame's own width and height and needs
+ * no offset.
+ */
+export function safeContentBox(frame: { width: number; height: number }): {
+  width: number;
+  height: number;
+} {
+  const inset = safeAreaInsets(frame);
+  return { width: frame.width - inset.right, height: frame.height - inset.bottom };
+}
