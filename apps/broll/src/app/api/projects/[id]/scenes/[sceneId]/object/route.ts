@@ -4,7 +4,6 @@ import { getAuthorizedDbUser } from "@repo/server-shared/authz";
 import { reportError } from "@repo/server-shared/observability";
 import { chargeBrollObjectImage, refundBrollObjectImage } from "@repo/billing";
 import { objectAssetPathname } from "@/lib/asset-path";
-import { isCharacterStyle } from "@/lib/styles";
 import { MAX_OBJECT_ATTEMPTS } from "@/lib/object-prompt";
 import { isObjectTemplate } from "@/lib/scene-schema";
 import { ObjectError, generateObjectImage, isObjectGenerationConfigured } from "@/lib/objects";
@@ -103,13 +102,6 @@ export async function POST(
         { status: 409 }
       );
     }
-    if (!isCharacterStyle(scene.style)) {
-      return NextResponse.json(
-        { error: "This project's style isn't one we can draw in." },
-        { status: 422 }
-      );
-    }
-
     // The caller's key, so a double-click charges once. Absent is allowed and
     // simply means no idempotency, matching the plan route.
     const idempotencyKey = request.headers.get("Idempotency-Key") ?? undefined;
@@ -127,10 +119,9 @@ export async function POST(
 
     let png: string;
     try {
-      const generated = await generateObjectImage({
-        subject: scene.subject,
-        style: scene.style,
-      });
+      // No style is passed: every object is drawn in one flat 2D look,
+      // whatever the project's character style is (see `object-prompt.ts`).
+      const generated = await generateObjectImage({ subject: scene.subject });
       png = generated.png;
     } catch (error) {
       // Charged and undelivered. Refund before answering, so the failure the

@@ -187,6 +187,28 @@ npm -w @repo/broll typecheck
   generating one. `hasObject` means "this scene named something"; a missing image
   is a `sceneBlocker` with a way out. Same split the character templates already
   have between "no character set" and "no emotion picked".
+- **Every object illustration is flat 2D, whatever the project's character
+  style is.** `buildObjectPrompt` takes a subject and nothing else: it accepts no
+  style argument, so no project setting can restyle an object, and the wording
+  says the flatness twice, once as what to draw and once as what not to (no 3D
+  render, no photorealism, no glossy material shading). Both halves earn their
+  place. An object is a prop beside the person talking, not a second subject, and
+  a rendered prop next to a rendered character competes with them for the eye;
+  the negative clause is there because a subject the world photographs more often
+  than it draws, a phone or a car or a coin, comes back as a product shot from
+  the positive clause alone. **Spec `0008` AC-156 still says the opposite**, that
+  an illustration is generated in the project's `style`, and it was written that
+  way on purpose before the two looks were seen side by side. The code is the
+  current decision; the spec owes a ratification.
+- **A block a creator can clear on this screen reads as an action, not a
+  fault.** `blockerBadge` in `scene-templates.ts` gives every `SceneBlocker` code
+  its own words and its own colour, and the split follows `fixableByGenerating`:
+  an undrawn illustration is the accent, the same colour as every other thing a
+  creator does here, while a missing character or emotion keeps the amber warning
+  because the fix is on another screen. The row used to label **every** blocker
+  "Needs a character", which sent a creator to the project page to fix something
+  that was not wrong while the real gap had no name anywhere on screen. Add a
+  blocker code and the exhaustive `switch` makes you name it.
 - **A scene write proves ownership inside the statement, never before it.** The
   `UPDATE` joins through `broll_projects` on `user_id`, so another user's scene
   id changes nothing and answers 404. Reading the row to check the owner and

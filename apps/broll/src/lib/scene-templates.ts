@@ -153,6 +153,39 @@ export type SceneBlocker = {
   fixableByGenerating?: boolean;
 };
 
+/**
+ * How one blocker reads on a scene row: the words and the colour (spec
+ * `broll/0008`).
+ *
+ * A lookup rather than one hardcoded label, because the row used to say "Needs a
+ * character" for **every** blocker — including the one where the project has a
+ * character and the scene is simply waiting on an illustration nobody has drawn
+ * yet. A creator scanning a fresh plan was told to go and fix something that was
+ * not wrong, and the thing that actually was wrong had no name on the screen.
+ *
+ * The colour carries the second half of the distinction. Amber is the house
+ * warning: something is missing and the fix is elsewhere. `no_object_image` is
+ * drawn in the accent instead, the same colour as every other action a creator
+ * takes on this screen, because it is not a fault — an illustration is drawn on
+ * demand by design, so a fresh plan is *supposed* to arrive with none, and the
+ * fix is one button away in the pane the row opens.
+ */
+export function blockerBadge(blocker: SceneBlocker): {
+  label: string;
+  variant: "accent" | "warning";
+} {
+  switch (blocker.code) {
+    case "no_object_image":
+      return { label: "Not drawn yet", variant: "accent" };
+    case "no_character":
+      return { label: "Needs a character", variant: "warning" };
+    case "no_emotion_chosen":
+      return { label: "Needs an emotion", variant: "warning" };
+    case "missing_emotion":
+      return { label: "Emotion not drawn", variant: "warning" };
+  }
+}
+
 export function sceneBlocker(
   scene: {
     layoutTemplate: string;

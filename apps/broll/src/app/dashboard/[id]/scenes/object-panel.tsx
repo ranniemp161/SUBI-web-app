@@ -8,7 +8,7 @@ import {
   describeProgress,
   drawSceneObject,
 } from "@/lib/object-generate";
-import { Button, Card } from "@/components/ui";
+import { Badge, Button, Card } from "@/components/ui";
 
 /**
  * The Draw control for one scene's illustration (spec `broll/0008`).
@@ -16,6 +16,16 @@ import { Button, Card } from "@/components/ui";
  * The four steps behind the button live in `object-generate.ts`, shared with the
  * studio bar's batch action; this component owns the button, the status line and
  * the attempt count, and nothing else.
+ *
+ * **An empty scene says so, loudly.** Illustrations are drawn on demand, so a
+ * freshly planned object scene has none — that is the design, not a failure, but
+ * it is also the one thing standing between the creator and a clip. So the card
+ * carries the accent border and a stated "Not drawn yet" until an image exists,
+ * and the button is the screen's primary action rather than one more grey
+ * control. The sentence explaining it is not repeated here: the detail pane
+ * already states the block above the preview, in the same accent. Once there is an image the card drops back to ordinary chrome: a
+ * redraw is optional, and shouting about it would train the creator to ignore
+ * the state that matters.
  *
  * **The subject is shown and is not editable.** It is a claim traced back to the
  * line the scene cites, and this app's rule is that presentation is editable and
@@ -79,20 +89,34 @@ export function ObjectPanel({
   }, [busy, disabled, atCap, projectId, sceneId, getToken, onGenerated]);
 
   return (
-    <Card className="flex flex-col gap-2.5 p-3.5">
+    <Card
+      className={`flex flex-col gap-2.5 p-3.5 ${
+        hasImage
+          ? ""
+          : "border-[var(--broll-accent)]/40 bg-[var(--broll-accent)]/[0.04]"
+      }`}
+    >
       <div>
-        <span className="block text-[10px] font-bold uppercase tracking-widest text-zinc-400">
-          ILLUSTRATION
-        </span>
+        <div className="flex items-center justify-between gap-2">
+          <span className="block text-[10px] font-bold uppercase tracking-widest text-zinc-400">
+            ILLUSTRATION
+          </span>
+          {!hasImage && (
+            <Badge size="sm" variant="accent">
+              Not drawn yet
+            </Badge>
+          )}
+        </div>
         <p className="mt-1 text-xs font-semibold text-white">{subject}</p>
         <p className="mt-1 text-[10px] leading-tight text-zinc-500">
-          Taken from the line this scene cites, so it can&rsquo;t be edited. Drawn in this
-          project&rsquo;s style.
+          Taken from the line this scene cites, so it can&rsquo;t be edited. Always drawn
+          flat 2D, whatever style the character is.
         </p>
       </div>
 
       <Button
         type="button"
+        variant={hasImage ? "glass" : "primary"}
         disabled={busy || disabled || atCap}
         onClick={generate}
         className="w-full"
