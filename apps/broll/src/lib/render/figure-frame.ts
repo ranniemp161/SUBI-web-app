@@ -1,5 +1,5 @@
 import type { DrawableImage, Render2DContext } from "./context";
-import { type FitAnchor, fitFigure, isPortrait, typeScale } from "./layout";
+import { type FitAnchor, fitFigure, isPortrait, safeContentBox, typeScale } from "./layout";
 import { entranceAt, figureTravelAt } from "./motion";
 import {
   bottomBaseline,
@@ -255,7 +255,10 @@ function drawBesideText(
   const lineHeight = size * theme.lineHeightRatio;
   // Beside the figure in landscape, above it in portrait.
   const left = geo.portrait ? geo.margin : geo.columnWidth + geo.margin;
-  const maxWidth = geo.width - left - geo.margin;
+  // The words wrap inside the platform's safe area, the figure below them does
+  // not. In landscape the box is the frame, so nothing here moves.
+  const content = safeContentBox(geo);
+  const maxWidth = content.width - left - geo.margin;
 
   ctx.save();
   ctx.globalAlpha = arrived;
@@ -270,7 +273,10 @@ function drawBesideText(
   // Centred in the space the words actually have: the whole frame beside the
   // figure, only the area above the band when stacked above it. Centring on the
   // frame in portrait would sit the block on top of the figure.
-  const textAreaHeight = geo.portrait ? geo.height - geo.bandHeight : geo.height;
+  const textAreaHeight = Math.min(
+    geo.portrait ? geo.height - geo.bandHeight : geo.height,
+    content.height
+  );
   const firstBaseline = centeredFirstBaseline(ctx, lines, {
     centerY: textAreaHeight / 2,
     lineHeight,
@@ -351,7 +357,10 @@ function drawOverText(
   // to the height at 1920x1080, so landscape output is byte for byte unchanged.
   const size = typeScale(frame) * theme.textSizeRatio;
   const lineHeight = size * theme.lineHeightRatio;
-  const maxWidth = frame.width - margin * 2;
+  // The block sits inside the platform's safe area; the figure it sits over
+  // still fills the frame. Both are the frame itself in landscape.
+  const content = safeContentBox(frame);
+  const maxWidth = content.width - margin * 2;
 
   ctx.save();
   ctx.font = `700 ${size}px ${TYPEFACE}`;
@@ -363,9 +372,16 @@ function drawOverText(
 
   // The scrim fades in with the words rather than ahead of them, so the frame
   // does not darken before there is anything to read.
+  //
+  // It still runs to the frame's own bottom edge rather than stopping where the
+  // words now stop. The scrim is ground, not a mark: ending it on the safe area
+  // line would draw the one thing this treatment exists to avoid, a visible
+  // horizontal edge across the figure. So the reserve is added to its height
+  // instead, and the gradient carries on under the platform's chrome.
+  const reserved = frame.height - content.height;
   const scrimHeight = Math.max(
     frame.height * theme.scrimHeightRatio,
-    lines.length * lineHeight + margin * 2
+    reserved + lines.length * lineHeight + margin * 2
   );
   ctx.globalAlpha = arrived * theme.scrimAlpha;
   drawScrim(ctx, {
@@ -382,12 +398,15 @@ function drawOverText(
   ctx.textBaseline = "alphabetic";
 
   const lastBaseline = bottomBaseline(ctx, lines[lines.length - 1], {
-    bottomY: frame.height - margin,
+    bottomY: content.height - margin,
     size,
   });
   lines.forEach((line, index) => {
     const fromBottom = (lines.length - 1 - index) * lineHeight;
-    const left = (frame.width - measureRunLine(ctx, line)) / 2;
+    // Centred in the space the words have, not in the frame: in portrait the
+    // right hand reserve is chrome, so centring across it would push the line
+    // under the action rail.
+    const left = (content.width - measureRunLine(ctx, line)) / 2;
     drawRunLine(ctx, line, left, lastBaseline - fromBottom, theme.text);
   });
 

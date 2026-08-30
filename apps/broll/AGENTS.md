@@ -60,18 +60,19 @@ untested. The scope is the live plan; check it before trusting this line.
 | `src/lib/object-prompt.ts` / `src/lib/objects.ts` | The illustration's wording and its single Gemini call, split pure/server exactly like `character-prompt.ts` / `character.ts`. **`objects.ts` deliberately re-pins no model, size or cost** — `character-prompt.ts` owns those for the whole app, and a second pinned model id is how two paths start billing differently |
 | `src/lib/object-generate.ts` | The browser half of drawing one illustration — charge, cut out, upload, commit — shared by the scene pane's button and the studio bar's batch. Browser only |
 | `src/lib/blob-upload.ts` | `putPresignedWithRetry` and `base64ToPngBlob`, used by both generated-asset paths. Lifted out of `character-panel.tsx` by spec `0008` so the Scene Studio bundle does not pull that component in to reach three functions |
+| `src/lib/render/text.ts` | Every word a template sets: the creator's asterisk emphasis parsed into runs, run aware wrapping, optical centring off real ink metrics, and the baseline helpers. New in spec `0009`; `wrapText` in `layout.ts` stayed behind as the plain string face for callers that set no runs. **No code path anywhere decides a word deserves emphasis** (AC-190): on screen text is freely editable and never passes the honesty check, so an automatic rule would make a word nobody spoke the loudest thing in the frame |
 | `src/lib/render/context.ts` | The narrow 2D surface every template draws through, assignable from both canvas context types. One interface for all templates, so the tests can pass a recorder and assert draw calls with no canvas and no browser. Widened for the clip design pass with gradients, shadows, `roundRect`, curves, transforms and real text metrics — **add to it when a template needs something, not in anticipation**, because every method is one more the recorder has to implement |
 | `src/lib/render/fonts.ts` | Registers Space Grotesk and DM Sans as `FontFace`s, in **whichever realm is drawing**. The page and the worker both go through it and both await it, because a worker's font set starts empty and cannot inherit the page's — that gap is why clips used to export in `system-ui` |
 | `src/lib/render/test-recorder.ts` | The `Render2DContext` the render tests draw onto. One copy, shared: three inline copies is how three recorders start disagreeing about what a draw call looks like. Not named `*.test.ts` so vitest treats it as a helper |
 | `public/fonts/` | The two woff2 files, and **the only reason `public/` exists in this app**. See the README beside them for provenance and the outstanding OFL vendoring |
-| `src/lib/render/` (rest) | `layout.ts` and `timing.ts` (the frame math), `capability.ts` (the WebCodecs probe), `chart-label.ts` (AC-34), `clip-filename.ts` (AC-33), `zip.ts`, and the four template drawers |
+| `src/lib/render/` (rest) | `layout.ts` and `timing.ts` (the frame math, and since spec `0009` the portrait safe area: `SAFE_AREA`, `safeAreaInsets`, `safeContentBox`), `capability.ts` (the WebCodecs probe), `chart-label.ts` (AC-34), `clip-filename.ts` (AC-33), `zip.ts`, and the four template drawers |
 | `src/lib/render/types.ts` | The page to worker contract. Lives here, not in the worker, so a client component can import the types without pulling `mediabunny` into the page bundle |
 | `src/lib/render/run-render.ts` | The one driver for a render worker, shared by the single scene button and the batch. Always terminates the worker and always settles the promise; the batch depends on both |
 | `src/workers/render-worker.ts` | The encode itself: draws to an `OffscreenCanvas` and hands frames straight to `mediabunny`. Owns nothing else — no filename, no ledger, no idea what a project is |
 | `src/lib/sentry-scrub.ts` | Removes the request body from every Sentry event. Pure and unit tested, because an untested privacy guard is a comment. See Conventions |
 | `src/lib/scene-limits.ts` | Constants the browser needs out of `scenes.ts`, which is `server-only`. See Conventions |
 | `src/app/api/projects/[id]/scenes/[sceneId]/route.ts` | Scene Studio's `PATCH`. Ownership is enforced **inside** the `UPDATE`, see Conventions |
-| `src/app/dashboard/[id]/scenes/` | **The Scene Studio screen**, a route of its own since spec `0006`: `scene-studio.tsx` (the two pane shell that owns selection and the render queue), `studio-bar.tsx`, `scene-row.tsx`, `scene-detail.tsx`, `scene-overrides.tsx`, `scene-preview.tsx`, `add-scene.tsx`, `scene-citation.tsx`, `use-render-queue.ts`. `plan-panel.tsx` and `batch-export.tsx` are **gone as files** and every behaviour they had was moved here, not rewritten |
+| `src/app/dashboard/[id]/scenes/` | **The Scene Studio screen**, a route of its own since spec `0006`: `scene-studio.tsx` (the two pane shell that owns selection and the render queue), `studio-bar.tsx`, `scene-row.tsx`, `scene-detail.tsx`, `scene-overrides.tsx`, `scene-preview.tsx`, `add-scene.tsx`, `scene-citation.tsx`, `use-render-queue.ts`, `safe-area-guide.ts` (the portrait guide, drawn over the preview only, see Conventions). `plan-panel.tsx` and `batch-export.tsx` are **gone as files** and every behaviour they had was moved here, not rewritten |
 | `src/lib/characters.ts` | Every `broll_characters` query, and the owner check behind them. A character belongs to a **user**, not a project (spec `0007`), and the character id appears inside a storage pathname a client can send us, which is why every path here proves ownership first. Holds `claimCharacterGeneration`, the claim that used to live in `@repo/billing` |
 | `src/lib/assets.ts` | Every `broll_assets` query, scoped through `broll_characters.user_id`. The replace rules live here rather than in the routes: a replacement is a **new pathname**, never an overwrite, and its row is written before the superseded object is deleted |
 | `src/lib/scene-strength.ts`, `src/lib/render/to-renderable.ts` | The pure pieces the Scene Studio row and the encoder share, extracted so both draw and rank a scene the same way |
@@ -214,6 +215,21 @@ npm -w @repo/broll typecheck
   id changes nothing and answers 404. Reading the row to check the owner and
   then updating is two statements racing, and a 403 would confirm the scene
   exists.
+- **The portrait safe area guide lives in the studio and may never be reachable
+  from `render/`.** `SAFE_AREA`, `safeAreaInsets` and `safeContentBox` in
+  `render/layout.ts` keep words and marks out of the margins Reels, Shorts and
+  TikTok paint their own chrome over, and figures are deliberately exempt because
+  a face reading as cropped is worse than a face under a caption bar. The dashed
+  guide that shows a creator those margins is
+  `dashboard/[id]/scenes/safe-area-guide.ts`, outside `render/` on purpose: the
+  worker draws through `drawRenderable`, nothing `drawRenderable` reaches can name
+  the guide, so no import path runs from an encode to it. A `showGuide` flag on
+  the frame object would have been one boolean away from a dashed line in a
+  creator's exported file. `render/safe-area.test.ts` walks every file in
+  `render/` to hold that open. A scrim is the one thing that still runs to the
+  frame's own bottom edge, because a scrim is ground rather than a mark, and
+  stopping it on the safe area line would draw the visible edge it exists to
+  avoid.
 - **There is one render queue, and every entry point enqueues into it.**
   `use-render-queue.ts` is owned by the Scene Studio shell, and both the single
   scene button and Render all go through it (spec `0006` AC-117). Before this the
@@ -413,6 +429,11 @@ npm -w @repo/broll typecheck
 - `docs/specs/broll/0008-object-scenes/index.md` — the object scene kind: the
   subject trace, the on-demand illustration and its money path, and the
   `figure-frame` extraction the three new templates are built on.
+- `docs/specs/broll/0009-clip-visual-language/index.md` — what a clip looks like:
+  the palette, the motion and depth every template shares, the text setting and
+  the creator's asterisk emphasis, and the portrait safe area. **AC-198, the
+  encode speed measurement the last slices were meant to sit behind, has never
+  been taken**, so those slices landed on an unmeasured encode.
 - `docs/specs/broll/design-prompt.md` — the UI brief: eight screens, the exact
   palette, and the one UX principle everything follows. **Its six-template table
   is now nine**, see spec `0008`.

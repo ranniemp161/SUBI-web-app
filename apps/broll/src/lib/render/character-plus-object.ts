@@ -1,6 +1,6 @@
 import type { DrawableImage, Render2DContext } from "./context";
 import { entranceAt } from "./motion";
-import { fitFigure, isPortrait, typeScale } from "./layout";
+import { fitFigure, isPortrait, safeContentBox, typeScale } from "./layout";
 import {
   bottomBaseline,
   centeredFirstBaseline,
@@ -319,13 +319,20 @@ function drawPortraitText(
 
   ctx.save();
   ctx.font = `700 ${size}px ${TYPEFACE}`;
-  const lines = wrapRuns(ctx, parseRuns(text.trim()), frame.width - margin * 2);
+  // The words keep clear of the platform's chrome; the character they sit over
+  // does not. This path is portrait only, so the reserve always applies here.
+  const content = safeContentBox(frame);
+  const lines = wrapRuns(ctx, parseRuns(text.trim()), content.width - margin * 2);
   if (lines.length === 0) {
     ctx.restore();
     return;
   }
 
-  const scrimHeight = lines.length * lineHeight + margin * 2;
+  // The scrim still runs to the frame's own bottom edge rather than stopping on
+  // the safe area line, which would draw a visible horizontal edge across the
+  // character — the one thing a scrim exists to avoid. So the reserve is added
+  // to its height and the gradient carries on under the chrome.
+  const scrimHeight = frame.height - content.height + lines.length * lineHeight + margin * 2;
   ctx.globalAlpha = arrived * theme.scrimAlpha;
   drawScrim(ctx, {
     x: 0,
@@ -341,12 +348,14 @@ function drawPortraitText(
   ctx.textBaseline = "alphabetic";
 
   const lastBaseline = bottomBaseline(ctx, lines[lines.length - 1], {
-    bottomY: frame.height - margin,
+    bottomY: content.height - margin,
     size,
   });
   lines.forEach((line, index) => {
     const fromBottom = (lines.length - 1 - index) * lineHeight;
-    const left = (frame.width - measureRunLine(ctx, line)) / 2;
+    // Centred in the space the words have, not in the frame: centring across the
+    // right hand reserve would push the line under the action rail.
+    const left = (content.width - measureRunLine(ctx, line)) / 2;
     drawRunLine(ctx, line, left, lastBaseline - fromBottom, theme.text);
   });
 

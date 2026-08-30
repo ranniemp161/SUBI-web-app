@@ -458,9 +458,28 @@ visibly changes every clip, and the rest thickens it.
    expressible any more: `drawFigureOver` and the portrait path in
    `character-plus-object` now measure the line and hand the cursor its left
    edge.
-8. **The vertical frame.** Safe area insets in `layout.ts` applied to text and
-   mark boxes only, and the guide in the studio preview. Satisfies **AC-196**,
-   **AC-197**.
+8. **The vertical frame.** ✅ Done 2026-08-31. Safe area insets in `layout.ts`
+   applied to text and mark boxes only, and the guide in the studio preview.
+   Satisfies **AC-196**, **AC-197**.
+
+   `safeContentBox` returns the frame less the reserve in portrait and the frame
+   itself in landscape, so every caller applies it unconditionally and nothing
+   at 1920x1080 moved. The templates take it in the one place each lays out
+   from: `chart-full` hands it to the `Layout` object, which is what makes the
+   title, the baseline rule, the bars, the dots, the labels, the pie and the big
+   number all move together with no chance of one being forgotten.
+
+   **A scrim still runs to the frame's own bottom edge.** It is ground rather
+   than a mark, and stopping it on the safe area line would draw a visible
+   horizontal edge across the figure, which is the one thing a scrim exists to
+   avoid. The reserve is added to its height instead, so the gradient carries on
+   under the platform's chrome while the words sit above it.
+
+   The guide lives in the studio folder, not in `render/`, so the AC-197
+   guarantee is structural: there is no import path from an encode to it. A
+   `showGuide` flag on the frame object would have been one boolean away from
+   being wrong, and a test now walks every file in `render/` to hold the
+   separation open.
 
 Slices 3, 4, 6, 7 and 8 are independent of each other and can land in any order
 once slices 1 and 2 are in. Slice 5 is a gate rather than a feature: it is placed

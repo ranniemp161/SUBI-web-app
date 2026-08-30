@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { drawRenderable, type Renderable } from "@/lib/render/renderable";
 import { Button } from "@/components/ui";
+import { drawSafeAreaGuide } from "./safe-area-guide";
 import { useBrandFonts } from "./use-brand-fonts";
 
 const SETTLED_MS = 2_000;
@@ -77,6 +78,13 @@ export function ScenePreview({
       elapsedMs,
       durationMs: durationRef.current,
     });
+
+    // On top of the frame, and only here. The guide is the studio's own
+    // annotation, not part of the clip: it is drawn after `drawRenderable`
+    // returns, by a module no template and no worker can reach, so there is no
+    // path by which it lands in an exported file. It draws nothing at all for a
+    // landscape project.
+    drawSafeAreaGuide(ctx, { width: canvas.width, height: canvas.height });
   }, []);
 
   useEffect(() => {

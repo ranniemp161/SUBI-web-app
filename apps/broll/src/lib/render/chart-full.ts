@@ -1,6 +1,6 @@
 import { formatChartParts, formatChartValue } from "./chart-label";
 import type { Render2DContext } from "./context";
-import { typeScale, wrapText } from "./layout";
+import { safeContentBox, typeScale, wrapText } from "./layout";
 import { easeOutCubic, entranceAt, staggerDelayMs } from "./motion";
 import { BODY_TYPEFACE, BRAND, SERIES, TYPEFACE, drawBackdrop } from "./theme";
 
@@ -186,6 +186,12 @@ export function idleDrift(elapsedMs: number, height: number): number {
 }
 
 interface Layout {
+  /**
+   * The area marks may occupy, **not the frame**. In portrait these are the
+   * frame less the platform's reserved margins (`safeContentBox`); in landscape
+   * they are the frame itself. A chart has no figure in it, so unlike the
+   * character templates every last thing here is held to the reserve.
+   */
   width: number;
   height: number;
   margin: number;
@@ -241,14 +247,21 @@ export function drawChartFullFrame(
   const margin = Math.min(width, height) * theme.marginRatio;
   const scale = typeScale(frame);
 
+  // Every mark this template draws is placed against the layout's width and
+  // height, so handing it the safe box is the whole of the portrait reserve for
+  // charts: title, baseline rule, bars, dots, labels, pie and the big number all
+  // move together and none can be forgotten. The backdrop above still paints the
+  // real frame, and in landscape the safe box is the real frame.
+  const content = safeContentBox(frame);
+
   const layout: Layout = {
-    width,
-    height,
+    width: content.width,
+    height: content.height,
     margin,
     scale,
     grown: entranceProgress(elapsedMs),
     elapsedMs,
-    titleLineCount: countTitleLines(ctx, scene.title, width - margin * 2, scale),
+    titleLineCount: countTitleLines(ctx, scene.title, content.width - margin * 2, scale),
   };
 
   const shape = resolveChartShape(scene.type, values.length);
