@@ -13,6 +13,7 @@ import {
   lineEntrance,
   type TextCardScene,
 } from "./text-card";
+import { runLineText } from "./text";
 import { bitmap, images, rects, recorder, texts, type Recorder } from "./test-recorder";
 
 // The recorder, its call shape and the filter helpers are shared with every
@@ -35,20 +36,39 @@ describe("character-center", () => {
     expect(drawn.x + drawn.width / 2).toBeCloseTo(960, 0);
   });
 
+  // The scrim is the one full width fill that reaches the bottom edge and is
+  // taller than a grid line. It cannot be found by its colour any more: it is a
+  // gradient now, and every gradient stringifies the same on the recorder.
+  const scrims = (ctx: Recorder) =>
+    rects(ctx).filter(
+      (r) =>
+        r.x === 0 && r.y > 0 && r.width === 1920 && r.height > 10 && r.y + r.height > 1079
+    );
+
   it("puts a scrim behind the words so they read against any cutout", () => {
     // Without it, a dark jacket swallows the text on some emotions and not
     // others, which looks fine on whichever variant you happened to test.
-    const scrims = rects(draw()).filter((r) => r.style === CHARACTER_CENTER_THEME.scrim && r.y > 0);
-    expect(scrims.length).toBeGreaterThan(0);
-    const scrim = scrims[0];
-    expect(scrim.y + scrim.height).toBeCloseTo(1080, 0);
-    expect(scrim.alpha).toBeLessThan(1);
+    const found = scrims(draw());
+    expect(found.length).toBeGreaterThan(0);
+    expect(found[0].y + found[0].height).toBeCloseTo(1080, 0);
+    expect(found[0].alpha).toBeLessThan(1);
+    expect(found[0].alpha).toBeCloseTo(CHARACTER_CENTER_THEME.scrimAlpha, 6);
+  });
+
+  it("fades the scrim in rather than drawing an edge across the body", () => {
+    // AC-193. The rectangle this replaced drew a visible line wherever the text
+    // happened to wrap, which moved between scenes.
+    const ramp = draw().gradients.filter((g) => g.kind === "linear");
+    expect(ramp).toHaveLength(1);
+    expect(ramp[0].stops[0].color).toContain(",0)");
+    expect(ramp[0].stops[ramp[0].stops.length - 1].color).toContain(",1)");
   });
 
   it("does not darken the frame before there is anything to read", () => {
     // The scrim fades in with the words rather than ahead of them.
-    const early = rects(draw(SCENE, { ...FRAME, elapsedMs: 60 }));
-    expect(early.filter((r) => r.y > 0 && r.style === CHARACTER_CENTER_THEME.scrim)).toHaveLength(0);
+    const early = draw(SCENE, { ...FRAME, elapsedMs: 60 });
+    expect(scrims(early)).toHaveLength(0);
+    expect(early.gradients.filter((g) => g.kind === "linear")).toHaveLength(0);
   });
 
   it("renders the character with no text, and the text with no character", () => {
@@ -143,7 +163,7 @@ describe("fitTextSize", () => {
       { width: 400, height: 864 },
       1080
     );
-    expect(lines.join(" ")).toBe("one two three four five");
+    expect(lines.map(runLineText).join(" ")).toBe("one two three four five");
     expect(size).toBeGreaterThan(0);
   });
 });

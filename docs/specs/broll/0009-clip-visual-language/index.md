@@ -415,10 +415,49 @@ visibly changes every clip, and the rest thickens it.
    the four figure templates), `roundRect` instead of `fillRect` per bar, one
    extra arc per donut slice, and one text measurement pass for the title. No
    `shadowBlur` anywhere, which was the one operation expected to breach it.
-6. **Text setting.** Optical centring, orphan control with the overflow guard,
-   gradient scrim. Satisfies **AC-191**, **AC-192**, **AC-193**.
-7. **Creator marked emphasis.** Run parser, run aware wrapping and drawing, and
-   the field hint in Scene Studio. Satisfies **AC-189**, **AC-190**.
+6. **Text setting.** ✅ Done 2026-08-31. Optical centring, orphan control with
+   the overflow guard, gradient scrim. Satisfies **AC-191**, **AC-192**,
+   **AC-193**.
+
+   Built together with slice 7 rather than before it, because the two cannot be
+   separated: once one word in a line can carry its own colour, a line stops
+   being a string, and every step that took one (measure, wrap, draw) has to walk
+   runs instead. Splitting them would have meant writing the wrapping twice.
+
+   Every block now draws on `textBaseline = "alphabetic"` with its baseline
+   placed from the real ink of its own first and last lines, rather than handing
+   the placement to the face through `middle` or `bottom`. The two metrics are
+   optional on the context, so both carry a fallback: a browser may omit them for
+   a face it had to synthesise, and a missing metric should shift a block
+   slightly rather than collapse it onto the baseline.
+
+   The scrim became `drawScrim` in `theme.ts` rather than a gradient built in
+   each composition. **Three templates drew their own rectangle**, not the two
+   the spec counted: `character-plus-object` carries its own portrait text path
+   and was about to be the copy that kept the visible edge after the other two
+   lost it. Its ramp holds three stops, because a straight two stop ramp is
+   continuous but its rate of change is not, and that corner is faintly readable
+   across a large flat area.
+7. **Creator marked emphasis.** ✅ Done 2026-08-31. Run parser, run aware
+   wrapping and drawing, and the field hint in Scene Studio. Satisfies
+   **AC-189**, **AC-190**.
+
+   All of it lives in one new module, `render/text.ts`, and `layout.ts`'s
+   `wrapText` is now the plain string face of the same wrapper rather than a
+   second implementation. A chart title and a creator's line break on identical
+   rules, orphan control included; only the creator's line can carry a mark.
+
+   Wrapping measures run by run and sums, because that is exactly how the drawing
+   advances its cursor. Measuring the joined string instead is a slightly
+   different number on a real font, where the characters either side of a run
+   boundary can kern, and wrapping would then disagree with drawing about whether
+   a line fits.
+
+   **The line a centred composition draws from is computed, not asked for.** A
+   run starts where the one before it ended, so `textAlign = "center"` is not
+   expressible any more: `drawFigureOver` and the portrait path in
+   `character-plus-object` now measure the line and hand the cursor its left
+   edge.
 8. **The vertical frame.** Safe area insets in `layout.ts` applied to text and
    mark boxes only, and the guide in the studio preview. Satisfies **AC-196**,
    **AC-197**.

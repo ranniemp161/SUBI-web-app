@@ -289,6 +289,8 @@ export function SceneOverrides({
 
         <p className="mt-1.5 text-[10px] text-zinc-500 leading-tight">
           Shown for the full {(durationMs / 1000).toFixed(1)}s. Two lines fit comfortably.
+          Wrap a word in <span className="broll-tabular text-zinc-400">*asterisks*</span> to
+          set it in yellow.
         </p>
       </div>
 

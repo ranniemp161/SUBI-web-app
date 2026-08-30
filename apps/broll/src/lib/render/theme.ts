@@ -114,6 +114,32 @@ export const GLOW = {
 } as const;
 
 /**
+ * The ramp behind words that sit over a figure.
+ *
+ * **A gradient, because the rectangle it replaces drew a line across the
+ * creator's body.** A flat scrim has a top edge, and at 72% black on a lit
+ * cutout that edge is plainly visible: it reads as a band laid over the shot
+ * rather than as the frame getting darker toward the bottom, and it lands
+ * wherever the text happened to wrap, so it moves between scenes.
+ *
+ * Written as `rgba` rather than referencing `BRAND.background`, for the same
+ * reason `GLOW` is: a gradient stop needs a per stop alpha and the palette holds
+ * hex. It is the same black.
+ *
+ * Three stops rather than two. A straight ramp is continuous but its rate of
+ * change is not, and that corner at the top is faintly readable on a large flat
+ * area. Holding it near transparent through the first half eases it in, so the
+ * scrim has no edge anywhere (**AC-193**). Per template strength still comes
+ * from each theme's `scrimAlpha`, applied through `globalAlpha`.
+ */
+export const SCRIM = {
+  edge: "rgba(0,0,0,0)",
+  midOffset: 0.5,
+  mid: "rgba(0,0,0,0.25)",
+  base: "rgba(0,0,0,1)",
+} as const;
+
+/**
  * What every family name here falls back to.
  *
  * Named rather than a bare `sans-serif` so a realm that failed to register the
@@ -180,6 +206,33 @@ function gridPaint(
   paint.addColorStop(0, GRID.line);
   paint.addColorStop(1, GRID.lineEdge);
   return paint;
+}
+
+/**
+ * Lays the scrim that keeps words readable over a figure.
+ *
+ * One function rather than one per composition. Two templates draw words across
+ * the bottom of a cutout (`character-center` and `object-full` through
+ * `figure-frame`, and `character-plus-object` in portrait), and before this they
+ * each filled their own rectangle. Three copies of a treatment is three chances
+ * for one of them to keep the visible edge after the other two lose it.
+ *
+ * The caller owns `globalAlpha`, so a template's own `scrimAlpha` still sets how
+ * strong its scrim is.
+ */
+export function drawScrim(
+  ctx: Pick<Render2DContext, "fillStyle" | "fillRect" | "createLinearGradient">,
+  box: { x: number; y: number; width: number; height: number }
+): void {
+  if (box.height <= 0 || box.width <= 0) return;
+
+  const paint = ctx.createLinearGradient(0, box.y, 0, box.y + box.height);
+  paint.addColorStop(0, SCRIM.edge);
+  paint.addColorStop(SCRIM.midOffset, SCRIM.mid);
+  paint.addColorStop(1, SCRIM.base);
+
+  ctx.fillStyle = paint;
+  ctx.fillRect(box.x, box.y, box.width, box.height);
 }
 
 /**

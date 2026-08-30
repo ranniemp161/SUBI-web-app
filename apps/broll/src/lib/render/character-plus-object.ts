@@ -1,7 +1,15 @@
 import type { DrawableImage, Render2DContext } from "./context";
 import { entranceAt } from "./motion";
-import { fitFigure, isPortrait, typeScale, wrapText } from "./layout";
-import { BRAND, TYPEFACE, drawBackdrop } from "./theme";
+import { fitFigure, isPortrait, typeScale } from "./layout";
+import {
+  bottomBaseline,
+  centeredFirstBaseline,
+  drawRunLine,
+  measureRunLine,
+  parseRuns,
+  wrapRuns,
+} from "./text";
+import { BRAND, TYPEFACE, drawBackdrop, drawScrim } from "./theme";
 
 /**
  * The `character-plus-object` template: the creator and the thing they named,
@@ -33,8 +41,10 @@ import { BRAND, TYPEFACE, drawBackdrop } from "./theme";
 export const CHARACTER_PLUS_OBJECT_THEME = {
   background: BRAND.background,
   text: BRAND.foreground,
-  /** The scrim behind the words in portrait, where they sit over the character. */
-  scrim: BRAND.background,
+  /**
+   * How strong the scrim behind the words is in portrait, where they sit over
+   * the character. Its colour and its ramp are shared (`SCRIM` in `theme.ts`).
+   */
   scrimAlpha: 0.72,
   /** Landscape: share of the frame width the character column takes on the right. */
   characterColumnRatio: 0.38,
@@ -267,18 +277,21 @@ function drawBandText(
 
   ctx.save();
   ctx.globalAlpha = arrived;
-  ctx.fillStyle = theme.text;
   ctx.font = `700 ${size}px ${TYPEFACE}`;
   ctx.textAlign = "left";
-  ctx.textBaseline = "middle";
+  // Alphabetic: the block is placed on its own ink, not on the font's box.
+  ctx.textBaseline = "alphabetic";
 
-  const lines = wrapText(ctx, text.trim(), band.maxWidth);
+  const lines = wrapRuns(ctx, parseRuns(text.trim()), band.maxWidth);
   const rise = frame.height * theme.textRiseRatio * (1 - arrived);
-  const blockTop =
-    band.bandTop + band.bandHeight / 2 - ((lines.length - 1) * lineHeight) / 2;
+  const firstBaseline = centeredFirstBaseline(ctx, lines, {
+    centerY: band.bandTop + band.bandHeight / 2,
+    lineHeight,
+    size,
+  });
 
   lines.forEach((line, index) => {
-    ctx.fillText(line, band.left, blockTop + index * lineHeight + rise);
+    drawRunLine(ctx, line, band.left, firstBaseline + index * lineHeight + rise, theme.text);
   });
 
   ctx.restore();
@@ -306,7 +319,7 @@ function drawPortraitText(
 
   ctx.save();
   ctx.font = `700 ${size}px ${TYPEFACE}`;
-  const lines = wrapText(ctx, text.trim(), frame.width - margin * 2);
+  const lines = wrapRuns(ctx, parseRuns(text.trim()), frame.width - margin * 2);
   if (lines.length === 0) {
     ctx.restore();
     return;
@@ -314,18 +327,27 @@ function drawPortraitText(
 
   const scrimHeight = lines.length * lineHeight + margin * 2;
   ctx.globalAlpha = arrived * theme.scrimAlpha;
-  ctx.fillStyle = theme.scrim;
-  ctx.fillRect(0, frame.height - scrimHeight, frame.width, scrimHeight);
+  drawScrim(ctx, {
+    x: 0,
+    y: frame.height - scrimHeight,
+    width: frame.width,
+    height: scrimHeight,
+  });
 
   ctx.globalAlpha = arrived;
-  ctx.fillStyle = theme.text;
-  ctx.textAlign = "center";
-  ctx.textBaseline = "bottom";
+  // Left, always: a run starts where the one before it ended, so a centred line
+  // is drawn from the left edge worked out here.
+  ctx.textAlign = "left";
+  ctx.textBaseline = "alphabetic";
 
-  const bottom = frame.height - margin;
+  const lastBaseline = bottomBaseline(ctx, lines[lines.length - 1], {
+    bottomY: frame.height - margin,
+    size,
+  });
   lines.forEach((line, index) => {
     const fromBottom = (lines.length - 1 - index) * lineHeight;
-    ctx.fillText(line, frame.width / 2, bottom - fromBottom);
+    const left = (frame.width - measureRunLine(ctx, line)) / 2;
+    drawRunLine(ctx, line, left, lastBaseline - fromBottom, theme.text);
   });
 
   ctx.restore();

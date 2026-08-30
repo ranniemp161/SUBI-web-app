@@ -32,7 +32,6 @@ import { BRAND } from "./theme";
 export const OBJECT_FULL_THEME = {
   background: BRAND.background,
   text: BRAND.foreground,
-  scrim: BRAND.background,
   scrimAlpha: 0.72,
   scrimHeightRatio: 0.28,
   marginRatio: 0.08,
