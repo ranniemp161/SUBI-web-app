@@ -39,7 +39,18 @@ concurrency:
   # rough-cut and wallet deploy the same commit seconds apart and share one
   # database, so both would otherwise run an identical check. Keying on the SHA
   # collapses them into a single run.
-  group: db-verify-${{ github.event.deployment.sha || github.sha }}
+  #
+  # The event name is part of the key because the SHA alone is not specific
+  # enough. A deploy of the commit main already points at produces a
+  # `deployment_status` sharing that SHA with any manual or scheduled run in
+  # flight, and `cancel-in-progress` then kills the older one — even when the
+  # newcomer goes on to skip on the environment filter below and check nothing
+  # at all. Measured on 2026-08-30: a `workflow_dispatch` run confirming a
+  # just-applied migration was cancelled by a Preview `deployment_status` that
+  # immediately skipped, so the schema went unverified while the run showed as
+  # finished. Splitting by event keeps the two Production deploys collapsing
+  # into one run while leaving dispatch and schedule to complete on their own.
+  group: db-verify-${{ github.event.deployment.sha || github.sha }}-${{ github.event_name }}
   cancel-in-progress: true
 
 # This job reads a repository and a database and writes to neither. Granting it
