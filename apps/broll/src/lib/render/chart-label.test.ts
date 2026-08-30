@@ -40,7 +40,23 @@ describe("formatChartValue", () => {
     // has to read back the way the line was spoken.
     expect(formatChartValue(1200, null)).toBe("1,200");
     expect(formatChartValue(80.0, "%")).toBe("80%");
-    expect(formatChartValue(1234567, null)).toBe("1,234,567");
+    // Six digits is still written out in full: 999,999 fits a frame.
+    expect(formatChartValue(999999, null)).toBe("999,999");
+  });
+
+  it("abbreviates from seven digits, and never drops the unit doing it", () => {
+    // 1,234,567 set at a big number's size runs off a 1080 frame. Compact
+    // notation changes the digits; the unit is the one thing it may not touch.
+    expect(formatChartValue(1234567, null)).toBe("1.2M");
+    expect(formatChartValue(1234567, "$")).toBe("$1.2M");
+    expect(formatChartValue(2_500_000, "%")).toBe("2.5M%");
+    expect(formatChartValue(1_000_000, null)).toBe("1M");
+    expect(formatChartValue(4_100_000_000, null)).toBe("4.1B");
+    expect(formatChartValue(7_000_000_000_000, null)).toBe("7T");
+  });
+
+  it("abbreviates a negative the same way it abbreviates a positive", () => {
+    expect(formatChartValue(-1_240_000, null)).toBe("-1.2M");
   });
 
   it("keeps real precision", () => {

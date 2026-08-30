@@ -1,6 +1,7 @@
 import type { DrawableImage, Render2DContext } from "./context";
 import { type FitAnchor, fitFigure, isPortrait, typeScale, wrapText } from "./layout";
-import { TYPEFACE, drawBackdrop } from "./theme";
+import { entranceAt, figureTravelAt } from "./motion";
+import { GLOW, TYPEFACE, drawBackdrop } from "./theme";
 
 /**
  * The two compositions that put **one cutout and some words** on a frame, and
@@ -28,26 +29,39 @@ import { TYPEFACE, drawBackdrop } from "./theme";
  * encoder share one renderer.
  */
 
-/** The one easing in the renderer, and the only copy of it. */
-export function easeOutCubic(t: number): number {
-  const clamped = Math.min(1, Math.max(0, t));
-  return 1 - (1 - clamped) ** 3;
-}
-
 /**
- * How far something that starts at `delayMs` and runs for `durationMs` has
- * arrived at `elapsedMs`, from 0 to 1.
+ * Lays the soft glow that separates a figure from the ground behind it.
  *
- * A non-finite time answers 0 rather than throwing: the preview drives this off
- * a clock, and one bad frame should be an unstarted animation, not a dead canvas.
+ * Drawn **behind** the figure and sized to the frame rather than to the cutout,
+ * so a wide illustration and a narrow person get the same pool of light rather
+ * than one that traces whatever shape happens to be in front of it.
+ *
+ * A radial gradient, not `shadowBlur`. A per-element shadow is the one drawing
+ * operation expensive enough to matter at thirty frames a second, and it would
+ * follow the cutout's alpha edge — which reads as a sticker's outline, the exact
+ * cheapness this treatment exists to avoid.
  */
-export function entranceAt(
-  elapsedMs: number,
-  delayMs: number,
-  durationMs: number
-): number {
-  if (!Number.isFinite(elapsedMs)) return 0;
-  return easeOutCubic((elapsedMs - delayMs) / durationMs);
+function drawFigureGlow(
+  ctx: Render2DContext,
+  centerX: number,
+  centerY: number,
+  frame: FigureFrame,
+  arrived: number
+): void {
+  const radius = Math.min(frame.width, frame.height) * GLOW.radiusRatio;
+  if (radius <= 0 || arrived <= 0) return;
+
+  const paint = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, radius);
+  paint.addColorStop(0, GLOW.color);
+  paint.addColorStop(1, GLOW.edge);
+
+  ctx.save();
+  // Arrives with the figure rather than ahead of it, or the frame lights up
+  // around an empty space a beat before anything is standing in it.
+  ctx.globalAlpha = arrived * GLOW.alpha;
+  ctx.fillStyle = paint;
+  ctx.fillRect(centerX - radius, centerY - radius, radius * 2, radius * 2);
+  ctx.restore();
 }
 
 /** What a figure template needs to know to draw itself. */
@@ -191,9 +205,22 @@ function drawBesideFigure(
   // Travels in along whichever axis the composition splits on: from the left
   // edge beside the words, from below when it sits under them. Sliding
   // horizontally under a stacked layout reads as a mistake rather than a move.
-  const travel = (1 - arrived) * theme.slideRatio;
+  //
+  // The distance runs on the overshoot curve while the fade above runs on the
+  // clamped one, so `moved` passes 1 near the end and this goes slightly
+  // negative: the figure travels a little past its mark and settles back.
+  const moved = geo.elapsedMs <= 0 ? 0 : figureTravelAt(geo.elapsedMs, 0, theme.figureEntranceMs);
+  const travel = (1 - moved) * theme.slideRatio;
   const dx = geo.portrait ? 0 : -geo.columnWidth * travel;
   const dy = geo.portrait ? geo.bandHeight * travel : 0;
+
+  drawFigureGlow(
+    ctx,
+    fitted.x + dx + fitted.width / 2,
+    fitted.y + dy + fitted.height / 2,
+    geo,
+    arrived
+  );
 
   ctx.save();
   ctx.globalAlpha = arrived;
@@ -272,8 +299,18 @@ export function drawFigureOver(
       theme.anchor
     );
     if (fitted.width > 0 && fitted.height > 0) {
-      // Rises slightly as it fades, so it settles rather than appears.
-      const rise = height * theme.riseRatio * (1 - arrived);
+      // Rises slightly as it fades, so it settles rather than appears. On the
+      // overshoot curve, so it rises a little past its resting line and drops
+      // back into it — the fade stays on the clamped curve above.
+      const moved = figureTravelAt(elapsedMs, 0, theme.figureEntranceMs);
+      const rise = height * theme.riseRatio * (1 - moved);
+      drawFigureGlow(
+        ctx,
+        fitted.x + fitted.width / 2,
+        fitted.y + rise + fitted.height / 2,
+        frame,
+        arrived
+      );
       ctx.save();
       ctx.globalAlpha = arrived;
       ctx.drawImage(scene.image, fitted.x, fitted.y + rise, fitted.width, fitted.height);

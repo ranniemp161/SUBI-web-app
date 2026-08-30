@@ -3,6 +3,7 @@ import { drawCharacterLeftFrame } from "./character-left";
 import { drawCharacterPlusObjectFrame } from "./character-plus-object";
 import { drawChartFullFrame, type ChartFullScene } from "./chart-full";
 import type { Render2DContext } from "./context";
+import { pushScaleAt } from "./motion";
 import { drawObjectFullFrame } from "./object-full";
 import { drawObjectLeftFrame } from "./object-left";
 import { drawTextCardFrame } from "./text-card";
@@ -57,6 +58,24 @@ export function isRenderableTemplate(template: string): boolean {
 }
 
 /**
+ * Everything a template needs to know about the frame it is drawing into.
+ *
+ * `durationMs` is the whole clip's length, not the time left, and it is here
+ * rather than in each template because **the push is normalised to it**: a four
+ * second clip and a ten second one have to finish at the same scale, which is
+ * not something a renderer can work out from `elapsedMs` alone. The encoder
+ * always knew this number; until spec `0009` the renderer did not.
+ */
+export interface RenderableFrame {
+  width: number;
+  height: number;
+  /** Time since this scene started, not absolute timeline time. */
+  elapsedMs: number;
+  /** How long the whole clip runs. */
+  durationMs: number;
+}
+
+/**
  * Draws one frame of whichever template this scene is.
  *
  * **Exhaustive on purpose, with no `default`.** This switch used to end in a
@@ -68,7 +87,32 @@ export function isRenderableTemplate(template: string): boolean {
 export function drawRenderable(
   ctx: Render2DContext,
   renderable: Renderable,
-  frame: { width: number; height: number; elapsedMs: number }
+  frame: RenderableFrame
+): void {
+  // The slow push in, applied once for every template that exists and every
+  // template that ever will. Scaling about the frame's centre rather than its
+  // origin is what makes it a push rather than a drift toward the corner.
+  //
+  // `finally` rather than a restore after the switch: each case returns, and
+  // the default throws. A transform left on the context would scale the next
+  // frame again, and the frame after that.
+  const scale = pushScaleAt(frame.elapsedMs, frame.durationMs);
+  ctx.save();
+  ctx.translate(frame.width / 2, frame.height / 2);
+  ctx.scale(scale, scale);
+  ctx.translate(-frame.width / 2, -frame.height / 2);
+
+  try {
+    drawTemplate(ctx, renderable, frame);
+  } finally {
+    ctx.restore();
+  }
+}
+
+function drawTemplate(
+  ctx: Render2DContext,
+  renderable: Renderable,
+  frame: RenderableFrame
 ): void {
   switch (renderable.template) {
     case "chart-full":

@@ -133,6 +133,7 @@ export function SceneRow({
               <SceneStill
                 renderable={renderable}
                 width={STILL_WIDTH}
+                durationMs={scene.durationMs}
                 aspectWidth={aspectWidth}
                 aspectHeight={aspectHeight}
                 label={`Scene ${position} at ${formatClock(scene.startMs)}`}

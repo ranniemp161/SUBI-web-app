@@ -1,5 +1,5 @@
 import type { DrawableImage, Render2DContext } from "./context";
-import { entranceAt } from "./figure-frame";
+import { entranceAt } from "./motion";
 import { fitFigure, isPortrait, typeScale, wrapText } from "./layout";
 import { BRAND, TYPEFACE, drawBackdrop } from "./theme";
 

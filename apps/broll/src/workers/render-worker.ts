@@ -147,6 +147,7 @@ async function renderScene(request: RenderSceneRequest): Promise<ArrayBuffer | n
       width,
       height,
       elapsedMs: frameElapsedMs(index, fps),
+      durationMs,
     });
 
     // Awaited per frame on purpose: this is the encoder's backpressure signal,

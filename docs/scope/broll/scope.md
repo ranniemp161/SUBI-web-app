@@ -1440,16 +1440,32 @@ drawing.
 - [ ] Build it: /develop the clip's visual language. Milestones rolled up from
       spec [0009](../../specs/broll/0009-clip-visual-language/index.md)'s build
       plan; the atomic tasks stay there.
-  - [ ] **Motion and depth, shared by every template.** One `render/motion.ts`
-        replacing the four copies of the same easing, the slow push applied
-        centrally in `drawRenderable`, `durationMs` added to the frame object,
-        then the grid fade and the figure glow. Covers AC-173 to AC-179, AC-194,
-        AC-195.
-  - [ ] **The chart, then measure.** Baseline rule, rounded caps, bar stagger,
-        line dots, compact notation, title wrap, the formatter returning number
-        and unit separately, and the donut as its own step. Then time an encode
-        against Phase 0's 1791ms, deliberately here rather than at the end.
-        Covers AC-180 to AC-188, AC-198.
+  - [x] **Motion and depth, shared by every template.** Done 2026-08-18. Code in
+        [render/motion.ts](../../../apps/broll/src/lib/render/motion.ts),
+        [render/theme.ts](../../../apps/broll/src/lib/render/theme.ts) and
+        [render/figure-frame.ts](../../../apps/broll/src/lib/render/figure-frame.ts).
+        One `render/motion.ts` replacing the copies of the same easing, the slow
+        push applied centrally in `drawRenderable`, `durationMs` added to the
+        frame object, then the grid fade and the figure glow. Covers AC-173 to
+        AC-179, AC-194, AC-195.
+
+        Three easing copies rather than the four the spec counted: spec `0008`'s
+        `figure-frame` extraction had already absorbed one, which is the reason
+        this slice waited for that PR to merge rather than consolidating the same
+        function twice.
+  - [ ] **The chart, then measure.** Drawing done 2026-08-18, **the measurement
+        is still owed**. Baseline rule, rounded caps, bar stagger, line dots,
+        compact notation, title wrap, the formatter returning number and unit
+        separately, and the donut as its own step: all built, in
+        [render/chart-full.ts](../../../apps/broll/src/lib/render/chart-full.ts)
+        and [render/chart-label.ts](../../../apps/broll/src/lib/render/chart-label.ts).
+        Covers AC-180 to AC-188.
+
+        The box stays open on AC-198 alone. Timing a 6 second 1080p30 encode
+        against Phase 0's 1791ms needs a real browser, so it is a `/check verify`
+        step rather than a `/develop` one. **The two milestones below are
+        deliberately not started until it has been run**, which is the whole
+        point of the spec putting the measurement here rather than at the end.
   - [ ] **Text setting and creator marked emphasis.** Optical centring off real
         metrics, orphan control with the overflow guard, the gradient scrim, then
         the asterisk syntax with run aware wrapping. Covers AC-189 to AC-193.

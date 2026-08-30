@@ -1,7 +1,7 @@
 # 0009. The clip's visual language
 
 **Date**: 2026-08-18
-**Status**: Proposed
+**Status**: In Progress
 
 ## Summary
 
@@ -336,26 +336,85 @@ a frame looks right (see the note in `rationale.md`):
 Tracer Bullet, so the first slice is a thin thread through every layer that
 visibly changes every clip, and the rest thickens it.
 
-1. **The motion thread.** Add `render/motion.ts` with the easings, the stagger
-   helper and the push. Add `durationMs` to the frame object and pass it from the
-   still, the preview and the worker. Apply the push centrally in
-   `drawRenderable`. Delete the four easing copies. Satisfies **AC-173**,
-   **AC-174**, **AC-176**, **AC-177**, **AC-178**, **AC-179**, and **AC-175** by
-   confirming no exit is introduced.
-2. **Depth, shared by every template.** Grid fade in `drawBackdrop`, figure glow
-   in `figure-frame.ts`. Satisfies **AC-194**, **AC-195**.
-3. **Chart marks, and the formatter split.** Baseline rule, rounded caps, bar
-   stagger, line dots, compact notation, title wrap and trim. Change
-   `formatChartValue` to return the number and unit separately as well as joined,
-   then set the big number's unit smaller and muted. Satisfies **AC-180**,
-   **AC-181**, **AC-182**, **AC-184**, **AC-185**, **AC-186**, **AC-187**,
-   **AC-188**.
-4. **The donut.** Its own step, because it is new geometry rather than a restyle:
-   inner radius, angular gaps, and the largest traced value set in the hole.
-   Satisfies **AC-183**.
-5. **Measure the cost here, not at the end.** Slices 2 to 4 add the most per
-   frame work. Time a 6 second 1080p30 encode against Phase 0's 1791ms before
-   going further. Satisfies **AC-198**.
+1. **The motion thread.** ✅ Done 2026-08-18. Add `render/motion.ts` with the
+   easings, the stagger helper and the push. Add `durationMs` to the frame object
+   and pass it from the still, the preview and the worker. Apply the push
+   centrally in `drawRenderable`. Delete the four easing copies. Satisfies
+   **AC-173**, **AC-174**, **AC-176**, **AC-177**, **AC-178**, **AC-179**, and
+   **AC-175** by confirming no exit is introduced.
+
+   **Three copies, not four.** Spec `0008`'s `figure-frame` extraction had
+   already absorbed one on its way through, which is exactly what this spec
+   predicted would happen if slice 1 ran first. `entranceAt` moved to
+   `render/motion.ts` and its five callers now import it from there, so
+   `figure-frame.ts` is a composition rather than a composition plus a curve.
+
+   `drawRenderable` applies the push in a `try`/`finally`: every case in that
+   switch returns and the default throws, so a restore placed after it would be
+   skipped and the transform would compound onto the next frame.
+2. **Depth, shared by every template.** ✅ Done 2026-08-18. Grid fade in
+   `drawBackdrop`, figure glow in `figure-frame.ts`. Satisfies **AC-194**,
+   **AC-195**.
+
+   The fade is **one radial gradient per frame**, built once and assigned to
+   `fillStyle` before the grid loop, so it costs a single allocation whether the
+   frame carries fifty lines or a hundred. Measured against the half diagonal
+   rather than an edge, so it lands on the corner in both orientations. The glow
+   is a radial gradient too, never `shadowBlur`: a real shadow would trace the
+   cutout's alpha edge and read as a sticker outline. Its colour is the brief's
+   `--accent-shadow` Key Yellow at 0.10 rather than the brief's 0.25, which is
+   the banding margin this spec asked for.
+3. **Chart marks, and the formatter split.** ✅ Done 2026-08-18. Baseline rule,
+   rounded caps, bar stagger, line dots, compact notation, title wrap and trim.
+   Change `formatChartValue` to return the number and unit separately as well as
+   joined, then set the big number's unit smaller and muted. Satisfies
+   **AC-180**, **AC-181**, **AC-182**, **AC-184**, **AC-185**, **AC-186**,
+   **AC-187**, **AC-188**.
+
+   The split landed as a new `formatChartParts`, with `formatChartValue` kept as
+   the joined form derived from it, so every existing label call site is
+   untouched and only the big number reads the parts. It returns `where`
+   (`prefix`/`suffix`/`none`) rather than making the caller compare strings to
+   work out which side the unit sits on.
+
+   The stagger runs off **elapsed time**, not off the chart's overall progress:
+   that progress is already eased, and staggering an eased value would stretch
+   and compress the 70ms gap along the curve instead of holding it. The compact
+   threshold lives in `chart-label.ts` rather than `CHART_FULL_THEME` because
+   `chart-full.ts` imports that module, so reading it from the theme would be an
+   import cycle.
+
+   The title now wraps to two lines and the plot area is measured against the
+   lines it will actually occupy, so a two line title pushes the marks down
+   rather than being drawn over them.
+4. **The donut.** ✅ Done 2026-08-18. Its own step, because it is new geometry
+   rather than a restyle: inner radius, angular gaps, and the largest traced
+   value set in the hole. Satisfies **AC-183**.
+
+   A slice is an outer arc clockwise and an inner arc back counterclockwise,
+   which needed the `counterclockwise` flag added to `arc` on the shared
+   context: without it the return leg sweeps the long way round and the fill
+   closes over the hole. Half the gap comes off each end of a slice, so the
+   separation between two neighbours is one gap rather than two, and a slice
+   narrower than its own gap keeps a sliver instead of inverting into a negative
+   sweep. The hole's figure steps down until it fits the hole rather than the
+   frame.
+5. **Measure the cost here, not at the end.** ⏸ **Owed, and it is a real gate.**
+   Slices 2 to 4 add the most per frame work. Time a 6 second 1080p30 encode
+   against Phase 0's 1791ms before going further. Satisfies **AC-198**.
+
+   This cannot be answered from a unit test: it needs a real encode in a real
+   browser, so it belongs to `/check verify` rather than to `/develop`. Slices 6
+   to 8 are deliberately not started until it has been run, which is the whole
+   reason it was placed here rather than at the end — a breached ceiling is
+   cheap to walk back now and expensive to walk back after three more slices of
+   per frame work.
+
+   What was added per frame, so there is something specific to look at if the
+   number has moved: two radial gradients (the grid fade, and the figure glow on
+   the four figure templates), `roundRect` instead of `fillRect` per bar, one
+   extra arc per donut slice, and one text measurement pass for the title. No
+   `shadowBlur` anywhere, which was the one operation expected to breach it.
 6. **Text setting.** Optical centring, orphan control with the overflow guard,
    gradient scrim. Satisfies **AC-191**, **AC-192**, **AC-193**.
 7. **Creator marked emphasis.** Run parser, run aware wrapping and drawing, and
