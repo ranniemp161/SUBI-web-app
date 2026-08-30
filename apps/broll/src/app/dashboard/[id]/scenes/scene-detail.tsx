@@ -20,7 +20,7 @@ const BLOCKER_ADVICE: Record<SceneBlocker["code"], string> = {
     "Attach one on the project page and this scene renders again — the plan is kept, nothing has to be re-run.",
   no_emotion_chosen: "Pick an emotion the character actually has, or redraw the missing one.",
   missing_emotion: "Pick an emotion the character actually has, or redraw the missing one.",
-  no_object_image: "Draw it below, and this scene renders.",
+  no_object_image: "Draw it in the panel on the right, and this scene renders.",
 };
 import type { Renderable } from "@/lib/render/renderable";
 import { ScenePreview } from "./scene-preview";
@@ -133,9 +133,18 @@ export function SceneDetail({
           </div>
         </header>
 
+        {/* Accent rather than amber when the fix is on this screen (spec
+            `broll/0008`): an undrawn illustration is the expected state of a
+            fresh plan, not a fault, and the colour should point at the button
+            that clears it. The remaining codes are fixed elsewhere and keep the
+            house warning colour. */}
         {blocker && (
           <p
-            className="rounded-xl px-4 py-3 text-xs bg-amber-500/10 border border-amber-500/20 text-amber-200"
+            className={`rounded-xl px-4 py-3 text-xs ${
+              blocker.fixableByGenerating
+                ? "bg-[var(--broll-accent)]/10 border border-[var(--broll-accent)]/30 text-[var(--broll-accent)]"
+                : "bg-amber-500/10 border border-amber-500/20 text-amber-200"
+            }`}
             role="status"
           >
             {blocker.reason} {BLOCKER_ADVICE[blocker.code]}

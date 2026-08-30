@@ -1,4 +1,3 @@
-import type { CharacterStyleId } from "./styles";
 
 /**
  * The wording, the caps and the image settings for one generated object
@@ -14,20 +13,32 @@ import type { CharacterStyleId } from "./styles";
  */
 
 /**
- * How the object is drawn, per project style.
+ * How every object is drawn, in one wording that no project setting changes.
  *
- * **Deliberately the same two styles a character has, worded to match.** The
- * whole reason an object is generated rather than pulled from a stock set is
- * that it has to look like it belongs beside the creator's character in the same
- * edit. A castle rendered in some fourth house style would be clip art with
- * extra steps.
+ * **Always flat 2D, even when the project's character is a 3D render.** An
+ * object is a prop beside the person talking, not a second subject: drawn with
+ * the same volume and the same studio lighting as a 3D character it competes
+ * with them for the eye, and a rendered castle sitting next to a rendered person
+ * reads as a scene the creator never described. Flat artwork stays legible at
+ * clip size, cuts out cleanly, and reads as illustration — a diagram of the
+ * noun, which is what a b-roll insert is for.
+ *
+ * So this deliberately does **not** key off `CharacterStyleId`. It used to, one
+ * description per style, and the 3D branch is what this replaces.
  */
-const STYLE_DESCRIPTIONS: Record<CharacterStyleId, string> = {
-  anime:
-    "a clean modern anime illustration, cel shaded, with crisp linework, flat colour fills and minimal gradients",
-  "3d-render":
-    "a polished 3D render with smooth stylised proportions, soft studio lighting and subtle material shading",
-};
+const OBJECT_STYLE =
+  "a clean flat 2D illustration, cel shaded, with crisp linework, flat colour fills and minimal gradients";
+
+/**
+ * Said as a negative as well as a positive, because the model drifts.
+ *
+ * A subject that is photographed or rendered far more often than it is drawn — a
+ * smartphone, a car, a coin — comes back as a glossy 3D product shot from the
+ * positive clause alone. Naming what it must not be is what holds the whole set
+ * to one look.
+ */
+const FLATNESS =
+  "Draw it flat and two dimensional: no 3D render, no photorealism, no glossy or metallic material shading, no depth of field. Hand drawn artwork, not a rendered model.";
 
 /**
  * Flat light grey, no shadow — the same background the character prompt asks
@@ -64,9 +75,11 @@ const EXCLUSIONS =
  * function never has to decide whether the subject is legitimate, only how to
  * draw it.
  */
-export function buildObjectPrompt(subject: string, style: CharacterStyleId): string {
+export function buildObjectPrompt(subject: string): string {
   return [
-    `Draw ${subject.trim()}, as ${STYLE_DESCRIPTIONS[style]}.`,
+    `Draw ${subject.trim()}, as ${OBJECT_STYLE}.`,
+    "",
+    FLATNESS,
     "",
     FRAMING,
     "",

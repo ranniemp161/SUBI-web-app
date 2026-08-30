@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  blockerBadge,
   canUseTemplate,
   isCharacterTemplate,
   isObjectTemplate,
@@ -297,5 +298,54 @@ describe("sceneBlocker (AC-138)", () => {
         })
       ).toBeNull();
     }
+  });
+});
+
+describe("blockerBadge", () => {
+  const SIX = ["neutral", "happy", "surprised", "thoughtful", "skeptical", "excited"];
+
+  it("names the undrawn illustration instead of blaming the character", () => {
+    // The row said "Needs a character" for every blocker, including this one,
+    // which sent a creator to the project page to fix something that was not
+    // wrong while the real gap had no name on the screen.
+    const blocked = sceneBlocker(
+      { layoutTemplate: "object-full", emotion: null, objectAssetPath: null },
+      { committedEmotions: SIX }
+    );
+    const badge = blockerBadge(blocked!);
+    expect(badge.label).toBe("Not drawn yet");
+    expect(badge.label).not.toContain("character");
+  });
+
+  it("colours a block the creator can clear here in the accent, not a warning", () => {
+    // An undrawn illustration is the expected state of a fresh plan — drawing is
+    // on demand by design — so it reads as the next action, not as a fault.
+    const drawable = sceneBlocker(
+      { layoutTemplate: "object-full", emotion: null, objectAssetPath: null },
+      { committedEmotions: SIX }
+    );
+    const elsewhere = sceneBlocker(
+      { layoutTemplate: "character-left", emotion: "happy" },
+      { committedEmotions: [] }
+    );
+    expect(blockerBadge(drawable!).variant).toBe("accent");
+    expect(blockerBadge(elsewhere!).variant).toBe("warning");
+  });
+
+  it("gives every blocker code its own words", () => {
+    // A new code must not inherit whichever label happened to be the fallback;
+    // the switch is exhaustive so that this stays a compile error, and this
+    // guards the labels themselves against collapsing back into one.
+    const labels = new Set(
+      (
+        [
+          "no_object_image",
+          "no_character",
+          "no_emotion_chosen",
+          "missing_emotion",
+        ] as const
+      ).map((code) => blockerBadge({ code, reason: "" }).label)
+    );
+    expect(labels.size).toBe(4);
   });
 });

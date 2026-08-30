@@ -1,6 +1,5 @@
 import "server-only";
 import { reportError } from "@repo/server-shared/observability";
-import type { CharacterStyleId } from "./styles";
 import {
   IMAGE_SIZE,
   describeModelError,
@@ -24,8 +23,9 @@ import {
  *
  * **One call, not a chain.** The character pipeline is six turns because it has
  * to hold one identity across six expressions, each anchored on the picture
- * before it. An object has no identity to hold: it is drawn once from a noun and
- * a style, and if the creator does not like it they generate another. That is
+ * before it. An object has no identity to hold: it is drawn once from a noun, in
+ * the one flat 2D look every object shares, and if the creator does not like it
+ * they generate another. That is
  * the whole reason this file is fifty lines rather than three hundred.
  *
  * The model, the size and the cost figure are deliberately **not** re-declared
@@ -141,9 +141,8 @@ export type GeneratedObject = {
  */
 export async function generateObjectImage(input: {
   subject: string;
-  style: CharacterStyleId;
 }): Promise<GeneratedObject> {
-  const prompt = buildObjectPrompt(input.subject, input.style);
+  const prompt = buildObjectPrompt(input.subject);
   let lastError: unknown;
   let images = 0;
 

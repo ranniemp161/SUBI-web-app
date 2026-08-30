@@ -7,7 +7,7 @@ import {
   strengthBand,
   strengthSteps,
 } from "@/lib/scene-strength";
-import { sceneDrawsChart, type SceneBlocker } from "@/lib/scene-templates";
+import { blockerBadge, sceneDrawsChart, type SceneBlocker } from "@/lib/scene-templates";
 import type { Renderable } from "@/lib/render/renderable";
 import { Badge } from "@/components/ui";
 import { SceneStill, StillPlaceholder } from "./scene-still";
@@ -120,8 +120,12 @@ export function SceneRow({
                 the point is that a creator scanning the list can see which
                 scenes have nothing to draw before pressing Render all. */}
             {blocker && (
-              <Badge size="sm" variant="warning" title={blocker.reason}>
-                Needs a character
+              <Badge
+                size="sm"
+                variant={blockerBadge(blocker).variant}
+                title={blocker.reason}
+              >
+                {blockerBadge(blocker).label}
               </Badge>
             )}
           </div>
@@ -147,7 +151,13 @@ export function SceneRow({
               />
             )}
             <span className="absolute bottom-1 right-1 px-1 py-0.2 rounded text-[8px] font-bold tracking-wider uppercase bg-black/80 text-zinc-300 border border-white/10">
-              {drawsChart ? "CHART" : renderable ? "PREVIEW" : "NO PREVIEW"}
+              {blocker?.code === "no_object_image"
+                ? "NOT DRAWN"
+                : drawsChart
+                  ? "CHART"
+                  : renderable
+                    ? "PREVIEW"
+                    : "NO PREVIEW"}
             </span>
           </div>
           <RenderState state={renderState} />

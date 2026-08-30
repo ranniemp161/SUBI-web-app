@@ -23,36 +23,39 @@ import { IMAGE_SIZE } from "./character-prompt";
 
 describe("buildObjectPrompt", () => {
   it("asks for the subject it was given, verbatim", () => {
-    expect(buildObjectPrompt("a medieval castle", "anime")).toContain("a medieval castle");
+    expect(buildObjectPrompt("a medieval castle")).toContain("a medieval castle");
   });
 
   it("trims a subject the model padded with whitespace", () => {
-    expect(buildObjectPrompt("  an oil barrel  ", "anime")).toContain("Draw an oil barrel,");
+    expect(buildObjectPrompt("  an oil barrel  ")).toContain("Draw an oil barrel,");
   });
 
-  it("names the project's style, so the object matches the character", () => {
-    // The whole reason an illustration is generated rather than pulled from a
-    // stock set: it has to look like it belongs beside the creator's character
-    // in the same edit.
-    expect(buildObjectPrompt("a rocket", "anime")).toContain("anime");
-    expect(buildObjectPrompt("a rocket", "3d-render")).toContain("3D render");
+  it("asks for flat 2D artwork, whatever the project's character style is", () => {
+    // The change spec `broll/0008` originally made per style: an object is a
+    // prop beside the person talking, and a rendered prop competes with a
+    // rendered character for the eye. One look for every object, always flat.
+    const prompt = buildObjectPrompt("a rocket");
+    expect(prompt).toContain("flat 2D illustration");
+    expect(prompt).toContain("no 3D render");
+    expect(prompt).toContain("no photorealism");
   });
 
-  it("has wording for every style a project can be created in", () => {
-    // A style with no description here would render an object in whatever the
-    // model felt like, beside a character drawn deliberately.
-    for (const style of CHARACTER_STYLES) {
-      const prompt = buildObjectPrompt("a rocket", style.id);
-      expect(prompt.length).toBeGreaterThan(100);
-      expect(prompt).toContain("Draw a rocket");
-    }
+  it("takes no style argument at all, so no project setting can restyle it", () => {
+    // Asserted on the signature rather than only on the output: a second
+    // parameter creeping back is how the 3D branch would return unnoticed.
+    expect(buildObjectPrompt.length).toBe(1);
+    // Every style a project can be created in yields the identical prompt,
+    // because none of them reaches this wording any more.
+    const prompts = CHARACTER_STYLES.map(() => buildObjectPrompt("a rocket"));
+    expect(new Set(prompts).size).toBe(1);
+    expect(prompts[0]).toContain("Draw a rocket");
   });
 
   it("asks for a flat grey background with no shadow and no floor", () => {
     // Each clause is load bearing for the cutout, not tidiness. A gradient, a
     // vignette, a shadow and a floor line all survive background removal as
     // something clinging to the object's edge.
-    const prompt = buildObjectPrompt("a castle", "anime");
+    const prompt = buildObjectPrompt("a castle");
     expect(prompt).toContain("flat, even light grey background");
     expect(prompt).toContain("no cast shadow");
     expect(prompt).toContain("no floor line");
@@ -61,19 +64,19 @@ describe("buildObjectPrompt", () => {
   it("forbids text, logos and labels", () => {
     // A generated sign is a claim the speaker never made, rendered as though
     // they had.
-    const prompt = buildObjectPrompt("a castle", "anime");
+    const prompt = buildObjectPrompt("a castle");
     expect(prompt).toContain("Do not include any text");
     expect(prompt).toContain("logos");
   });
 
   it("forbids people, so an object scene never grows a second character", () => {
-    expect(buildObjectPrompt("a castle", "anime")).toContain("Do not include any people");
+    expect(buildObjectPrompt("a castle")).toContain("Do not include any people");
   });
 
   it("keeps the whole object inside the frame", () => {
     // The alpha trim crops to the drawing, so an object touching the edge comes
     // back cropped rather than whole.
-    const prompt = buildObjectPrompt("a castle", "anime");
+    const prompt = buildObjectPrompt("a castle");
     expect(prompt).toContain("whole object");
     expect(prompt).toMatch(/margin of empty space/);
   });
