@@ -11,22 +11,22 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@clerk/nextjs": "^7.8.0",
+    "@clerk/nextjs": "^7.9.1",
     "@imgly/background-removal": "^1.7.0",
     "@repo/billing": "*",
     "@repo/db": "*",
     "@repo/server-shared": "*",
     "@repo/transcript": "*",
     "@repo/ui": "*",
-    "@sentry/nextjs": "^10.69.0",
+    "@sentry/nextjs": "^10.73.0",
     "@vercel/blob": "^2.8.0",
     "drizzle-orm": "^0.45.2",
-    "mediabunny": "^1.55.1",
-    "next": "16.3.2",
+    "mediabunny": "^1.55.7",
+    "next": "16.3.4",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "server-only": "^0.0.1",
-    "zod": "^4.4.3"
+    "zod": "^4.5.4"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.3",
