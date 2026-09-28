@@ -17,11 +17,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@clerk/nextjs": "^7.8.0",
+    "@clerk/nextjs": "^7.9.7",
     "@repo/db": "*",
-    "@sentry/nextjs": "^10.69.0",
-    "@upstash/ratelimit": "^2.0.8",
-    "@upstash/redis": "^1.38.2",
-    "drizzle-orm": "^0.45.2"
+    "@sentry/nextjs": "^10.75.3",
+    "@upstash/ratelimit": "^2.2.0",
+    "@upstash/redis": "^1.39.0",
+    "drizzle-orm": "^0.45.3"
   }
 }
