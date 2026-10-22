@@ -7,7 +7,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 # SUBI
 
 ## Stack
-Turborepo monorepo (npm workspaces: `apps/*`, `packages/*`). Node 22, TypeScript, Next.js 16 across all apps, Drizzle ORM + Neon Postgres (HTTP driver) shared via `packages/db`, Clerk (multi-domain SSO), Stripe (Wallet app only), Upstash Redis / Vercel KV for rate limiting, Sentry for error tracking (env-gated).
+Turborepo monorepo (npm workspaces: `apps/*`, `packages/*`). Node 26, TypeScript, Next.js 16 across all apps, Drizzle ORM + Neon Postgres (HTTP driver) shared via `packages/db`, Clerk (multi-domain SSO), Stripe (Wallet app only), Upstash Redis / Vercel KV for rate limiting, Sentry for error tracking (env-gated).
 
 ## Commands
 ```bash
